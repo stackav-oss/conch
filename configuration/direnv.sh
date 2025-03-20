@@ -1,0 +1,13 @@
+# Reload direnv if these files change
+watch_file $PWD/configuration/direnv.sh
+watch_file $PWD/configuration/user.sh
+
+# Activate virtual environment
+layout_python3
+path_add PYTHONPATH $PWD
+
+# User-specified env vars can be stored here
+USER_CONFIG_FILE="$PWD/configuration/user.sh"
+if [ -f $USER_CONFIG_FILE ]; then
+  source $USER_CONFIG_FILE
+fi

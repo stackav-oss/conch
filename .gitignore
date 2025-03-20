@@ -1,0 +1,7 @@
+**/__pycache__/
+.pytest_cache
+
+configuration/user.sh
+.direnv/
+
+dist/

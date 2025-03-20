@@ -1,0 +1,264 @@
+# Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
+
+"""Mixed-precision matrix multiplication kernel benchmark."""
+
+import math
+from typing import Final
+
+import click
+import torch
+
+from benchmarks.utils import benchmark_it
+from conch import envs
+from conch.ops.quantization.gemm import mixed_precision_gemm
+from conch.platforms import current_platform
+from conch.third_party.vllm.quant_utils import pack_rows, quantize_weights
+from conch.third_party.vllm.scalar_type import ScalarType, scalar_types
+from conch.third_party.vllm.utils import seed_everything
+
+if envs.CONCH_ENABLE_VLLM and current_platform.has_cuda():
+    from vllm import _custom_ops as vllm_custom_ops
+else:
+    vllm_custom_ops = None
+
+
+def _to_torch_dtype(dtype_str: str) -> torch.dtype:
+    """Map click arg for dtype to torch type."""
+    if dtype_str == "bf16":
+        return torch.bfloat16
+    if dtype_str == "fp16":
+        return torch.float16
+    if dtype_str == "fp32":
+        return torch.float32
+
+    error_msg = f"Unrecognized data type: '{dtype_str}'"
+    raise ValueError(error_msg)
+
+
+def _to_scalar_dtype(dtype_str: str) -> ScalarType:
+    """Map click arg for dtype to scalar type."""
+    if dtype_str == "uint4":
+        return scalar_types.uint4
+    if dtype_str == "uint8":
+        return scalar_types.uint8
+    if dtype_str == "uint4b8":
+        return scalar_types.uint4b8
+    if dtype_str == "uint8b128":
+        return scalar_types.uint8b128
+
+    error_msg = f"Unrecognized data type: '{dtype_str}'"
+    raise ValueError(error_msg)
+
+
+def _machete_quantize_and_pack(
+    w: torch.Tensor, wtype: ScalarType, group_size: int, enable_machete: bool
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Quantize and pack weight matrix."""
+    w_ref, w_q, w_s, _ = quantize_weights(
+        w,
+        wtype,
+        group_size,
+        zero_points=False,
+    )
+
+    w_q_packed = pack_rows(w_q, wtype.size_bits, *w_q.shape)
+
+    w_q_machete = w_q_packed.t().contiguous().t()
+    if enable_machete and vllm_custom_ops is not None:
+        w_q_machete = vllm_custom_ops.machete_prepack_B(w_q_machete, wtype)
+
+    return w_ref, w_q_machete, w_q_packed, w_s
+
+
+@click.command()
+@click.option(
+    "-m",
+    "--m-dim",
+    required=True,
+    type=int,
+    default=4096,
+    help="1st dimension of A matrix (M x K)",
+)
+@click.option(
+    "-k",
+    "--k-dim",
+    required=True,
+    type=int,
+    default=8192,
+    help="Common dimension of A and B matrices (M x K) * (K * N)",
+)
+@click.option(
+    "-n",
+    "--n-dim",
+    required=True,
+    type=int,
+    default=4096,
+    help="2nd dimension of B matrix (K x N)",
+)
+@click.option(
+    "--input-dtype",
+    required=True,
+    type=click.Choice(["fp16", "bf16", "fp32"]),
+    default="fp16",
+    help="Data type of input",
+)
+@click.option(
+    "--weight-dtype",
+    required=True,
+    type=click.Choice(["uint4", "uint8", "uint4b8", "uint8b128"]),
+    default="uint4b8",
+    help="Data type of input",
+)
+@click.option(
+    "--enable-machete",
+    required=False,
+    type=bool,
+    is_flag=True,
+    default=False,
+    help="Flag for enabling running Machete (only on H100)",
+)
+@click.option(
+    "-i",
+    "--num-iterations",
+    required=False,
+    type=int,
+    default=100,
+    help="Number of iterations",
+)
+@click.option(
+    "-w",
+    "--num-warmup-iterations",
+    required=False,
+    type=int,
+    default=10,
+    help="Number of warmup iterations",
+)
+@click.option(
+    "-v",
+    "--verbose",
+    required=False,
+    type=bool,
+    is_flag=True,
+    default=False,
+    help="Flag for printing verbose output",
+)
+@click.option(
+    "-g",
+    "--gpu",
+    required=False,
+    type=str,
+    default=current_platform.device,
+    help="Device to run on",
+)
+def main(
+    m_dim: int,
+    k_dim: int,
+    n_dim: int,
+    input_dtype: str,
+    weight_dtype: str,
+    enable_machete: bool,
+    num_iterations: int,
+    num_warmup_iterations: int,
+    verbose: bool,
+    gpu: str,
+) -> None:
+    """Benchmark mixed-precision matrix multiply.
+
+    Args:
+        m_dim: 1st dimension of matrix A.
+        k_dim: Common dimension between matrix A and B.
+        n_dim: 2nd dimension of matrix B.
+        input_dtype: Data type of input matrices.
+        weight_dtype: Data type of weight matrices.
+        enable_machete: Enable running Machete kernel.
+        num_iterations: Number of iterations to record benchmark times for each impl.
+        num_warmup_iterations: Number of iterations to "warmup" each impl before recording benchmark times.
+        verbose: Flag to indicate whether or not to print verbose output.
+        gpu: Which gpu to run on.
+    """
+    seed: Final = 0
+    seed_everything(seed)
+
+    device: Final = torch.device(gpu)
+    torch.set_default_device(device)
+
+    input_dtype_torch: Final = _to_torch_dtype(input_dtype)
+    weight_dtype_vllm: Final = _to_scalar_dtype(weight_dtype)
+
+    group_size: Final = 128
+    assert group_size <= k_dim
+
+    if enable_machete and vllm_custom_ops is None:
+        error_msg = "In order to enable machete baseline we vLLM must be enabled via `CONCH_ENABLE_VLLM=1`."
+        raise ValueError(error_msg)
+
+    a = (10 * (torch.rand((m_dim, k_dim), dtype=torch.float32, device=device) - 0.3)).to(input_dtype_torch)
+    b = (10 * (torch.rand((k_dim, n_dim), dtype=torch.float32, device=device) - 0.3)).to(input_dtype_torch)
+
+    w_ref, w_q_machete, w_q, w_s = _machete_quantize_and_pack(b, weight_dtype_vllm, group_size, enable_machete)
+
+    output_ref = torch.matmul(a, w_ref)
+
+    triton_output = mixed_precision_gemm(a, w_q, w_s, None, weight_dtype_vllm, group_size)
+
+    # Relax atol as our reduction dim becomes larger (more rounding error)
+    atol = min(5e-2 * math.sqrt(k_dim), 1)
+    rtol = 1e-1
+
+    if enable_machete and vllm_custom_ops is not None:
+        machete_output = vllm_custom_ops.machete_gemm(
+            a=a,
+            b_q=w_q_machete,
+            b_type=weight_dtype_vllm,
+            b_scales=w_s,
+            b_zeros=None,
+            b_group_size=group_size,
+        )
+
+        if not torch.allclose(output_ref, machete_output, rtol=rtol, atol=atol):
+            print("WARNING: Reference and machete results differ!")
+            print(f"Output max diff: {(output_ref - machete_output).abs().max().item()}")
+
+            if verbose:
+                print(f"Reference output: {output_ref}")
+                print(f"Machete output: {machete_output}")
+
+    if not torch.allclose(output_ref, triton_output, rtol=rtol, atol=atol):
+        print("WARNING: Reference and Triton results differ!")
+        print(f"Output max diff: {(output_ref - triton_output).abs().max().item()}")
+
+        if verbose:
+            print(f"Reference output: {output_ref}")
+            print(f"Triton output: {triton_output}")
+    else:
+        print("Results matched :)")
+
+    if enable_machete and vllm_custom_ops is not None:
+        baseline_result = benchmark_it(
+            lambda: vllm_custom_ops.machete_gemm(
+                a=a,
+                b_q=w_q_machete,
+                b_type=weight_dtype_vllm,
+                b_scales=w_s,
+                b_zeros=None,
+                b_group_size=group_size,
+            ),
+            num_iterations=num_iterations,
+            num_warmup_iterations=num_warmup_iterations,
+            device=device,
+        )
+
+        baseline_result.pretty_print(name="Baseline", unit="ms")
+
+    triton_result = benchmark_it(
+        lambda: mixed_precision_gemm(a, w_q, w_s, None, weight_dtype_vllm, group_size),
+        num_iterations=num_iterations,
+        num_warmup_iterations=num_warmup_iterations,
+        device=device,
+    )
+
+    triton_result.pretty_print(name="Triton", unit="ms")
+
+
+if __name__ == "__main__":
+    main()
