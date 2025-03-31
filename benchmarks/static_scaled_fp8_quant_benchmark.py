@@ -7,11 +7,11 @@ from typing import Final
 import click
 import torch
 
-from benchmarks.utils import benchmark_it
 from conch.ops.quantization.fp8 import scaled_fp8_quant as scaled_fp8_quant_triton
 from conch.platforms import current_platform
 from conch.reference.quantization.fp8 import scaled_fp8_quant as scaled_fp8_quant_reference
 from conch.third_party.vllm.utils import seed_everything
+from conch.utils.benchmark import benchmark_it
 
 
 def _dequantize(quantized_tensor: torch.Tensor, inv_scale: float, dtype: torch.dtype) -> torch.Tensor:

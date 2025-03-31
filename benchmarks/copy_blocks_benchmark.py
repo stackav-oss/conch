@@ -8,11 +8,11 @@ from typing import Final
 import click
 import torch
 
-from benchmarks.utils import benchmark_it
 from conch.ops.vllm.copy_blocks import copy_blocks as copy_blocks_triton
 from conch.platforms import current_platform
 from conch.reference.vllm.copy_blocks import copy_blocks as copy_blocks_reference
 from conch.third_party.vllm.utils import seed_everything
+from conch.utils.benchmark import benchmark_it
 
 
 @click.command()

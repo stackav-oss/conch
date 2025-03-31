@@ -7,11 +7,11 @@ from typing import Final
 import click
 import torch
 
-from benchmarks.utils import benchmark_it
 from conch.ops.normalization.gemma_rms_norm import gemma_rms_norm as gemma_rms_norm_triton
 from conch.platforms import current_platform
 from conch.reference.normalization.gemma_rms_norm import gemma_rms_norm as gemma_rms_norm_reference
 from conch.third_party.vllm.utils import seed_everything
+from conch.utils.benchmark import benchmark_it
 
 
 @click.command()

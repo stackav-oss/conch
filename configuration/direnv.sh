@@ -4,7 +4,6 @@ watch_file $PWD/configuration/user.sh
 
 # Activate virtual environment
 layout_python3
-path_add PYTHONPATH $PWD
 
 # User-specified env vars can be stored here
 USER_CONFIG_FILE="$PWD/configuration/user.sh"

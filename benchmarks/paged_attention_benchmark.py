@@ -7,12 +7,12 @@ from typing import Final
 import click
 import torch
 
-from benchmarks.utils import benchmark_it
 from conch import envs
 from conch.kernels.attention.paged_attention import paged_attention_v2_launcher
 from conch.ops.attention.paged_attention import split_kv_cache
 from conch.platforms import current_platform
 from conch.third_party.vllm.utils import create_tensors
+from conch.utils.benchmark import benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.has_cuda():
     from vllm._custom_ops import paged_attention_v2 as vllm_paged_attention_v2

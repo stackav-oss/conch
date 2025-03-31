@@ -7,11 +7,11 @@ from typing import Final
 import click
 import torch
 
-from benchmarks.utils import benchmark_it
 from conch.ops.quantization.gemm import scaled_gemm as scaled_gemm_triton
 from conch.platforms import current_platform
 from conch.reference.quantization.scaled_gemm import scaled_gemm as scaled_gemm_reference
 from conch.third_party.vllm.utils import seed_everything
+from conch.utils.benchmark import benchmark_it
 
 
 def _to_torch_dtype(dtype_str: str) -> torch.dtype:

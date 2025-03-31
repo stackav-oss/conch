@@ -1,10 +1,9 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=42", "wheel", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "conch"
-dynamic = ["version"]
 authors = [
   { name="Jacob Manning", email="jmanning+oss@stackav.com" },
   { name="Ryan Hsu", email="rhsu+oss@stackav.com" },
@@ -18,35 +17,17 @@ classifiers = [
 ]
 license = "Apache-2.0"
 license-files = ["LICEN[CS]E*"]
+dynamic = ["dependencies", "optional-dependencies", "version"]
 
 [project.urls]
 Homepage = "https://github.com/stackav-oss/conch"
 Issues = "https://github.com/stackav-oss/conch/issues"
 
-[tool.hatch.version]
- path = "conch/_version.py"
+[tool.setuptools.packages.find]
+include = ["conch*"]
 
-[tool.hatch.build.targets.wheel]
-packages = ["conch"]
-
-[tool.hatch.envs.default]
-dependencies = [
-   "numpy>=1.26.4",
-   "setuptools>=40.8.0",
-   "triton>=3.1.0",
-   "torch>=2.5.1",
-]
-
-[tool.hatch.envs.benchmark]
-dependencies = [
-   "click>=8.1.8",
-]
-
-[tool.hatch.envs.test]
-dependencies = [
-   "einops>=0.8.0",
-   "pytest>=8.3.4",
-]
+[tool.setuptools.dynamic]
+version = {attr = "conch._version.__version__"}
 
 [tool.isort]
 include_trailing_comma = true

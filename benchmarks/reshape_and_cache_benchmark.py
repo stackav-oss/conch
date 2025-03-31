@@ -8,12 +8,12 @@ from typing import Final
 import click
 import torch
 
-from benchmarks.utils import benchmark_it
 from conch.ops.attention.paged_attention import split_kv_cache
 from conch.ops.vllm.reshape_and_cache import reshape_and_cache as reshape_and_cache_triton
 from conch.platforms import current_platform
 from conch.reference.vllm.reshape_and_cache import reshape_and_cache as reshape_and_cache_reference
 from conch.third_party.vllm.utils import create_kv_caches_with_random, reshape_vllm_kvcache, seed_everything
+from conch.utils.benchmark import benchmark_it
 
 
 def _to_conch_layout(
