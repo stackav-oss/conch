@@ -16,7 +16,7 @@ If you cannot (or do not want to) install direnv, you'll just need to manually a
 
 ### Optional: User environment
 
-Extra environment variables can be placed in `configuration/user.sh` (not tracked by git).
+Extra environment variables can be placed in `env/user.sh` (not tracked by git).
 For example:
 
 ```
