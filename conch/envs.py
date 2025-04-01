@@ -7,10 +7,13 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    CONCH_ENABLE_BNB: bool
     CONCH_ENABLE_VLLM: bool
 
 
 environment_variables: dict[str, Callable[[], Any]] = {
+    # Enable bitsandbytes kernels for testing/benchmarking
+    "CONCH_ENABLE_BNB": lambda: (os.environ.get("CONCH_ENABLE_BNB", "0").strip().lower() in ("1", "true")),
     # Enable vLLM kernels for testing/benchmarking
     "CONCH_ENABLE_VLLM": lambda: (os.environ.get("CONCH_ENABLE_VLLM", "0").strip().lower() in ("1", "true")),
 }
