@@ -1,3 +1,5 @@
+# Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
+
 import subprocess
 from setuptools import setup
 from typing import Final, Literal

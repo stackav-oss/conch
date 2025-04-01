@@ -1,3 +1,5 @@
+# Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
+
 """Bitsandbytes Triton kernel wrappers."""
 
 from dataclasses import dataclass
