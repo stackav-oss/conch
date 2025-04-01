@@ -43,6 +43,7 @@ def get_optional_dependencies():
         "dev": [
             "click>=8.1.8",
             "einops>=0.8.0",
+            "pre-commit>=4.2.0",
             "pytest>=8.3.4",
             "ruff>=0.4.10",
         ],
