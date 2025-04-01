@@ -65,6 +65,7 @@ def _dequantize(quantized_tensor: torch.Tensor, inv_scale: float, dtype: torch.d
     "--verbose",
     required=False,
     type=bool,
+    is_flag=True,
     default=False,
     help="Flag for printing verbose output",
 )

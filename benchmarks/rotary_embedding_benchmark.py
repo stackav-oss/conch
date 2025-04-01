@@ -68,6 +68,7 @@ from conch.utils.benchmark import benchmark_it
     "--verbose",
     required=False,
     type=bool,
+    is_flag=True,
     default=False,
     help="Flag for printing verbose output",
 )
