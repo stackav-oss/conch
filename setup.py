@@ -1,4 +1,3 @@
-import os
 import subprocess
 from setuptools import setup
 from typing import Final, Literal
@@ -45,8 +44,8 @@ def get_optional_dependencies():
             "click>=8.1.8",
             "einops>=0.8.0",
             "pytest>=8.3.4",
-        ]
-
+            "ruff>=0.4.10",
+        ],
     }
 
 
@@ -85,5 +84,5 @@ setup(
     name="conch",
     install_requires=get_default_dependencies(),
     extras_require=get_optional_dependencies(),
-    setup_requires=["wheel"]
+    setup_requires=["wheel"],
 )

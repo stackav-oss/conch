@@ -27,7 +27,7 @@ export ROCM_PATH=/opt/rocm
 
 To install the project as an editable, clone this repository and run this command from the repo root directory.
 
-```
+```bash
 pip install -e ".[dev]"
 ```
 
@@ -37,14 +37,20 @@ pip install -e ".[dev]"
 
 After installation, to run the Triton kernel tests, execute this command:
 
+
 ```bash
-python -m pytest tests/
+pytest
 ```
 
 You can also specify the path to a specific test file to run one test individually, for example:
 
 ```bash
-python -m pytest tests/copy_blocks_test.py
+pytest tests/copy_blocks_test.py
+```
+
+If you have other `pytest` installations in your `$PATH`, you can also run `pytest` via:
+```bash
+python -m pytest
 ```
 
 ## Benchmarks
