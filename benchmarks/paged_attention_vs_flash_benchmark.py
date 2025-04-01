@@ -8,7 +8,7 @@ import click
 import torch
 
 from conch import envs
-from conch.kernels.attention.paged_attention import paged_attention_v2_launcher
+from conch.kernels.attention.paged_attention import MAX_NUM_SPLITS, paged_attention_launcher
 from conch.ops.attention.paged_attention import split_kv_cache
 from conch.platforms import current_platform
 from conch.third_party.vllm.utils import create_tensors
@@ -152,15 +152,13 @@ def main(
 
     scale: Final = float(1.0 / (head_dim**0.5))
 
-    # Allocate additional memory for intermediate result (of shape (head_dim,)) for each batch/query head/cache block
+    # Allocate additional memory for intermediate result (of shape (head_dim,)) for each batch/split/query head
     output_scratchpad = torch.zeros(
-        (batch_size, num_query_heads, max_num_blocks_per_seq, head_dim), dtype=query.dtype, device=query.device
+        (batch_size, MAX_NUM_SPLITS, num_query_heads, head_dim), dtype=query.dtype, device=query.device
     )
 
-    # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/query head/cache block
-    lse_scratchpad = torch.zeros(
-        (batch_size, num_query_heads, max_num_blocks_per_seq), dtype=query.dtype, device=query.device
-    )
+    # # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/split/query head
+    lse_scratchpad = torch.zeros((batch_size, MAX_NUM_SPLITS, num_query_heads), dtype=query.dtype, device=query.device)
 
     alibi_slopes = None
 
@@ -191,7 +189,7 @@ def main(
 
     output_vllm = output_vllm.squeeze(1)
 
-    paged_attention_v2_launcher(
+    paged_attention_launcher(
         output_conch,
         query,
         key_cache_conch,
@@ -231,7 +229,7 @@ def main(
     )
 
     triton_result = benchmark_it(
-        lambda: paged_attention_v2_launcher(
+        lambda: paged_attention_launcher(
             output_conch,
             query,
             key_cache_conch,
