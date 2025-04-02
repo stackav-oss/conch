@@ -5,7 +5,7 @@
 **Note**: we assume that you have Python 3.10+ already installed on your system.
 
 1. Install [direnv](https://direnv.net/).
-2. Enable direnv.
+1. Enable direnv.
 
 ```bash
 direnv allow .
@@ -19,7 +19,7 @@ If you cannot (or do not want to) install direnv, you'll just need to manually a
 Extra environment variables can be placed in `env/user.sh` (not tracked by git).
 For example:
 
-```
+```bash
 export ROCM_PATH=/opt/rocm
 ```
 
@@ -37,7 +37,6 @@ pip install -e ".[dev]"
 
 After installation, to run the Triton kernel tests, execute this command:
 
-
 ```bash
 pytest
 ```
@@ -49,6 +48,7 @@ pytest tests/copy_blocks_test.py
 ```
 
 If you have other `pytest` installations in your `$PATH`, you can also run `pytest` via:
+
 ```bash
 python -m pytest
 ```

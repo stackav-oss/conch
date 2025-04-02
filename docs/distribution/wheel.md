@@ -2,12 +2,12 @@
 
 1. Install extra dependencies
 
-```
+```bash
 pip install build wheel
 ```
 
-2. Build the wheel file
+1. Build the wheel file
 
-```
+```bash
 python -m build
 ```
