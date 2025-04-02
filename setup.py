@@ -44,6 +44,7 @@ def get_optional_dependencies():
     return {
         "dev": [
             "click>=8.1.8",
+            "coverage>=7.8.0",
             "einops>=0.8.0",
             "pre-commit>=4.2.0",
             "pytest>=8.3.4",
