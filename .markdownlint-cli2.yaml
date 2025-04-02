@@ -1,0 +1,13 @@
+config:
+  # Require the use of fenced code blocks (with ```) instead of indented code blocks.
+  code-block-style:
+    style: fenced
+  # Docs should be written as one-sentence-per-line (not enforced automatically yet).
+  line-length: false
+  # Some renderers mess up when you have two blockquotes in a row. Ours don't.
+  no-blanks-blockquote: false
+  # Allow duplicate headings in the same file as long as they are not siblings.
+  no-duplicate-heading:
+    siblings_only: true
+ignores:
+  - .github/pull_request_template.md
