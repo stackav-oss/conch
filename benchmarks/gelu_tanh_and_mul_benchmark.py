@@ -7,11 +7,11 @@ from typing import Final
 import click
 import torch
 
-from benchmarks.utils import benchmark_it
 from conch.ops.activation.gelu_tanh_and_mul import gelu_tanh_and_mul as gelu_tanh_and_mul_triton
 from conch.platforms import current_platform
 from conch.reference.activation.gelu_tanh_and_mul import gelu_tanh_and_mul as gelu_tanh_and_mul_reference
 from conch.third_party.vllm.utils import seed_everything
+from conch.utils.benchmark import benchmark_it
 
 
 @click.command()
@@ -60,6 +60,7 @@ from conch.third_party.vllm.utils import seed_everything
     "--verbose",
     required=False,
     type=bool,
+    is_flag=True,
     default=False,
     help="Flag for printing verbose output",
 )

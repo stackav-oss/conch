@@ -7,11 +7,11 @@ from typing import Final
 import click
 import torch
 
-from benchmarks.utils import benchmark_it
 from conch.ops.quantization.int8 import scaled_int8_quant as scaled_int8_quant_triton
 from conch.platforms import current_platform
 from conch.reference.quantization.int8 import scaled_int8_quant as scaled_int8_quant_reference
 from conch.third_party.vllm.utils import seed_everything
+from conch.utils.benchmark import benchmark_it
 
 
 @click.command()
@@ -60,6 +60,7 @@ from conch.third_party.vllm.utils import seed_everything
     "--verbose",
     required=False,
     type=bool,
+    is_flag=True,
     default=False,
     help="Flag for printing verbose output",
 )

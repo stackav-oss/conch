@@ -7,12 +7,12 @@ from typing import Final
 import click
 import torch
 
-from benchmarks.utils import benchmark_it
 from conch import envs
 from conch.kernels.attention.paged_attention import paged_attention_v2_launcher
 from conch.ops.attention.paged_attention import split_kv_cache
 from conch.platforms import current_platform
 from conch.third_party.vllm.utils import create_tensors
+from conch.utils.benchmark import benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.is_nvidia():
     from vllm.vllm_flash_attn import flash_attn_with_kvcache  # type: ignore[attr-defined, unused-ignore]
@@ -98,6 +98,7 @@ else:
     "--verbose",
     required=False,
     type=bool,
+    is_flag=True,
     default=False,
     help="Flag for printing verbose output",
 )

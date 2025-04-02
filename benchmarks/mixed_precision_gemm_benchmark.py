@@ -8,13 +8,13 @@ from typing import Final
 import click
 import torch
 
-from benchmarks.utils import benchmark_it
 from conch import envs
 from conch.ops.quantization.gemm import mixed_precision_gemm
 from conch.platforms import current_platform
 from conch.third_party.vllm.quant_utils import pack_rows, quantize_weights
 from conch.third_party.vllm.scalar_type import ScalarType, scalar_types
 from conch.third_party.vllm.utils import seed_everything
+from conch.utils.benchmark import benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.has_cuda():
     from vllm import _custom_ops as vllm_custom_ops

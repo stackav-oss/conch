@@ -7,12 +7,12 @@ from typing import Final
 import click
 import torch
 
-from benchmarks.utils import benchmark_it
 from conch.ops.embedding.rotary_embedding import rotary_embedding as rotary_embedding_triton
 from conch.platforms import current_platform
 from conch.reference.embedding.rotary_embedding import compute_cos_sin_cache
 from conch.reference.embedding.rotary_embedding import rotary_embedding as rotary_embedding_reference
 from conch.third_party.vllm.utils import seed_everything
+from conch.utils.benchmark import benchmark_it
 
 
 @click.command()
@@ -68,6 +68,7 @@ from conch.third_party.vllm.utils import seed_everything
     "--verbose",
     required=False,
     type=bool,
+    is_flag=True,
     default=False,
     help="Flag for printing verbose output",
 )

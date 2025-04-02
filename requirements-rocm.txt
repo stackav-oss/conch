@@ -1,2 +1,0 @@
--r requirements-rocm-pytorch.txt
--r requirements-common.txt

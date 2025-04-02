@@ -1,10 +1,9 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=42", "wheel", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "conch"
-dynamic = ["version"]
 authors = [
   { name="Jacob Manning", email="jmanning+oss@stackav.com" },
   { name="Ryan Hsu", email="rhsu+oss@stackav.com" },
@@ -18,41 +17,34 @@ classifiers = [
 ]
 license = "Apache-2.0"
 license-files = ["LICEN[CS]E*"]
+dynamic = ["dependencies", "optional-dependencies", "version"]
 
 [project.urls]
 Homepage = "https://github.com/stackav-oss/conch"
 Issues = "https://github.com/stackav-oss/conch/issues"
 
-[tool.hatch.version]
- path = "conch/_version.py"
+[tool.setuptools.packages.find]
+include = ["conch*"]
 
-[tool.hatch.build.targets.wheel]
-packages = ["conch"]
+[tool.setuptools.dynamic]
+version = {attr = "conch._version.__version__"}
 
-[tool.hatch.envs.default]
-dependencies = [
-   "numpy>=1.26.4",
-   "setuptools>=40.8.0",
-   "triton>=3.1.0",
-   "torch>=2.5.1",
-]
+[tool.ruff]
+exclude = ["conch/third_party"]
+line-length = 120
 
-[tool.hatch.envs.benchmark]
-dependencies = [
-   "click>=8.1.8",
-]
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
 
-[tool.hatch.envs.test]
-dependencies = [
-   "einops>=0.8.0",
-   "pytest>=8.3.4",
-]
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
-[tool.isort]
-include_trailing_comma = true
-line_length = 120
-multi_line_output = 3
-from_first = false
+[tool.ruff.lint.isort]
+from-first = false
+known-first-party = ["conch"]
 
 [tool.ruff.lint.per-file-ignores]
 "benchmarks/**" = [
