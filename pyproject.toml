@@ -37,7 +37,7 @@ line-length = 120
 quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
-line-ending = "auto"
+line-ending = "lf"
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -79,3 +79,10 @@ known-first-party = ["conch"]
   "S101",    # Use of `assert` detected
   "T20",     # flake8-print
 ]
+
+[tool.isort]
+include_trailing_comma = true
+line_length = 120
+multi_line_output = 3
+from_first = false
+use_parentheses = true
