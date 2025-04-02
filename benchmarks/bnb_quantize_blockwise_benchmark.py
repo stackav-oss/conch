@@ -8,9 +8,7 @@ import click
 import torch
 
 from conch import envs
-from conch.ops.quantization.bitsandbytes.functional import (
-    quantize_4bit as triton_quantize_4bit,
-)
+from conch.ops.quantization.bitsandbytes.functional import quantize_4bit as triton_quantize_4bit
 from conch.platforms import current_platform
 from conch.third_party.vllm.utils import seed_everything
 from conch.utils.benchmark import benchmark_it

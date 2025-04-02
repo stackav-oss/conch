@@ -9,10 +9,7 @@ import torch
 import triton
 import triton.language as tl
 
-from conch.kernels.quantization.bitsandbytes.quantize_blockwise import (
-    _fp4_quantize,
-    _nf4_quantize,
-)
+from conch.kernels.quantization.bitsandbytes.quantize_blockwise import _fp4_quantize, _nf4_quantize
 from conch.kernels.quantization.bitsandbytes.quantize_blockwise import (
     quantize_blockwise_launcher as quantize_blockwise_triton,
 )
@@ -23,14 +20,11 @@ from conch.ops.quantization.bitsandbytes.functional import (
     get_absmax_shape,
     get_quantized_output_shape,
 )
-from conch.reference.quantization.bitsandbytes.quantize_blockwise import (
-    _pytorch_fp4_quantize,
-    _pytorch_nf4_quantize,
-)
+from conch.platforms import current_platform
+from conch.reference.quantization.bitsandbytes.quantize_blockwise import _pytorch_fp4_quantize, _pytorch_nf4_quantize
 from conch.reference.quantization.bitsandbytes.quantize_blockwise import (
     quantize_blockwise_launcher as quantize_blockwise_reference,
 )
-from conch.platforms import current_platform
 from conch.third_party.vllm.utils import seed_everything
 
 # Too many parameterizations makes the PyTorch-reference test cases too slow

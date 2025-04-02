@@ -1,8 +1,9 @@
 # Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
 
 import subprocess
-from setuptools import setup
 from typing import Final, Literal
+
+from setuptools import setup
 
 _REQUIREMENTS: Final = [
     "numpy>=1.26.4",

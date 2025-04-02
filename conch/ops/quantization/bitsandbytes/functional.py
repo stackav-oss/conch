@@ -8,12 +8,8 @@ from typing import Final, Optional
 import torch
 import triton
 
-from conch.kernels.quantization.bitsandbytes.dequantize_blockwise import (
-    dequantize_blockwise_launcher,
-)
-from conch.kernels.quantization.bitsandbytes.quantize_blockwise import (
-    quantize_blockwise_launcher,
-)
+from conch.kernels.quantization.bitsandbytes.dequantize_blockwise import dequantize_blockwise_launcher
+from conch.kernels.quantization.bitsandbytes.quantize_blockwise import quantize_blockwise_launcher
 
 SUPPORTED_QUANT_TYPES: Final = ["nf4", "fp4", "fp8"]
 
