@@ -10,10 +10,6 @@ from conch.platforms import current_platform
 
 def _compute_inv_freq(base: float, rotary_dim: int) -> torch.Tensor:
     """Compute the inverse frequency."""
-    # NOTE(woosuk): To exactly match the HF implementation, we need to
-    # use CPU to compute the cache and then move it to GPU. However, we
-    # create the cache on GPU for faster initialization. This may cause
-    # a slight numerical difference between the HF implementation and ours.
     return 1.0 / (base ** (torch.arange(0, rotary_dim, 2, dtype=torch.float) / rotary_dim))  # type: ignore[no-any-return]
 
 
