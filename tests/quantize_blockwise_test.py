@@ -47,7 +47,7 @@ def _quantize_nf4_kernel(x_ptr: tl.tensor, out_ptr: tl.tensor) -> None:
     tl.store(out_ptr, q_val)
 
 
-def _quantize_launcher(val: int, quant_type: str) -> float:
+def _quantize_launcher(val: float, quant_type: str) -> int:
     device = torch.device(current_platform.device)
 
     x = torch.full((1,), val, dtype=torch.float32, device=device)
@@ -56,7 +56,7 @@ def _quantize_launcher(val: int, quant_type: str) -> float:
     quantize_kernel = _quantize_fp4_kernel if quant_type == "fp4" else _quantize_nf4_kernel
     quantize_kernel[(1,)](x, out)
 
-    return out.cpu()[0].item()
+    return int(out.cpu()[0].item())
 
 
 @pytest.mark.parametrize(

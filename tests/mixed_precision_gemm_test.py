@@ -20,7 +20,7 @@ def _quantize_and_pack(
     wtype: ScalarType,
     group_size: int,
     use_zero_points: bool,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
     """Quantize and pack."""
 
     w_ref, w_q, w_s, w_zp = quantize_weights(
@@ -60,6 +60,11 @@ def test_gemm(
     b = (10 * (torch.rand((k_dim, n_dim), dtype=torch.float32, device=device) - 0.3)).to(input_dtype)
 
     w_ref, w_q_packed, w_s, w_zp = _quantize_and_pack(b, weight_dtype, group_size, use_zero_points)
+
+    # For mypy
+    if use_zero_points:
+        assert w_zp is not None
+    assert w_s is not None
 
     output_ref = torch.matmul(a, w_ref)
 

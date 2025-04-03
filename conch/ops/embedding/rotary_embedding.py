@@ -15,7 +15,7 @@ def rotary_embedding(
     cos_sin_cache: torch.Tensor,
     *,
     is_neox: bool = True,
-) -> None:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Apply rotary positional embedding to query and key.
 
     NOTE: Only supporting NeoX model.

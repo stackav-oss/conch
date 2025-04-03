@@ -17,7 +17,7 @@ from conch.utils.benchmark import benchmark_it
 if envs.CONCH_ENABLE_VLLM and current_platform.has_cuda():
     from vllm._custom_ops import paged_attention_v2 as vllm_paged_attention_v2
 else:
-    vllm_paged_attention_v2 = None
+    vllm_paged_attention_v2 = None  # type: ignore[assignment]
 
 
 @click.command()

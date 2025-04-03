@@ -175,7 +175,7 @@ def main(
         kv_cache_dtype,
         dtype,
         seed,
-        device,  # type: ignore[arg-type]
+        device,
     )
 
     key_cache_vllm, value_cache_vllm = key_caches_vllm[0], value_caches_vllm[0]

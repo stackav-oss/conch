@@ -14,7 +14,7 @@ def _compute_inv_freq(base: float, rotary_dim: int) -> torch.Tensor:
     # use CPU to compute the cache and then move it to GPU. However, we
     # create the cache on GPU for faster initialization. This may cause
     # a slight numerical difference between the HF implementation and ours.
-    return 1.0 / (base ** (torch.arange(0, rotary_dim, 2, dtype=torch.float) / rotary_dim))
+    return 1.0 / (base ** (torch.arange(0, rotary_dim, 2, dtype=torch.float) / rotary_dim))  # type: ignore[no-any-return]
 
 
 def compute_cos_sin_cache(base: float, rotary_dim: int, max_position_embeddings: int) -> torch.Tensor:
