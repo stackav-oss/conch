@@ -7,7 +7,7 @@ from typing import Final
 
 import torch
 
-from conch.kernels.attention.paged_attention import paged_attention_v2_launcher
+from conch.kernels.attention.paged_attention import paged_attention_launcher, MAX_NUM_SPLITS
 
 
 @dataclass
@@ -197,21 +197,19 @@ def paged_attention(
 
     # Allocate additional memory for intermediate result (of shape (head_size,)) for each batch/query head/cache block
     output_scratchpad = torch.zeros(
-        # Note: could reduce size here so that we only have scratchpad space for each split, not every cache block
-        (metadata.batch_size, metadata.num_query_heads, metadata.max_num_blocks_per_sequence, metadata.head_size),
+        (metadata.batch_size, MAX_NUM_SPLITS, metadata.num_query_heads, metadata.head_size),
         dtype=output.dtype,
         device=output.device,
     )
 
     # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/query head/cache block
     lse_scratchpad = torch.zeros(
-        # Note: could reduce size here so that we only have scratchpad space for each split, not every cache block
-        (metadata.batch_size, metadata.num_query_heads, metadata.max_num_blocks_per_sequence),
+        (metadata.batch_size, MAX_NUM_SPLITS, metadata.num_query_heads),
         dtype=output.dtype,
         device=output.device,
     )
 
-    paged_attention_v2_launcher(
+    paged_attention_launcher(
         output,
         query,
         key_cache,
