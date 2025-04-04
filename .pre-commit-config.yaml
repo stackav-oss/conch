@@ -31,6 +31,6 @@ repos:
   hooks:
     - id: mypy-local
       name: mypy-local
-      entry: scripts/mypy.sh
+      entry: ./scripts/mypy.sh
       language: system
       files: \.py$
