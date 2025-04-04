@@ -1,9 +1,9 @@
 # Repo Structure
 
 - `benchmarks/`
-  - This directory contains microbenchmarks for each kernel/op in conch
+  - This directory contains microbenchmarks for each kernel/op in Conch
 - `conch/`
-  - See [conch docs](../conch/structure.md) for more info about the conch package structure
+  - See [Conch docs](../conch/structure.md) for more info about the Conch package structure
 - `docs/`
   - This directory contains documentation in markdown format
 - `env/`
@@ -11,4 +11,4 @@
 - `scripts/`
   - This directory contains shell scripts for easing the developer experience
 - `tests/`
-  - This directory contains unit tests for each kernel/op in conch
+  - This directory contains unit tests for each kernel/op in Conch

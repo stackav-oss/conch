@@ -2,7 +2,7 @@
 
 ## Kernels
 
-This directory contains the Triton kernels for each operation supported by conch.
+This directory contains the Triton kernels for each operation supported by Conch.
 Subdirectories should separate kernels based on their "category" (e.g. activation functions, quantization, etc.).
 We do not currently have any best-practices on this subdirectory structure.
 
@@ -40,7 +40,7 @@ Currently we have a simple platform-detection mechanism based on PyTorch.
 
 ## Reference
 
-This directory contains reference implementations of the operations supported by conch.
+This directory contains reference implementations of the operations supported by Conch.
 Similar to the `kernels/` and `ops/` directory, there is a subdirectory structure for categories of operations.
 The reference implementations **must** be written in pure PyTorch.
 If there is an implementation from another library (e.g. vLLM), its use should be gated by an environment variable toggle (e.g. `CONCH_ENABLE_VLLM`).

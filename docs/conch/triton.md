@@ -10,4 +10,4 @@
     - This convention is also not widely recognized, and there is no standard by prevailing Triton literature.
     - Similar to the `constexpr` naming convention, this dismbiguates which parameters are pointers that must be `tl.load()`-ed.
 1. Stride parameters should be `snake_case` and contain `stride` in the parameter name.
-1. Stride parameters should be `snake_case`.
+1. Scalar parameters should be `snake_case`.

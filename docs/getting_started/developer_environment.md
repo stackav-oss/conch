@@ -58,7 +58,7 @@ python -m pytest
 To benchmark all Triton kernels, execute this script:
 
 ```bash
-./scripts/run_benchmarks.sh
+./scripts/benchmarks/run_all.sh
 ```
 
 You can also run benchmarks individually, for example:
