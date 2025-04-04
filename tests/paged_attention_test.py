@@ -386,7 +386,7 @@ def _triton_vs_vllm_cuda(
         block_tables,
         seq_lens,
         cache_block_size,
-        max_seq_len,
+        int(max_seq_len.item()),
         None,
         kv_cache_dtype,
         k_scale,

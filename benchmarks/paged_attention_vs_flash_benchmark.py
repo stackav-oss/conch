@@ -17,7 +17,7 @@ from conch.utils.benchmark import benchmark_it
 if envs.CONCH_ENABLE_VLLM and current_platform.is_nvidia():
     from vllm.vllm_flash_attn import flash_attn_with_kvcache  # type: ignore[attr-defined, unused-ignore]
 else:
-    flash_attn_with_kvcache = None
+    flash_attn_with_kvcache = None  # type: ignore[assignment]
 
 
 @click.command()

@@ -1,8 +1,9 @@
 # Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
 
 import subprocess
-from setuptools import setup
 from typing import Final, Literal
+
+from setuptools import setup
 
 _REQUIREMENTS: Final = [
     "numpy>=1.26.4",
@@ -33,18 +34,20 @@ _PLATFORM_REQUIREMENTS: Final = {
 }
 
 
-def get_default_dependencies():
+def get_default_dependencies() -> list[str]:
     """Determine the appropriate dependencies based on detected hardware."""
     platform = get_platform()
     return _REQUIREMENTS + _PLATFORM_REQUIREMENTS[platform]
 
 
-def get_optional_dependencies():
+def get_optional_dependencies() -> dict[str, list[str]]:
     """Get optional dependency groups."""
     return {
         "dev": [
             "click>=8.1.8",
+            "coverage>=7.8.0",
             "einops>=0.8.0",
+            "mypy>=1.15.0",
             "pre-commit>=4.2.0",
             "pytest>=8.3.4",
             "ruff>=0.4.10",
@@ -83,7 +86,7 @@ def get_platform() -> Literal["cuda", "rocm", "cpu", "xpu"]:
     return "cpu"
 
 
-setup(
+setup(  # type: ignore[no-untyped-call]
     name="conch",
     install_requires=get_default_dependencies(),
     extras_require=get_optional_dependencies(),

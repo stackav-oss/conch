@@ -19,7 +19,7 @@ environment_variables: dict[str, Callable[[], Any]] = {
 }
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     # lazy evaluation of environment variables
     if name in environment_variables:
         return environment_variables[name]()
@@ -27,5 +27,5 @@ def __getattr__(name: str):
     raise AttributeError(error_msg)
 
 
-def __dir__():
+def __dir__() -> list[str]:
     return list(environment_variables.keys())

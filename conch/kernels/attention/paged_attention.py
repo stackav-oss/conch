@@ -10,7 +10,7 @@ from typing import Final
 import torch
 import triton
 import triton.language as tl
-from triton.language.extra import libdevice
+from triton.language.extra import libdevice  # type: ignore[attr-defined]
 
 from conch.platforms import current_platform
 

@@ -7,3 +7,5 @@ env/user.sh
 
 build/
 dist/
+
+.coverage

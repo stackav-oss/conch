@@ -1,6 +1,6 @@
 # Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from conch.platforms.platform import Platform, PlatformEnum, detect_current_platform
 
@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     current_platform: Platform
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name == "current_platform":
         global _current_platform  # noqa: PLW0603
         if _current_platform is None:

@@ -23,6 +23,33 @@ dynamic = ["dependencies", "optional-dependencies", "version"]
 Homepage = "https://github.com/stackav-oss/conch"
 Issues = "https://github.com/stackav-oss/conch/issues"
 
+[tool.isort]
+include_trailing_comma = true
+line_length = 120
+multi_line_output = 3
+from_first = false
+use_parentheses = true
+
+[tool.mypy]
+explicit_package_bases = true
+strict = true
+exclude = [
+  "conch/third_party/",
+]
+
+[[tool.mypy.overrides]]
+module = ["conch.third_party.*"]
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = [
+  "setuptools",
+  "triton",
+  "triton.language",
+  "triton.language.extra",
+]
+follow_untyped_imports = true
+
 [tool.setuptools.packages.find]
 include = ["conch*"]
 
@@ -37,7 +64,7 @@ line-length = 120
 quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
-line-ending = "auto"
+line-ending = "lf"
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

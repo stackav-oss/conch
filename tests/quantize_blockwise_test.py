@@ -9,10 +9,7 @@ import torch
 import triton
 import triton.language as tl
 
-from conch.kernels.quantization.bitsandbytes.quantize_blockwise import (
-    _fp4_quantize,
-    _nf4_quantize,
-)
+from conch.kernels.quantization.bitsandbytes.quantize_blockwise import _fp4_quantize, _nf4_quantize
 from conch.kernels.quantization.bitsandbytes.quantize_blockwise import (
     quantize_blockwise_launcher as quantize_blockwise_triton,
 )
@@ -23,14 +20,11 @@ from conch.ops.quantization.bitsandbytes.functional import (
     get_absmax_shape,
     get_quantized_output_shape,
 )
-from conch.reference.quantization.bitsandbytes.quantize_blockwise import (
-    _pytorch_fp4_quantize,
-    _pytorch_nf4_quantize,
-)
+from conch.platforms import current_platform
+from conch.reference.quantization.bitsandbytes.quantize_blockwise import _pytorch_fp4_quantize, _pytorch_nf4_quantize
 from conch.reference.quantization.bitsandbytes.quantize_blockwise import (
     quantize_blockwise_launcher as quantize_blockwise_reference,
 )
-from conch.platforms import current_platform
 from conch.third_party.vllm.utils import seed_everything
 
 # Too many parameterizations makes the PyTorch-reference test cases too slow
@@ -53,7 +47,7 @@ def _quantize_nf4_kernel(x_ptr: tl.tensor, out_ptr: tl.tensor) -> None:
     tl.store(out_ptr, q_val)
 
 
-def _quantize_launcher(val: int, quant_type: str) -> float:
+def _quantize_launcher(val: float, quant_type: str) -> int:
     device = torch.device(current_platform.device)
 
     x = torch.full((1,), val, dtype=torch.float32, device=device)
@@ -62,7 +56,7 @@ def _quantize_launcher(val: int, quant_type: str) -> float:
     quantize_kernel = _quantize_fp4_kernel if quant_type == "fp4" else _quantize_nf4_kernel
     quantize_kernel[(1,)](x, out)
 
-    return out.cpu()[0].item()
+    return int(out.cpu()[0].item())
 
 
 @pytest.mark.parametrize(

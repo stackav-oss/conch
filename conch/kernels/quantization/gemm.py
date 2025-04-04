@@ -145,9 +145,6 @@ def _get_tuning_parameters() -> dict[str, int]:
             "cxpr_group_size_m": 8,
             "num_warps": 8,
             "num_stages": 2,
-            # Note: increasing num_warps to 16 and num_stages to 6 can improve performance on
-            # the microbenchmark, but causes out-of-shared-memory errors when running inference
-            # evaluation script
         }
 
     if "MI300X" in device_name:

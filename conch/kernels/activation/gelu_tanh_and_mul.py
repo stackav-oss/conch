@@ -7,7 +7,7 @@ from typing import Final
 import torch
 import triton
 import triton.language as tl
-from triton.language.extra import libdevice
+from triton.language.extra import libdevice  # type: ignore[attr-defined]
 
 _M_2_SQRTPI: Final = 1.12837916709551257390
 _M_SQRT2: Final = 1.41421356237309504880

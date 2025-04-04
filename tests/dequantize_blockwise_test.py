@@ -9,10 +9,7 @@ import torch
 import triton
 import triton.language as tl
 
-from conch.kernels.quantization.bitsandbytes.dequantize_blockwise import (
-    _fp4_dequantize,
-    _nf4_dequantize,
-)
+from conch.kernels.quantization.bitsandbytes.dequantize_blockwise import _fp4_dequantize, _nf4_dequantize
 from conch.kernels.quantization.bitsandbytes.dequantize_blockwise import (
     dequantize_blockwise_launcher as dequantize_blockwise_triton,
 )
@@ -21,6 +18,7 @@ from conch.ops.quantization.bitsandbytes.functional import (
     SUPPORTED_QUANT_TYPES,
     _create_dynamic_map,
 )
+from conch.platforms import current_platform
 from conch.reference.quantization.bitsandbytes.dequantize_blockwise import (
     _pytorch_fp4_dequantize,
     _pytorch_nf4_dequantize,
@@ -28,7 +26,6 @@ from conch.reference.quantization.bitsandbytes.dequantize_blockwise import (
 from conch.reference.quantization.bitsandbytes.dequantize_blockwise import (
     dequantize_blockwise_launcher as dequantize_blockwise_reference,
 )
-from conch.platforms import current_platform
 from conch.third_party.vllm.utils import seed_everything
 
 # Too many parameterizations makes the PyTorch-reference test cases too slow

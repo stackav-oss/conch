@@ -109,6 +109,10 @@ def main(
     result_ref = gemma_rms_norm_reference(x_ref, weights, epsilon, residual=None)
     result_triton = gemma_rms_norm_triton(x_triton, weights, epsilon, residual=None)
 
+    # For mypy (if residual==None then result is single Tensor, not tuple[Tensor, Tensor])
+    assert isinstance(result_ref, torch.Tensor)
+    assert isinstance(result_triton, torch.Tensor)
+
     if not torch.allclose(result_ref, result_triton, atol=absolute_tolerance):
         print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})")
         print(f"Output max diff: {(result_triton - result_ref).abs().max().item()}")

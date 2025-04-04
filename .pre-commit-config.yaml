@@ -1,9 +1,34 @@
 repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v5.0.0
+  hooks:
+    - id: no-commit-to-branch
+    - id: end-of-file-fixer
+    - id: mixed-line-ending
+      args: [--fix, lf]
+    - id: trailing-whitespace
+    - id: check-toml
+
+- repo: https://github.com/pycqa/isort
+  rev: 5.13.2
+  hooks:
+    - id: isort
+
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  # Ruff version.
   rev: v0.11.2
   hooks:
-    # Run the linter.
     - id: ruff
-    # Run the formatter.
     - id: ruff-format
+
+- repo: https://github.com/DavidAnson/markdownlint-cli2
+  rev: v0.17.2
+  hooks:
+    - id: markdownlint-cli2
+
+- repo: local
+  hooks:
+    - id: mypy-local
+      name: mypy-local
+      entry: scripts/mypy.sh
+      language: system
+      files: \.py$

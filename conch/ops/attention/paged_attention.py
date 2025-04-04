@@ -7,7 +7,7 @@ from typing import Final
 
 import torch
 
-from conch.kernels.attention.paged_attention import paged_attention_launcher, MAX_NUM_SPLITS
+from conch.kernels.attention.paged_attention import MAX_NUM_SPLITS, paged_attention_launcher
 
 
 @dataclass

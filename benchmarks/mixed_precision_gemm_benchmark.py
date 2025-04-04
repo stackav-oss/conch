@@ -19,7 +19,7 @@ from conch.utils.benchmark import benchmark_it
 if envs.CONCH_ENABLE_VLLM and current_platform.has_cuda():
     from vllm import _custom_ops as vllm_custom_ops
 else:
-    vllm_custom_ops = None
+    vllm_custom_ops = None  # type: ignore[assignment]
 
 
 def _to_torch_dtype(dtype_str: str) -> torch.dtype:
