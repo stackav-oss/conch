@@ -3,6 +3,7 @@
 """Triton copy_blocks benchmark."""
 
 import random
+import sys
 from typing import Final
 
 import click
@@ -12,7 +13,7 @@ from conch.ops.vllm.copy_blocks import copy_blocks as copy_blocks_triton
 from conch.platforms import current_platform
 from conch.reference.vllm.copy_blocks import copy_blocks as copy_blocks_reference
 from conch.third_party.vllm.utils import seed_everything
-from conch.utils.benchmark import benchmark_it
+from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 
 @click.command()
@@ -105,6 +106,14 @@ from conch.utils.benchmark import benchmark_it
     default=current_platform.device,
     help="Device to run on",
 )
+@click.option(
+    "--csv",
+    required=False,
+    type=bool,
+    is_flag=True,
+    default=False,
+    help="Flag for printing results in CSV format",
+)
 def main(
     head_dim: int,
     num_layers: int,
@@ -117,6 +126,7 @@ def main(
     absolute_tolerance: float,
     verbose: bool,
     gpu: str,
+    csv: bool,
 ) -> None:
     """Benchmark Triton copy_blocks operation.
 
@@ -132,6 +142,7 @@ def main(
         absolute_tolerance: Absolute tolerance used to check accuracy of PyTorch vs. Triton.
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
+        csv: Flag to indicate whether or not to print results in CSV format.
     """
     seed: Final = 0
     seed_everything(seed)
@@ -140,6 +151,18 @@ def main(
     torch.set_default_device(device)
 
     dtype: Final = torch.float16
+
+    metadata = BenchmarkMetadata(
+        platform=current_platform.name(),
+        params={
+            "head_dim": head_dim,
+            "num_layers": num_layers,
+            "cache_block_size": cache_block_size,
+            "num_kv_heads": num_kv_heads,
+            "num_blocks": num_blocks,
+            "num_mappings": num_mappings,
+        },
+    )
 
     # Generate random block mappings where each source block is mapped to two
     # destination blocks.
@@ -183,28 +206,28 @@ def main(
 
     for key_cache, cloned_key_cache in zip(key_caches, cloned_key_caches, strict=False):
         if not torch.allclose(key_cache, cloned_key_cache, atol=absolute_tolerance):
-            print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})")
-            print(f"Output max diff: {(cloned_key_cache - key_cache).abs().max().item()}")
+            print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)
+            print(f"Output max diff: {(cloned_key_cache - key_cache).abs().max().item()}", file=sys.stderr)
 
             if verbose:
-                print(f"Reference output: {key_cache}")
-                print(f"Triton output: {cloned_key_cache}")
+                print(f"Reference output: {key_cache}", file=sys.stderr)
+                print(f"Triton output: {cloned_key_cache}", file=sys.stderr)
         else:
             num_key_matched += 1
 
     for value_cache, cloned_value_cache in zip(value_caches, cloned_value_caches, strict=False):
         if not torch.allclose(value_cache, cloned_value_cache, atol=absolute_tolerance):
-            print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})")
-            print(f"Output max diff: {(cloned_value_cache - value_cache).abs().max().item()}")
+            print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)
+            print(f"Output max diff: {(cloned_value_cache - value_cache).abs().max().item()}", file=sys.stderr)
 
             if verbose:
-                print(f"Reference output: {value_cache}")
-                print(f"Triton output: {cloned_value_cache}")
+                print(f"Reference output: {value_cache}", file=sys.stderr)
+                print(f"Triton output: {cloned_value_cache}", file=sys.stderr)
         else:
             num_value_matched += 1
 
     if num_key_matched == num_layers and num_value_matched == num_layers:
-        print(f"Results matched with atol={absolute_tolerance} :)")
+        print(f"Results matched with atol={absolute_tolerance} :)", file=sys.stderr)
 
     # Benchmark Reference vs. Triton implementations
     baseline_result = benchmark_it(
@@ -213,6 +236,8 @@ def main(
             cloned_value_caches,
             block_mapping,
         ),
+        tag="Baseline",
+        metadata=metadata,
         num_iterations=num_iterations,
         num_warmup_iterations=num_warmup_iterations,
         device=block_mapping_tensor.device,
@@ -224,14 +249,17 @@ def main(
             value_caches,
             block_mapping_tensor,
         ),
+        tag="Triton",
+        metadata=metadata,
         num_iterations=num_iterations,
         num_warmup_iterations=num_warmup_iterations,
         device=block_mapping_tensor.device,
     )
 
     # Print results
-    baseline_result.pretty_print(name="Baseline", unit="ms")
-    triton_result.pretty_print(name="Triton", unit="ms")
+    triton_result.print_parameters(csv=csv)
+    triton_result.print_results(csv=csv)
+    baseline_result.print_results(csv=csv)
 
 
 if __name__ == "__main__":

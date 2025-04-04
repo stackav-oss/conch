@@ -2,6 +2,7 @@
 
 """Triton paged attention vs. FlashAttnWithKVCache benchmark."""
 
+import sys
 from typing import Final
 
 import click
@@ -12,7 +13,7 @@ from conch.kernels.attention.paged_attention import MAX_NUM_SPLITS, paged_attent
 from conch.ops.attention.paged_attention import split_kv_cache
 from conch.platforms import current_platform
 from conch.third_party.vllm.utils import create_tensors
-from conch.utils.benchmark import benchmark_it
+from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.is_nvidia():
     from vllm.vllm_flash_attn import flash_attn_with_kvcache  # type: ignore[attr-defined, unused-ignore]
@@ -110,6 +111,14 @@ else:
     default=current_platform.device,
     help="Device to run on",
 )
+@click.option(
+    "--csv",
+    required=False,
+    type=bool,
+    is_flag=True,
+    default=False,
+    help="Flag for printing results in CSV format",
+)
 def main(
     head_dim: int,
     seq_len: int,
@@ -122,6 +131,7 @@ def main(
     absolute_tolerance: float,
     verbose: bool,
     gpu: str,
+    csv: bool,
 ) -> None:
     """Benchmark Triton PagedAttention.
 
@@ -137,12 +147,23 @@ def main(
         absolute_tolerance: Absolute tolerance used to check accuracy of PyTorch vs. Triton.
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
+        csv: Flag to indicate whether or not to print results in CSV format.
     """
     if not current_platform.is_nvidia() or flash_attn_with_kvcache is None:
         error_msg = "Platform must be Nvidia and vLLM must be installed & enabled via CONCH_ENABLE_VLLM=1"
         raise NotImplementedError(error_msg)
 
-    print(f"{head_dim=}, {seq_len=}, {cache_block_size=}, {batch_size=}, {num_query_heads=}, {num_kv_heads=}")
+    metadata = BenchmarkMetadata(
+        platform=current_platform.name(),
+        params={
+            "head_dim": head_dim,
+            "seq_len": seq_len,
+            "cache_block_size": cache_block_size,
+            "batch_size": batch_size,
+            "num_query_heads": num_query_heads,
+            "num_kv_heads": num_kv_heads,
+        },
+    )
 
     query, _, _, key_cache_conch, value_cache_conch, block_tables, seq_lens = create_tensors(
         head_dim, seq_len, cache_block_size, batch_size, num_query_heads, num_kv_heads, "auto", gpu, torch.float16
@@ -203,14 +224,14 @@ def main(
     )
 
     if not torch.allclose(output_vllm, output_conch, atol=absolute_tolerance):
-        print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})")
-        print(f"Output max diff: {(output_conch - output_vllm).abs().max().item()}")
+        print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)
+        print(f"Output max diff: {(output_conch - output_vllm).abs().max().item()}", file=sys.stderr)
 
         if verbose:
-            print(f"Reference output: {output_vllm}")
-            print(f"Triton output: {output_conch}")
+            print(f"Reference output: {output_vllm}", file=sys.stderr)
+            print(f"Triton output: {output_conch}", file=sys.stderr)
     else:
-        print(f"Results matched with atol={absolute_tolerance} :)")
+        print(f"Results matched with atol={absolute_tolerance} :)", file=sys.stderr)
 
     baseline_result = benchmark_it(
         lambda: flash_attn_with_kvcache(
@@ -223,6 +244,8 @@ def main(
             causal=True,
             alibi_slopes=alibi_slopes,
         ),
+        tag="Baseline",
+        metadata=metadata,
         num_iterations=num_iterations,
         num_warmup_iterations=num_warmup_iterations,
         device=query.device,
@@ -240,14 +263,17 @@ def main(
             block_tables,
             seq_lens,
         ),
+        tag="Triton",
+        metadata=metadata,
         num_iterations=num_iterations,
         num_warmup_iterations=num_warmup_iterations,
         device=query.device,
     )
 
     # Print results
-    baseline_result.pretty_print(name="Baseline", unit="ms")
-    triton_result.pretty_print(name="Triton", unit="ms")
+    triton_result.print_parameters(csv=csv)
+    triton_result.print_results(csv=csv)
+    baseline_result.print_results(csv=csv)
 
 
 if __name__ == "__main__":

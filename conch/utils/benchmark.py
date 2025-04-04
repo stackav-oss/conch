@@ -11,41 +11,91 @@ import torch
 
 
 @dataclass
+class BenchmarkMetadata:
+    """Class holding metadata for benchmark."""
+
+    platform: str
+    params: dict[str, Any]
+
+
+def to_unit(value: float, unit: str = "s") -> float:
+    """Convert a value to a specified unit (default is seconds).
+
+    Args:
+        value: The value to convert.
+        unit: (Optional) Unit to convert the times to, default is seconds.
+
+    Returns:
+        The converted value in the specified unit.
+    """
+    if unit == "ms":
+        return value * 1.0e3
+    if unit == "us":
+        return value * 1.0e6
+    if unit == "ns":
+        return value * 1.0e9
+    return value
+
+
+@dataclass
 class BenchmarkResult:
     """Class holding results of benchmark."""
 
+    tag: str
+    metadata: BenchmarkMetadata
     num_iterations: int
     min_: float
     max_: float
     mean_: float
     median_: float
 
-    def pretty_print(self, name: str | None = None, unit: str = "s") -> None:
+    def print_parameters(self, csv: bool = False) -> None:
+        """Print the parameters of the benchmark.
+
+        Args:
+            csv: (Optional) If True, print in CSV format.
+        """
+        if csv:
+            print(f"tag,platform,num_iterations,{','.join(self.metadata.params.keys())},runtime_ms")
+            return
+
+        print(f"Parameters: {self.metadata.params}")
+
+    def csv_print(self) -> None:
+        """Convert the benchmark result to a CSV string.
+
+        Returns:
+            A CSV string representation of the benchmark result.
+        """
+        print(
+            f"{self.tag},{self.metadata.platform},{self.num_iterations},{','.join(str(v) for v in self.metadata.params.values())},{to_unit(self.median_, 'ms'):.3f}"
+        )
+
+    def pretty_print(self, unit: str = "ms") -> None:
         """Pretty print the benchmarking results.
 
         Args:
-            name: (Optional) Name to identify these results.
-            unit: (Optional) Unit to print the times in, default is seconds.
+            unit: (Optional) Unit to print the times in, default is milliseconds.
         """
-        # Baseline, no conversion
-        conversion_factor: float | None = None
-
-        if unit == "ms":
-            conversion_factor = 1.0e3
-        if unit == "us":
-            conversion_factor = 1.0e6
-        if unit == "ns":
-            conversion_factor = 1.0e9
 
         def _format(value: float) -> str:
-            if conversion_factor is None:
-                return f"{value} {unit}"
-            return f"{value * conversion_factor:.3f} {unit}"
+            return f"{to_unit(value, unit):.3f} {unit}"
 
-        prefix = f"{name}: " if name is not None else ""
         print(
-            f"{prefix}num_iterations={self.num_iterations}, min={_format(self.min_)}, max={_format(self.max_)}, mean={_format(self.mean_)}, median={_format(self.median_)}"
+            f"{self.tag}: num_iterations={self.num_iterations}, min={_format(self.min_)}, max={_format(self.max_)}, mean={_format(self.mean_)}, median={_format(self.median_)}"
         )
+
+    def print_results(self, csv: bool = False) -> None:
+        """Print the benchmark results.
+
+        Args:
+            csv: (Optional) If True, print in CSV format.
+        """
+        if csv:
+            self.csv_print()
+            return
+
+        self.pretty_print()
 
 
 def _benchmark_wall(fn: Callable[[], Any]) -> float:
@@ -95,6 +145,8 @@ def _benchmark_cuda_event(fn: Callable[[], Any]) -> float:
 
 def benchmark_it(
     fn: Callable[[], Any],
+    tag: str,
+    metadata: BenchmarkMetadata,
     num_iterations: int = 100,
     num_warmup_iterations: int = 10,
     device: torch.device | str = "cuda",
@@ -103,7 +155,9 @@ def benchmark_it(
     """Function to benchmark wall clock time for a function.
 
     Args:
+        tag: The tag to identify the benchmark.
         fn: The function to benchmark.
+        metadata: Metadata for the benchmark.
         num_iterations: (Optional) Number of times to run fn.
         num_warmup_iterations: (Optional) Number of times to run fn to "warmup".
         device: (Optional) Torch device to allocate tensor for clearing L2 cache.
@@ -143,6 +197,8 @@ def benchmark_it(
         results.append(benchmark_fn(fn))
 
     return BenchmarkResult(
+        tag,
+        metadata,
         num_iterations,
         min(results),
         max(results),

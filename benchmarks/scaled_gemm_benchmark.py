@@ -2,6 +2,7 @@
 
 """Scaled matrix multiplication kernel benchmark."""
 
+import sys
 from typing import Final
 
 import click
@@ -11,7 +12,7 @@ from conch.ops.quantization.gemm import scaled_gemm as scaled_gemm_triton
 from conch.platforms import current_platform
 from conch.reference.quantization.scaled_gemm import scaled_gemm as scaled_gemm_reference
 from conch.third_party.vllm.utils import seed_everything
-from conch.utils.benchmark import benchmark_it
+from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 
 def _to_torch_dtype(dtype_str: str) -> torch.dtype:
@@ -144,6 +145,14 @@ def _is_floating_point_type(dtype: torch.dtype) -> bool:
     default=current_platform.device,
     help="Device to run on",
 )
+@click.option(
+    "--csv",
+    required=False,
+    type=bool,
+    is_flag=True,
+    default=False,
+    help="Flag for printing results in CSV format",
+)
 def main(
     m_dim: int,
     k_dim: int,
@@ -159,6 +168,7 @@ def main(
     num_warmup_iterations: int,
     verbose: bool,
     gpu: str,
+    csv: bool,
 ) -> None:
     """Benchmark Triton scaled matrix mulpity.
 
@@ -177,6 +187,7 @@ def main(
         num_warmup_iterations: Number of iterations to "warmup" each impl before recording benchmark times.
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
+        csv: Flag for printing results in CSV format.
     """
     if input_dtype == "fp8" and not current_platform.supports_fp8():
         error_msg = "FP8 not supported on this GPU, cannot run benchmark!"
@@ -190,6 +201,17 @@ def main(
 
     input_dtype_torch: Final = _to_torch_dtype(input_dtype)
     output_dtype_torch: Final = _to_torch_dtype(output_dtype)
+
+    metadata = BenchmarkMetadata(
+        platform=current_platform.name(),
+        params={
+            "m_dim": m_dim,
+            "k_dim": k_dim,
+            "n_dim": n_dim,
+            "input_dtype": input_dtype,
+            "output_dtype": output_dtype,
+        },
+    )
 
     if use_scalar_scale_a:
         scale_a_tensor = torch.tensor(scale_a, dtype=torch.float32, device=device)
@@ -216,14 +238,14 @@ def main(
     triton_output = scaled_gemm_triton(a, b, scale_a_tensor, scale_b_tensor, output_dtype_torch, bias)
 
     if not torch.allclose(reference_output, triton_output, atol=1e-1, rtol=1e-1):
-        print("WARNING: Reference and Triton results differ!")
-        print(f"Output max diff: {(reference_output - triton_output).abs().max().item()}")
+        print("WARNING: Reference and Triton results differ!", file=sys.stderr)
+        print(f"Output max diff: {(reference_output - triton_output).abs().max().item()}", file=sys.stderr)
 
         if verbose:
-            print(f"Reference output: {reference_output}")
-            print(f"Triton output: {triton_output}")
+            print(f"Reference output: {reference_output}", file=sys.stderr)
+            print(f"Triton output: {triton_output}", file=sys.stderr)
     else:
-        print("Results matched :)")
+        print("Results matched :)", file=sys.stderr)
 
     baseline_result = benchmark_it(
         lambda: scaled_gemm_reference(
@@ -234,6 +256,8 @@ def main(
             output_dtype_torch,
             bias,
         ),
+        tag="Baseline",
+        metadata=metadata,
         num_iterations=num_iterations,
         num_warmup_iterations=num_warmup_iterations,
         device=device,
@@ -248,13 +272,17 @@ def main(
             output_dtype_torch,
             bias,
         ),
+        tag="Triton",
+        metadata=metadata,
         num_iterations=num_iterations,
         num_warmup_iterations=num_warmup_iterations,
         device=device,
     )
 
-    baseline_result.pretty_print(name="Baseline", unit="ms")
-    triton_result.pretty_print(name="Triton", unit="ms")
+    # Print results
+    triton_result.print_parameters(csv=csv)
+    triton_result.print_results(csv=csv)
+    baseline_result.print_results(csv=csv)
 
 
 if __name__ == "__main__":
