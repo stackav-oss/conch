@@ -115,7 +115,7 @@ def _machete_quantize_and_pack(
     required=False,
     type=bool,
     is_flag=True,
-    default=False,
+    default=envs.CONCH_BENCH_ENABLE_ALL_REF,
     help="Flag for enabling running Machete (only on H100)",
 )
 @click.option(

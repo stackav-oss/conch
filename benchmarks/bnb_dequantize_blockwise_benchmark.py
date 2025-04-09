@@ -80,7 +80,7 @@ def _to_torch_dtype(dtype_str: str) -> torch.dtype:
     required=False,
     type=bool,
     is_flag=True,
-    default=False,
+    default=envs.CONCH_BENCH_ENABLE_ALL_REF,
     help="Flag to enable BNB reference impl",
 )
 @click.option(

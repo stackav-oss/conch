@@ -7,11 +7,16 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    CONCH_BENCH_ENABLE_ALL_REF: bool
     CONCH_ENABLE_BNB: bool
     CONCH_ENABLE_VLLM: bool
 
 
 environment_variables: dict[str, Callable[[], Any]] = {
+    # Enable the vLLM/bitsandbytes reference implementations for all applicable benchmarks
+    "CONCH_BENCH_ENABLE_ALL_REF": lambda: (
+        os.environ.get("CONCH_BENCH_ENABLE_ALL_REF", "0").strip().lower() in ("1", "true")
+    ),
     # Enable bitsandbytes kernels for testing/benchmarking
     "CONCH_ENABLE_BNB": lambda: (os.environ.get("CONCH_ENABLE_BNB", "0").strip().lower() in ("1", "true")),
     # Enable vLLM kernels for testing/benchmarking
