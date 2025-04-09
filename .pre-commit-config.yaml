@@ -8,6 +8,8 @@ repos:
       args: [--fix, lf]
     - id: trailing-whitespace
     - id: check-toml
+    - id: check-executables-have-shebangs
+    - id: check-shebang-scripts-are-executable
 
 - repo: https://github.com/pycqa/isort
   rev: 5.13.2
