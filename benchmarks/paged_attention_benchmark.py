@@ -2,6 +2,7 @@
 
 """Triton paged attention benchmark."""
 
+import sys
 from typing import Final
 
 import click
@@ -12,7 +13,7 @@ from conch.kernels.attention.paged_attention import MAX_NUM_SPLITS, paged_attent
 from conch.ops.attention.paged_attention import split_kv_cache
 from conch.platforms import current_platform
 from conch.third_party.vllm.utils import create_tensors
-from conch.utils.benchmark import benchmark_it
+from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.has_cuda():
     from vllm._custom_ops import paged_attention_v2 as vllm_paged_attention_v2
@@ -118,6 +119,14 @@ else:
     default=current_platform.device,
     help="Device to run on",
 )
+@click.option(
+    "--csv",
+    required=False,
+    type=bool,
+    is_flag=True,
+    default=False,
+    help="Flag for printing results in CSV format",
+)
 def main(
     head_dim: int,
     seq_len: int,
@@ -131,6 +140,7 @@ def main(
     absolute_tolerance: float,
     verbose: bool,
     gpu: str,
+    csv: bool,
 ) -> None:
     """Benchmark Triton PagedAttention.
 
@@ -147,12 +157,23 @@ def main(
         absolute_tolerance: Absolute tolerance used to check accuracy of PyTorch vs. Triton.
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
+        csv: Flag to indicate whether or not to print results in CSV format.
     """
     if kv_cache_dtype != "auto" and not current_platform.supports_fp8():
         error_msg = f"kv_cache_type '{kv_cache_dtype}' not supported on this GPU!"
         raise NotImplementedError(error_msg)
 
-    print(f"{head_dim=}, {seq_len=}, {cache_block_size=}, {batch_size=}, {num_query_heads=}, {num_kv_heads=}")
+    metadata = BenchmarkMetadata(
+        platform=current_platform.name(),
+        params={
+            "head_dim": head_dim,
+            "seq_len": seq_len,
+            "cache_block_size": cache_block_size,
+            "batch_size": batch_size,
+            "num_query_heads": num_query_heads,
+            "num_kv_heads": num_kv_heads,
+        },
+    )
 
     query, key_cache_vllm, value_cache_vllm, key_cache_conch, value_cache_conch, block_tables, seq_lens = (
         create_tensors(
@@ -246,14 +267,14 @@ def main(
         )
 
         if not torch.allclose(output_vllm, output_conch, atol=absolute_tolerance):
-            print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})")
-            print(f"Output max diff: {(output_conch - output_vllm).abs().max().item()}")
+            print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)
+            print(f"Output max diff: {(output_conch - output_vllm).abs().max().item()}", file=sys.stderr)
 
             if verbose:
-                print(f"Reference output: {output_vllm}")
-                print(f"Triton output: {output_conch}")
+                print(f"Reference output: {output_vllm}", file=sys.stderr)
+                print(f"Triton output: {output_conch}", file=sys.stderr)
         else:
-            print(f"Results matched with atol={absolute_tolerance} :)")
+            print(f"Results matched with atol={absolute_tolerance} :)", file=sys.stderr)
 
         baseline_result = benchmark_it(
             lambda: vllm_paged_attention_v2(
@@ -275,14 +296,15 @@ def main(
                 k_scale,
                 v_scale,
             ),
+            tag="Baseline",
+            metadata=metadata,
             num_iterations=num_iterations,
             num_warmup_iterations=num_warmup_iterations,
             device=query.device,
         )
-
-        baseline_result.pretty_print(name="Baseline", unit="ms")
     else:
-        print("Skipping checking vs. reference vLLM implementation...")
+        print("Skipping checking vs. reference vLLM implementation...", file=sys.stderr)
+        baseline_result = None
 
     triton_result = benchmark_it(
         lambda: paged_attention_launcher(
@@ -299,12 +321,18 @@ def main(
             k_scale=k_scale,
             v_scale=v_scale,
         ),
+        tag="Triton",
+        metadata=metadata,
         num_iterations=num_iterations,
         num_warmup_iterations=num_warmup_iterations,
         device=query.device,
     )
 
-    triton_result.pretty_print(name="Triton", unit="ms")
+    # Print results
+    triton_result.print_parameters(csv=csv)
+    triton_result.print_results(csv=csv)
+    if baseline_result is not None:
+        baseline_result.print_results(csv=csv)
 
 
 if __name__ == "__main__":

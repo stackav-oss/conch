@@ -3,6 +3,7 @@
 """Triton reshape_and_cache benchmark."""
 
 import random
+import sys
 from typing import Final
 
 import click
@@ -13,7 +14,7 @@ from conch.ops.vllm.reshape_and_cache import reshape_and_cache as reshape_and_ca
 from conch.platforms import current_platform
 from conch.reference.vllm.reshape_and_cache import reshape_and_cache as reshape_and_cache_reference
 from conch.third_party.vllm.utils import create_kv_caches_with_random, reshape_vllm_kvcache, seed_everything
-from conch.utils.benchmark import benchmark_it
+from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 
 def _to_conch_layout(
@@ -115,6 +116,14 @@ def _to_conch_layout(
     default=current_platform.device,
     help="Device to run on",
 )
+@click.option(
+    "--csv",
+    required=False,
+    type=bool,
+    is_flag=True,
+    default=False,
+    help="Flag for printing results in CSV format",
+)
 def main(
     head_dim: int,
     num_tokens: int,
@@ -127,6 +136,7 @@ def main(
     absolute_tolerance: float,
     verbose: bool,
     gpu: str,
+    csv: bool,
 ) -> None:
     """Benchmark Triton reshape_and_cache.
 
@@ -142,6 +152,7 @@ def main(
         absolute_tolerance: Absolute tolerance used to check accuracy of PyTorch vs. Triton.
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
+        csv: Flag for printing results in CSV format.
     """
     if kv_cache_dtype != "auto" and not current_platform.supports_fp8():
         error_msg = "Cannot use FP8 KV Cache because current platform does not support FP8"
@@ -154,6 +165,18 @@ def main(
     torch.set_default_device(device)
 
     dtype: Final = torch.float16
+
+    metadata = BenchmarkMetadata(
+        platform=current_platform.name(),
+        params={
+            "head_dim": head_dim,
+            "num_tokens": num_tokens,
+            "cache_block_size": cache_block_size,
+            "num_kv_heads": num_kv_heads,
+            "num_blocks": num_blocks,
+            "kv_cache_dtype": kv_cache_dtype,
+        },
+    )
 
     # Create a random slot mapping.
     num_slots = cache_block_size * num_blocks
@@ -196,24 +219,24 @@ def main(
     )
 
     if not torch.allclose(key_cache, key_cache_vllm_out, atol=absolute_tolerance):
-        print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})")
-        print(f"Output max diff: {(key_cache_vllm_out - key_cache).abs().max().item()}")
+        print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)
+        print(f"Output max diff: {(key_cache_vllm_out - key_cache).abs().max().item()}", file=sys.stderr)
 
         if verbose:
-            print(f"Reference output: {key_cache}")
-            print(f"Triton output: {key_cache_vllm_out}")
+            print(f"Reference output: {key_cache}", file=sys.stderr)
+            print(f"Triton output: {key_cache_vllm_out}", file=sys.stderr)
     else:
-        print(f"Key cache matched with atol={absolute_tolerance} :)")
+        print(f"Key cache matched with atol={absolute_tolerance} :)", file=sys.stderr)
 
     if not torch.allclose(value_cache, value_cache_vllm_out, atol=absolute_tolerance):
-        print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})")
-        print(f"Output max diff: {(value_cache_vllm_out - value_cache).abs().max().item()}")
+        print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)
+        print(f"Output max diff: {(value_cache_vllm_out - value_cache).abs().max().item()}", file=sys.stderr)
 
         if verbose:
-            print(f"Reference output: {value_cache}")
-            print(f"Triton output: {value_cache_vllm_out}")
+            print(f"Reference output: {value_cache}", file=sys.stderr)
+            print(f"Triton output: {value_cache_vllm_out}", file=sys.stderr)
     else:
-        print(f"Value cache matched with atol={absolute_tolerance} :)")
+        print(f"Value cache matched with atol={absolute_tolerance} :)", file=sys.stderr)
 
     # Benchmark Reference vs. Triton implementations
     baseline_result = benchmark_it(
@@ -227,6 +250,8 @@ def main(
             k_scale,
             v_scale,
         ),
+        tag="Baseline",
+        metadata=metadata,
         num_iterations=num_iterations,
         num_warmup_iterations=num_warmup_iterations,
         device=key_cache.device,
@@ -243,14 +268,17 @@ def main(
             k_scale,
             v_scale,
         ),
+        tag="Triton",
+        metadata=metadata,
         num_iterations=num_iterations,
         num_warmup_iterations=num_warmup_iterations,
         device=key_cache.device,
     )
 
     # Print results
-    baseline_result.pretty_print(name="Baseline", unit="ms")
-    triton_result.pretty_print(name="Triton", unit="ms")
+    triton_result.print_parameters(csv=csv)
+    triton_result.print_results(csv=csv)
+    baseline_result.print_results(csv=csv)
 
 
 if __name__ == "__main__":

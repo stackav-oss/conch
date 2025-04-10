@@ -2,6 +2,7 @@
 
 """Triton gemma_rms_norm benchmark."""
 
+import sys
 from typing import Final
 
 import click
@@ -11,7 +12,7 @@ from conch.ops.normalization.gemma_rms_norm import gemma_rms_norm as gemma_rms_n
 from conch.platforms import current_platform
 from conch.reference.normalization.gemma_rms_norm import gemma_rms_norm as gemma_rms_norm_reference
 from conch.third_party.vllm.utils import seed_everything
-from conch.utils.benchmark import benchmark_it
+from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 
 @click.command()
@@ -72,6 +73,14 @@ from conch.utils.benchmark import benchmark_it
     default=current_platform.device,
     help="Device to run on",
 )
+@click.option(
+    "--csv",
+    required=False,
+    type=bool,
+    is_flag=True,
+    default=False,
+    help="Flag for printing results in CSV format",
+)
 def main(
     embedding_size: int,
     num_tokens: int,
@@ -80,6 +89,7 @@ def main(
     absolute_tolerance: float,
     verbose: bool,
     gpu: str,
+    csv: bool,
 ) -> None:
     """Benchmark Triton GemmaRMSNorm op.
 
@@ -91,6 +101,7 @@ def main(
         absolute_tolerance: Absolute tolerance used to check accuracy of PyTorch vs. Triton.
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
+        csv: Flag for printing results in CSV format.
     """
     seed: Final = 0
     seed_everything(seed)
@@ -99,6 +110,14 @@ def main(
     torch.set_default_device(device)
 
     epsilon: Final = 1e-6
+
+    metadata = BenchmarkMetadata(
+        platform=current_platform.name(),
+        params={
+            "embedding_size": embedding_size,
+            "num_tokens": num_tokens,
+        },
+    )
 
     x = torch.randn((num_tokens, embedding_size), dtype=torch.float16, device=device)
     weights = torch.randn((embedding_size,), device=device)
@@ -114,17 +133,19 @@ def main(
     assert isinstance(result_triton, torch.Tensor)
 
     if not torch.allclose(result_ref, result_triton, atol=absolute_tolerance):
-        print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})")
-        print(f"Output max diff: {(result_triton - result_ref).abs().max().item()}")
+        print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)
+        print(f"Output max diff: {(result_triton - result_ref).abs().max().item()}", file=sys.stderr)
 
         if verbose:
-            print(f"Reference output: {result_ref}")
-            print(f"Triton output: {result_triton}")
+            print(f"Reference output: {result_ref}", file=sys.stderr)
+            print(f"Triton output: {result_triton}", file=sys.stderr)
     else:
-        print(f"Results matched with atol={absolute_tolerance} :)")
+        print(f"Results matched with atol={absolute_tolerance} :)", file=sys.stderr)
 
     baseline_result = benchmark_it(
         lambda: gemma_rms_norm_reference(x_ref, weights, epsilon, residual=None),
+        tag="Baseline",
+        metadata=metadata,
         num_iterations=num_iterations,
         num_warmup_iterations=num_warmup_iterations,
         device=device,
@@ -132,13 +153,17 @@ def main(
 
     triton_result = benchmark_it(
         lambda: gemma_rms_norm_triton(x_triton, weights, epsilon, residual=None),
+        tag="Triton",
+        metadata=metadata,
         num_iterations=num_iterations,
         num_warmup_iterations=num_warmup_iterations,
         device=device,
     )
 
-    baseline_result.pretty_print(name="Baseline", unit="ms")
-    triton_result.pretty_print(name="Triton", unit="ms")
+    # Print results
+    triton_result.print_parameters(csv=csv)
+    triton_result.print_results(csv=csv)
+    baseline_result.print_results(csv=csv)
 
 
 if __name__ == "__main__":

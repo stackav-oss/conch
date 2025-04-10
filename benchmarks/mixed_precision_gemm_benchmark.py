@@ -3,6 +3,7 @@
 """Mixed-precision matrix multiplication kernel benchmark."""
 
 import math
+import sys
 from typing import Final
 
 import click
@@ -14,7 +15,7 @@ from conch.platforms import current_platform
 from conch.third_party.vllm.quant_utils import pack_rows, quantize_weights
 from conch.third_party.vllm.scalar_type import ScalarType, scalar_types
 from conch.third_party.vllm.utils import seed_everything
-from conch.utils.benchmark import benchmark_it
+from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.has_cuda():
     from vllm import _custom_ops as vllm_custom_ops
@@ -114,7 +115,7 @@ def _machete_quantize_and_pack(
     required=False,
     type=bool,
     is_flag=True,
-    default=False,
+    default=envs.CONCH_BENCH_ENABLE_ALL_REF,
     help="Flag for enabling running Machete (only on H100)",
 )
 @click.option(
@@ -150,6 +151,14 @@ def _machete_quantize_and_pack(
     default=current_platform.device,
     help="Device to run on",
 )
+@click.option(
+    "--csv",
+    required=False,
+    type=bool,
+    is_flag=True,
+    default=False,
+    help="Flag for printing results in CSV format",
+)
 def main(
     m_dim: int,
     k_dim: int,
@@ -161,6 +170,7 @@ def main(
     num_warmup_iterations: int,
     verbose: bool,
     gpu: str,
+    csv: bool,
 ) -> None:
     """Benchmark mixed-precision matrix multiply.
 
@@ -175,6 +185,7 @@ def main(
         num_warmup_iterations: Number of iterations to "warmup" each impl before recording benchmark times.
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
+        csv: Flag for printing results in CSV format.
     """
     seed: Final = 0
     seed_everything(seed)
@@ -191,6 +202,17 @@ def main(
     if enable_machete and vllm_custom_ops is None:
         error_msg = "In order to enable machete baseline we vLLM must be enabled via `CONCH_ENABLE_VLLM=1`."
         raise ValueError(error_msg)
+
+    metadata = BenchmarkMetadata(
+        platform=current_platform.name(),
+        params={
+            "m_dim": m_dim,
+            "k_dim": k_dim,
+            "n_dim": n_dim,
+            "input_dtype": input_dtype,
+            "weight_dtype": weight_dtype,
+        },
+    )
 
     a = (10 * (torch.rand((m_dim, k_dim), dtype=torch.float32, device=device) - 0.3)).to(input_dtype_torch)
     b = (10 * (torch.rand((k_dim, n_dim), dtype=torch.float32, device=device) - 0.3)).to(input_dtype_torch)
@@ -216,22 +238,22 @@ def main(
         )
 
         if not torch.allclose(output_ref, machete_output, rtol=rtol, atol=atol):
-            print("WARNING: Reference and machete results differ!")
-            print(f"Output max diff: {(output_ref - machete_output).abs().max().item()}")
+            print("WARNING: Reference and machete results differ!", file=sys.stderr)
+            print(f"Output max diff: {(output_ref - machete_output).abs().max().item()}", file=sys.stderr)
 
             if verbose:
-                print(f"Reference output: {output_ref}")
-                print(f"Machete output: {machete_output}")
+                print(f"Reference output: {output_ref}", file=sys.stderr)
+                print(f"Machete output: {machete_output}", file=sys.stderr)
 
     if not torch.allclose(output_ref, triton_output, rtol=rtol, atol=atol):
-        print("WARNING: Reference and Triton results differ!")
-        print(f"Output max diff: {(output_ref - triton_output).abs().max().item()}")
+        print("WARNING: Reference and Triton results differ!", file=sys.stderr)
+        print(f"Output max diff: {(output_ref - triton_output).abs().max().item()}", file=sys.stderr)
 
         if verbose:
-            print(f"Reference output: {output_ref}")
-            print(f"Triton output: {triton_output}")
+            print(f"Reference output: {output_ref}", file=sys.stderr)
+            print(f"Triton output: {triton_output}", file=sys.stderr)
     else:
-        print("Results matched :)")
+        print("Results matched :)", file=sys.stderr)
 
     if enable_machete and vllm_custom_ops is not None:
         baseline_result = benchmark_it(
@@ -243,21 +265,29 @@ def main(
                 b_zeros=None,
                 b_group_size=group_size,
             ),
+            tag="Baseline",
+            metadata=metadata,
             num_iterations=num_iterations,
             num_warmup_iterations=num_warmup_iterations,
             device=device,
         )
-
-        baseline_result.pretty_print(name="Baseline", unit="ms")
+    else:
+        baseline_result = None
 
     triton_result = benchmark_it(
         lambda: mixed_precision_gemm(a, w_q, w_s, None, weight_dtype_vllm, group_size),
+        tag="Triton",
+        metadata=metadata,
         num_iterations=num_iterations,
         num_warmup_iterations=num_warmup_iterations,
         device=device,
     )
 
-    triton_result.pretty_print(name="Triton", unit="ms")
+    # Print results
+    triton_result.print_parameters(csv=csv)
+    triton_result.print_results(csv=csv)
+    if baseline_result is not None:
+        baseline_result.print_results(csv=csv)
 
 
 if __name__ == "__main__":

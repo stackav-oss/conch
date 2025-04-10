@@ -10,6 +10,8 @@ import torch
 
 
 class PlatformEnum(enum.Enum):
+    """Enum for different platforms."""
+
     NVIDIA = enum.auto()
     AMD = enum.auto()
     XPU = enum.auto()
@@ -19,22 +21,33 @@ class PlatformEnum(enum.Enum):
 
 @dataclass
 class Platform:
+    """Class representing a platform."""
+
     platform_enum: PlatformEnum
     device: str
 
+    def name(self) -> str:
+        """Return the name of the platform."""
+        return self.platform_enum.name
+
     def is_nvidia(self) -> bool:
+        """Check if the platform is NVIDIA."""
         return self.platform_enum == PlatformEnum.NVIDIA
 
     def is_amd(self) -> bool:
+        """Check if the platform is AMD."""
         return self.platform_enum == PlatformEnum.AMD
 
     def is_unspecified(self) -> bool:
+        """Check if the platform is unspecified."""
         return self.platform_enum == PlatformEnum.UNSPECIFIED
 
     def has_cuda(self) -> bool:
+        """Check if the platform has CUDA support."""
         return self.is_nvidia() or self.is_amd()
 
     def supports_fp8(self) -> bool:
+        """Check if the platform supports FP8."""
         if torch.cuda.is_available():
             # Triton: fp8e4nv data type is not supported on CUDA arch < 89
             min_fp8_capability_triton: Final = 89

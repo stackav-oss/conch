@@ -2,6 +2,7 @@
 
 """Bitsandbytes dequantize blockwise benchmark."""
 
+import sys
 from typing import Final
 
 import click
@@ -12,7 +13,7 @@ from conch.ops.quantization.bitsandbytes.functional import dequantize_4bit as tr
 from conch.ops.quantization.bitsandbytes.functional import quantize_4bit as triton_quantize_4bit
 from conch.platforms import current_platform
 from conch.third_party.vllm.utils import seed_everything
-from conch.utils.benchmark import benchmark_it
+from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 
 def _to_torch_dtype(dtype_str: str) -> torch.dtype:
@@ -79,7 +80,7 @@ def _to_torch_dtype(dtype_str: str) -> torch.dtype:
     required=False,
     type=bool,
     is_flag=True,
-    default=False,
+    default=envs.CONCH_BENCH_ENABLE_ALL_REF,
     help="Flag to enable BNB reference impl",
 )
 @click.option(
@@ -115,6 +116,14 @@ def _to_torch_dtype(dtype_str: str) -> torch.dtype:
     default=current_platform.device,
     help="Device to run on",
 )
+@click.option(
+    "--csv",
+    required=False,
+    type=bool,
+    is_flag=True,
+    default=False,
+    help="Flag for printing results in CSV format",
+)
 def main(  # noqa: PLR0913
     blocksize: int,
     size_multiplier: float,
@@ -127,6 +136,7 @@ def main(  # noqa: PLR0913
     num_warmup_iterations: int,
     verbose: bool,
     gpu: str,
+    csv: bool,
 ) -> None:
     """Benchmark Triton blockwise quantization kernel.
 
@@ -142,6 +152,7 @@ def main(  # noqa: PLR0913
         num_warmup_iterations: Number of iterations to "warmup" each impl before recording benchmark times.
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
+        csv: Flag to indicate whether or not to print results in CSV format.
     """
     seed: Final = 0
     seed_everything(seed)
@@ -154,6 +165,18 @@ def main(  # noqa: PLR0913
 
     input_size = int(blocksize * size_multiplier)
     x = torch.randn((input_size,), device=device, dtype=dtype)
+
+    metadata = BenchmarkMetadata(
+        platform=current_platform.name(),
+        params={
+            "blocksize": blocksize,
+            "size_multiplier": size_multiplier,
+            "quant_type": quant_type,
+            "dequant_dtype": dequant_dtype,
+            "quant_storage_dtype": quant_storage_dtype,
+            "compress_statistics": compress_statistics,
+        },
+    )
 
     triton_quantized, triton_state = triton_quantize_4bit(
         x,
@@ -193,12 +216,12 @@ def main(  # noqa: PLR0913
         )
 
         if not torch.allclose(triton_quantized, bnb_quantized):
-            print("WARNING: Bitsandbytes and Triton results differ!")
-            print(f"Output max diff: {(bnb_quantized - triton_quantized).abs().max().item()}")
+            print("WARNING: Bitsandbytes and Triton results differ!", file=sys.stderr)
+            print(f"Output max diff: {(bnb_quantized - triton_quantized).abs().max().item()}", file=sys.stderr)
 
             if verbose:
-                print(f"Torch output: {bnb_quantized}")
-                print(f"Triton output: {triton_quantized}")
+                print(f"Torch output: {bnb_quantized}", file=sys.stderr)
+                print(f"Triton output: {triton_quantized}", file=sys.stderr)
 
         bnb_dequantized = bnb_dequantize_4bit(
             bnb_quantized,
@@ -210,14 +233,14 @@ def main(  # noqa: PLR0913
         )
 
         if not torch.allclose(triton_dequantized, bnb_dequantized):
-            print("WARNING: Bitsandbytes and Triton results differ!")
-            print(f"Output max diff: {(bnb_dequantized - triton_dequantized).abs().max().item()}")
+            print("WARNING: Bitsandbytes and Triton results differ!", file=sys.stderr)
+            print(f"Output max diff: {(bnb_dequantized - triton_dequantized).abs().max().item()}", file=sys.stderr)
 
             if verbose:
-                print(f"Torch output: {bnb_dequantized}")
-                print(f"Triton output: {triton_dequantized}")
+                print(f"Torch output: {bnb_dequantized}", file=sys.stderr)
+                print(f"Triton output: {triton_dequantized}", file=sys.stderr)
         else:
-            print("Results matched :)")
+            print("Results matched :)", file=sys.stderr)
 
         baseline_result = benchmark_it(
             lambda: bnb_dequantize_4bit(
@@ -228,12 +251,15 @@ def main(  # noqa: PLR0913
                 blocksize=blocksize,
                 quant_type=quant_type,
             ),
+            tag="Baseline",
+            metadata=metadata,
             num_iterations=num_iterations,
             num_warmup_iterations=num_warmup_iterations,
             device=device,
         )
-
-        baseline_result.pretty_print(name="Baseline", unit="ms")
+    else:
+        print("Skipping checking vs. reference bitsandbytes implementation...", file=sys.stderr)
+        baseline_result = None
 
     triton_result = benchmark_it(
         lambda: triton_dequantize_4bit(
@@ -244,12 +270,18 @@ def main(  # noqa: PLR0913
             blocksize=blocksize,
             quant_type=quant_type,
         ),
+        tag="Triton",
+        metadata=metadata,
         num_iterations=num_iterations,
         num_warmup_iterations=num_warmup_iterations,
         device=device,
     )
 
-    triton_result.pretty_print(name="Triton", unit="ms")
+    # Print results
+    triton_result.print_parameters(csv=csv)
+    triton_result.print_results(csv=csv)
+    if baseline_result is not None:
+        baseline_result.print_results(csv=csv)
 
 
 if __name__ == "__main__":
