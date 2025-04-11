@@ -1,5 +1,14 @@
 # Getting Started: Developer Environment
 
+## Clone repo
+
+```bash
+git clone https://github.com/stackav-oss/conch.git
+cd conch
+```
+
+Unless otherwise specified, all commands are intended to be run from the root of the Conch repository.
+
 ## Configure Environment
 
 **Note**: we assume that you have Python 3.10+ already installed on your system.
