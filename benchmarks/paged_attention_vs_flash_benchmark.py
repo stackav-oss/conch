@@ -35,7 +35,7 @@ else:
     "--seq-len",
     required=True,
     type=int,
-    default=2048,
+    default=8192,
     help="Sequence length (for k/v)",
 )
 @click.option(

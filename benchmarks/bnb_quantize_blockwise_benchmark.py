@@ -42,7 +42,7 @@ def _to_torch_dtype(dtype_str: str) -> torch.dtype:
     "--size-multiplier",
     required=True,
     type=float,
-    default=917504,
+    default=458752,
     help="How many quantized blocks are in the input tensor",
 )
 @click.option(

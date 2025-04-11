@@ -37,7 +37,7 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     "--num-tokens",
     required=True,
     type=int,
-    default=512,
+    default=2048,
     help="Number of tokens",
 )
 @click.option(

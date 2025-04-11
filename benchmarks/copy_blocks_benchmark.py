@@ -62,7 +62,7 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     "--num-mappings",
     required=False,
     type=int,
-    default=256,
+    default=512,
     help="Number of mappings to copy",
 )
 @click.option(
