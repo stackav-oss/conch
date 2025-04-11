@@ -3,7 +3,7 @@
 - `benchmarks/`
   - This directory contains microbenchmarks for each kernel/op in Conch
 - `conch/`
-  - See [Conch docs](../conch/structure.md) for more info about the Conch package structure
+  - See [Conch docs](/docs/conch/structure.md) for more info about the Conch package structure
 - `dist/`
   - This directory contains distribution files (wheels, source archives, etc.)
 - `docs/`
