@@ -38,7 +38,13 @@ Each operation is complete with a PyTorch-only reference implementation (and som
 
 ## Performance
 
-TODO(jmanning-stackav): Add graphics for relative performance of kernels vs. CUDA baselines.
+The goal of Conch is not to claim that our operations are faster than CUDA implementations.
+Our goal is to write Triton operations that are _as fast as_ the state-of-the-art CUDA implementations.
+This allows developers on any hardware platform (Nvidia, AMD, etc.) access to the same, performant kernels.
+
+Below is a table comparing the relative performance of our Triton kernels to CUDA baselines (on H100).
+
+TODO(jmanning-stackav): Add table of relative performance of kernels vs. CUDA baselines.
 
 ## Supported platforms
 
@@ -54,6 +60,12 @@ Work-in-progress platforms:
 - [CPU](https://github.com/triton-lang/triton-cpu)
 
 ## Getting Started
+
+### Users
+
+Check out the [installation instructions](./docs/getting_started/installation.md) to get started!
+
+### Developers
 
 Check out the [developer instructions](./docs/getting_started/developer_environment.md) to get started!
 

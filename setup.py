@@ -1,5 +1,6 @@
 # Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
 
+import os
 import subprocess
 from typing import Final, Literal
 
@@ -14,7 +15,7 @@ _DEFAULT_PLATFORM_REQUIREMENTS: Final = [
     "triton>=3.1.0",
 ]
 
-# --extra-index-url https://download.pytorch.org/whl/nightly/rocm6.2
+# --extra-index-url https://download.pytorch.org/whl/rocm6.2
 _ROCM_PLATFORM_REQUIREMENTS: Final = [
     "amdsmi==6.2.2.post0",
     "torch==2.5.1+rocm6.2",
@@ -57,10 +58,15 @@ def get_optional_dependencies() -> dict[str, list[str]]:
     }
 
 
-def get_platform() -> Literal["cuda", "rocm", "cpu", "xpu"]:
+def get_platform() -> str | Literal["cuda", "rocm", "cpu", "xpu"]:
     """
     Detect whether the system has NVIDIA or AMD GPU without torch dependency.
     """
+    if (override_platform := os.environ.get("CONCH_WHEEL_BUILD_PLATFORM", None)) is not None:
+        override_platform = override_platform.strip().lower()
+        print(f"Overriding platform to {override_platform}")
+        return override_platform
+
     try:
         subprocess.run(["nvidia-smi"], check=True)
         print("NVIDIA GPU detected")
@@ -89,7 +95,7 @@ def get_platform() -> Literal["cuda", "rocm", "cpu", "xpu"]:
 
 
 setup(  # type: ignore[no-untyped-call]
-    name="conch",
+    name="conch-kernels",
     install_requires=get_default_dependencies(),
     extras_require=get_optional_dependencies(),
     setup_requires=["wheel"],
