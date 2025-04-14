@@ -40,7 +40,7 @@ def _to_conch_layout(
     "--num-tokens",
     required=True,
     type=int,
-    default=60,
+    default=512,
     help="Number of tokens",
 )
 @click.option(
