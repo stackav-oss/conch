@@ -178,14 +178,15 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             # Calculate address of current cache block
             kv_cache_block_index_offset = physical_cache_block_number * kv_page_stride
 
-            # Load the key block as (cache_block_size, cxpr_head_size_padded)
+            # Load the key block as (cxpr_head_size_padded, cache_block_size)
+            # Note: we're loading it transposed here
             key_block_ptr = tl.make_block_ptr(
                 key_cache_ptr + kv_cache_block_index_offset + kv_head_index_offset,
-                shape=(num_entries_in_cache_block, head_size),
-                strides=(kv_cache_block_stride, kv_head_element_stride),
+                shape=(head_size, num_entries_in_cache_block),
+                strides=(kv_head_element_stride, kv_cache_block_stride),
                 offsets=(0, 0),
-                block_shape=(cxpr_cache_block_size, cxpr_head_size_padded),
-                order=(0, 1),
+                block_shape=(cxpr_head_size_padded, cxpr_cache_block_size),
+                order=(1, 0),
             )
             key_block = tl.load(key_block_ptr, boundary_check=(0, 1), padding_option="zero")
 
@@ -196,9 +197,9 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
             # Multiply query vector by key matrix for this cache block (and apply scaling factor)
             # query.shape -> (query_group_size, head_size)
-            # key_block.shape -> (cache_block_size, head_size)
+            # key_block.shape -> (head_size, cache_block_size)
             # qk.shape -> (query_group_size, cache_block_size)
-            qk = (scale * tl.dot(query, tl.trans(key_block))).to(dtype)
+            qk = (scale * tl.dot(query, key_block)).to(dtype)
 
             # Need to mask out any elements that represent unused cache block entries or padding elements
             cache_block_mask = tl.arange(0, cxpr_cache_block_size) < num_entries_in_cache_block

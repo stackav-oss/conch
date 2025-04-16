@@ -114,18 +114,18 @@ DTYPE_TO_TRITON = {key: TORCH_DTYPE_TO_TRITON[dtype] for key, dtype in DTYPE_TO_
 
 def _get_matrix_a_eviction_policy() -> str:
     """Get eviction policy for Matrix A based on platform."""
-    if current_platform.is_amd():
-        return ""
+    if current_platform.is_nvidia():
+        return "evict_last"
 
-    return "evict_last"
+    return ""
 
 
 def _get_matrix_b_eviction_policy() -> str:
     """Get eviction policy for Matrix B based on platform."""
-    if current_platform.is_amd():
-        return ""
+    if current_platform.is_nvidia():
+        return "evict_first"
 
-    return "evict_first"
+    return ""
 
 
 def _get_metadata_eviction_policy() -> str:
