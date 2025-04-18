@@ -22,7 +22,7 @@ pip install -e .
 For Nvidia/CUDA platforms you can install `conch` from PyPi via:
 
 ```bash
-pip install conch-kernels
+pip install conch-triton-kernels
 ```
 
 ### AMD/ROCm
@@ -37,5 +37,5 @@ After cloning the Conch repo, run this command from the repository root:
 The resulting wheel file will be generated under `dist/rocm/`.
 
 ```bash
-pip install dist/rocm/conch_kernels-{version}-py3-none-any.whl
+pip install dist/rocm/conch_triton_kernels-{version}-py3-none-any.whl
 ```
