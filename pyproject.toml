@@ -3,7 +3,7 @@ requires = ["setuptools>=42", "wheel", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "conch-kernels"
+name = "conch-triton-kernels"
 authors = [
   { name="Jacob Manning", email="jmanning+oss@stackav.com" },
   { name="Ryan Hsu", email="rhsu+oss@stackav.com" },

@@ -95,7 +95,7 @@ def get_platform() -> str | Literal["cuda", "rocm", "cpu", "xpu"]:
 
 
 setup(  # type: ignore[no-untyped-call]
-    name="conch-kernels",
+    name="conch-triton-kernels",
     install_requires=get_default_dependencies(),
     extras_require=get_optional_dependencies(),
     setup_requires=["wheel"],
