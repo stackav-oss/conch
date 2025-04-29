@@ -39,10 +39,10 @@ def _gemma_rms_norm_vllm_ref(
     residual: torch.Tensor | None,
 ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
     """vLLM reference gemma_rms_norm impl."""
+    from vllm.model_executor.layers.layernorm import GemmaRMSNorm
+
     vllm_logger = logging.getLogger("vllm")
     vllm_logger.setLevel(logging.CRITICAL)
-
-    from vllm.model_executor.layers.layernorm import GemmaRMSNorm
 
     layer = GemmaRMSNorm(hidden_size=weight.size(0), eps=variance_epsilon)
     layer.weight = torch.nn.Parameter(weight)

@@ -451,10 +451,10 @@ def _triton_vs_flash_attn(
         dtype: Datatype for tensors.
         apply_softcap: Whether or not to apply softcapping.
     """
+    from vllm.vllm_flash_attn import flash_attn_with_kvcache  # type: ignore[attr-defined, unused-ignore]
+
     vllm_logger = logging.getLogger("vllm")
     vllm_logger.setLevel(logging.CRITICAL)
-
-    from vllm.vllm_flash_attn import flash_attn_with_kvcache  # type: ignore[attr-defined, unused-ignore]
 
     query, _, _, key_cache_triton, value_cache_triton, block_tables, seq_lens = create_tensors(
         head_size,

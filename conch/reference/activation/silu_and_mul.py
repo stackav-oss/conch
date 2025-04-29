@@ -19,10 +19,10 @@ def _silu_and_mul_pytorch_ref(x: torch.Tensor) -> torch.Tensor:
 
 def _silu_and_mul_vllm_ref(x: torch.Tensor) -> torch.Tensor:
     """vLLM reference silu and mul implementation."""
+    from vllm.model_executor.layers.activation import SiluAndMul
+
     vllm_logger = logging.getLogger("vllm")
     vllm_logger.setLevel(logging.CRITICAL)
-
-    from vllm.model_executor.layers.activation import SiluAndMul
 
     silu_layer = SiluAndMul()  # type: ignore[no-untyped-call]
     return silu_layer.forward_cuda(x)
