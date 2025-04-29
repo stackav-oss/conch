@@ -82,6 +82,6 @@ Most unit tests/benchmarks allow comparison to CUDA implementations of operation
 In order to use them, you can install vLLM (`pip install vllm`) and set the environment variable `CONCH_ENABLE_VLLM=1`.
 
 ```bash
-pip install vllm==0.6.4
+pip install vllm==0.8.5
 CONCH_ENABLE_VLLM=1 python benchmarks/paged_attention_benchmark.py
 ```

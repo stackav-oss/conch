@@ -9,21 +9,11 @@ from typing import Final
 import click
 import torch
 
-from conch.ops.attention.paged_attention import split_kv_cache
 from conch.ops.vllm.reshape_and_cache import reshape_and_cache as reshape_and_cache_triton
 from conch.platforms import current_platform
 from conch.reference.vllm.reshape_and_cache import reshape_and_cache as reshape_and_cache_reference
 from conch.third_party.vllm.utils import create_kv_caches_with_random, reshape_vllm_kvcache, seed_everything
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
-
-
-def _to_conch_layout(
-    key_cache: torch.Tensor, value_cache: torch.Tensor, num_heads: int, head_size: int
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Convert caches in vLLM layout to Conch layout."""
-    k, v = reshape_vllm_kvcache(key_cache, value_cache)
-    kv_cache = torch.vstack((k[None, :, :], v[None, :, :]))
-    return split_kv_cache(kv_cache, num_heads, head_size)
 
 
 @click.command()
@@ -186,7 +176,8 @@ def main(
     kv = torch.randn(num_tokens, 2, num_kv_heads, head_dim, dtype=dtype)
     key, value = kv.unbind(dim=1)
 
-    k_scale = v_scale = 2.0
+    k_scale = torch.full((1,), 2.0)
+    v_scale = torch.full((1,), 2.0)
 
     # Create the KV caches.
     key_caches_vllm, value_caches_vllm = create_kv_caches_with_random(
@@ -203,7 +194,7 @@ def main(
 
     key_cache_vllm, value_cache_vllm = key_caches_vllm[0], value_caches_vllm[0]
 
-    key_cache, value_cache = _to_conch_layout(key_cache_vllm.clone(), value_cache_vllm.clone(), num_kv_heads, head_dim)
+    key_cache, value_cache = reshape_vllm_kvcache(key_cache_vllm.clone(), value_cache_vllm.clone())
 
     # Run the reference implementation.
     reshape_and_cache_reference(
@@ -214,9 +205,7 @@ def main(
     reshape_and_cache_triton(key, value, key_cache, value_cache, slot_mapping, kv_cache_dtype, k_scale, v_scale)
 
     # Reshape vLLM key/value caches
-    key_cache_vllm_out, value_cache_vllm_out = _to_conch_layout(
-        key_cache_vllm, value_cache_vllm, num_kv_heads, head_dim
-    )
+    key_cache_vllm_out, value_cache_vllm_out = reshape_vllm_kvcache(key_cache_vllm, value_cache_vllm)
 
     if not torch.allclose(key_cache, key_cache_vllm_out, atol=absolute_tolerance):
         print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)
