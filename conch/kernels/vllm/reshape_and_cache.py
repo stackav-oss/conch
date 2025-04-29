@@ -113,8 +113,8 @@ def reshape_and_cache_launcher(
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
     slot_mapping: torch.Tensor,
-    k_scale: float,
-    v_scale: float,
+    k_scale: torch.Tensor,
+    v_scale: torch.Tensor,
     *,
     apply_fp8_scaling: bool = False,
 ) -> None:
@@ -148,11 +148,14 @@ def reshape_and_cache_launcher(
     assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"  # noqa: S101
     assert head_size == triton.next_power_of_2(head_size), "Head size must be a power of two!"  # noqa: S101
 
+    assert k_scale.numel() == 1  # noqa: S101
+    assert k_scale.numel() == v_scale.numel()  # noqa: S101
+
     is_rocm: tl.constexpr = current_platform.is_amd()
 
     # Invert scale factors
-    k_scale = 1.0 / k_scale
-    v_scale = 1.0 / v_scale
+    k_scale_scalar = 1.0 / k_scale.item()
+    v_scale_scalar = 1.0 / v_scale.item()
 
     # Parallelize over the number of tokens and number of kv heads
     grid = (num_tokens, num_kv_heads)
@@ -172,8 +175,8 @@ def reshape_and_cache_launcher(
         key_cache.stride(1),
         # Scalars
         cache_block_size,
-        k_scale,
-        v_scale,
+        k_scale_scalar,
+        v_scale_scalar,
         # Constexprs
         head_size,
         apply_fp8_scaling,

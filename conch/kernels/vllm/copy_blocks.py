@@ -60,10 +60,9 @@ def _copy_blocks_kernel(
     # Calculate offset to pair of src/dst block ids
     pair_offset = pair_index * block_mapping_pair_stride
 
-    # Load the source/destination block ids as a tensor of shape (1, 2)
-    source_and_destination_block_pair = tl.load(block_mapping_ptr + pair_offset + tl.arange(0, 2)).reshape(1, 2)
-    # Split pair tensor to get src/dst block ids
-    source_block, destination_block = source_and_destination_block_pair.split()
+    # Load the source/destination block ids
+    source_block = tl.load(block_mapping_ptr + pair_offset)
+    destination_block = tl.load(block_mapping_ptr + pair_offset + 1)
 
     # Calculate offset from the start of the k/v caches to the start of the source/destination blocks
     source_block_offset = source_block * kv_cache_block_stride
@@ -124,9 +123,9 @@ def copy_blocks_launcher(
     """Launch copy_blocks kernel.
 
     Args:
-        key_caches: List of key_cache for a set of layers, len: num_layers, each element shape: (num_blocks, cache_block_size * num_kv_heads * head_size).
-        value_caches: List of value_cache for a set of layers, len: num_layers, num_layers, each element shape: (num_blocks, cache_block_size * num_kv_heads * head_size).
-        block_mapping: Tensor in form of list of source/destination pairs, shape: (num_pairs, 2).
+        key_caches: List of key_cache for a set of layers, len: num_layers, each element shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
+        value_caches: List of value_cache for a set of layers, len: num_layers, num_layers, each element shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
+        block_mapping: Tensor in form of list of source/destination pairs, shape: (num_pairs, 2)
     """
     # Assume sizes already checked if calling launcher. For interface with strict size checking, call `copy_blocks()`.
     num_layers: Final = len(key_caches)

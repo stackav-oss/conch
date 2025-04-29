@@ -95,9 +95,9 @@ def reshape_and_cache(
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
     slot_mapping: torch.Tensor,
-    kv_cache_dtype: str = "auto",
-    k_scale: float = 1.0,
-    v_scale: float = 1.0,
+    kv_cache_dtype: str,
+    k_scale: torch.Tensor,
+    v_scale: torch.Tensor,
 ) -> None:
     """Reshape key/value vectors and add them to the cache.
 

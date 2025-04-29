@@ -11,9 +11,9 @@ import torch.nn.functional as F  # noqa: N812
 from einops import einsum, rearrange
 
 from conch import envs
-from conch.ops.attention.paged_attention import paged_attention, split_kv_cache
+from conch.ops.attention.paged_attention import paged_attention
 from conch.platforms import current_platform
-from conch.third_party.vllm.utils import create_tensors
+from conch.third_party.vllm.utils import create_tensors, seed_everything
 
 _ENABLE_VLLM: Final = envs.CONCH_ENABLE_VLLM and current_platform.has_cuda()
 _BATCH_SIZES: Final = [1, 4, 8]
@@ -77,14 +77,9 @@ def _create_paged_cache_from_contiguous_kv(
     max_seq_len = max_num_pages_per_seq * cache_block_size
     assert sequence_length <= max_seq_len
 
-    kv_cache = torch.empty(2, num_cache_blocks, num_kv_heads * cache_block_size * head_size, dtype=dtype, device=device)
+    k_cache = torch.empty(num_cache_blocks, num_kv_heads, cache_block_size, head_size, dtype=dtype, device=device)
+    v_cache = torch.empty(num_cache_blocks, num_kv_heads, cache_block_size, head_size, dtype=dtype, device=device)
     block_tables = torch.zeros((batch_size, max_num_pages_per_seq), dtype=torch.int32, device=device)
-
-    k_cache = kv_cache[0, :, :]
-    v_cache = kv_cache[1, :, :]
-
-    k_cache = k_cache.view(num_cache_blocks, num_kv_heads, -1, head_size)
-    v_cache = v_cache.view(num_cache_blocks, num_kv_heads, -1, head_size)
 
     current_page = 0
     current_page_offset = 0
@@ -115,7 +110,7 @@ def _create_paged_cache_from_contiguous_kv(
             current_page += 1
             current_page_offset = 0
 
-    return k_cache.view(num_cache_blocks, -1), v_cache.view(num_cache_blocks, -1), block_tables
+    return k_cache, v_cache, block_tables
 
 
 def _convert_paged_to_contiguous(
@@ -236,9 +231,12 @@ def _run_paged_vs_sdpa(
         gqa_workaround: Enable workaround for Grouped Query Attention. PyTorch SDPA does not currently
             support GQA so use alternative ground-truth function.
     """
-    torch.random.manual_seed(0)
+    seed: Final = 0
+    seed_everything(seed)
 
     device: Final = torch.device(current_platform.device)
+    torch.set_default_device(device)
+
     # There are some small discrepancies in our output that I believe are caused by fp32<->fp16 conversions inside of the Triton kernel.
     atol: Final = _get_tolerance_for_dtype(dtype)
     rtol: Final = 1e-3
@@ -296,12 +294,11 @@ def _run_paged_vs_sdpa(
     paged_attention(
         out_paged,
         q_paged,
-        torch.vstack((key_cache_paged[None, :, :], value_cache_paged[None, :, :])),
-        num_kv_heads,
-        scale,
+        key_cache_paged,
+        value_cache_paged,
         block_tables,
         sequence_lengths,
-        cache_block_size,
+        scale,
     )
 
     torch.testing.assert_close(final_out_sdpa, out_paged, atol=atol, rtol=rtol)
@@ -329,9 +326,15 @@ def _triton_vs_vllm_cuda(
         kv_cache_dtype: Data type of KV cache.
         dtype: Datatype for tensors.
     """
+    seed: Final = 0
+    seed_everything(seed)
+
+    device: Final = torch.device(current_platform.device)
+    torch.set_default_device(device)
+
     from vllm._custom_ops import paged_attention_v2 as vllm_paged_attention_v2
 
-    query, key_cache_vllm, value_cache_vllm, key_cache_triton, value_cache_triton, block_tables, seq_lens = (
+    query, key_cache_vllm, value_cache_vllm, key_cache_conch, value_cache_conch, block_tables, seq_lens = (
         create_tensors(
             head_size,
             sequence_length,
@@ -345,14 +348,12 @@ def _triton_vs_vllm_cuda(
         )
     )
 
-    kv_cache_triton = torch.vstack((key_cache_triton[None, :, :], value_cache_triton[None, :, :]))
-
     scale: Final = float(1.0 / (head_size**0.5))
     atol: Final = 1e-3
     rtol: Final = 1e-3
 
-    k_scale: Final = 1.0
-    v_scale: Final = 1.0
+    k_scale = torch.full((1,), 0.5)
+    v_scale = torch.full((1,), 0.5)
 
     # Run vLLM reference implementation
     output_vllm = torch.empty_like(query)
@@ -394,23 +395,23 @@ def _triton_vs_vllm_cuda(
     )
 
     # Run Triton implementation
-    output_triton = torch.empty_like(query)
+    output_conch = torch.empty_like(query)
 
     paged_attention(
-        output_triton,
+        output_conch,
         query,
-        kv_cache_triton,
-        num_kv_heads,
-        scale,
+        key_cache_conch,
+        value_cache_conch,
         block_tables,
         seq_lens,
-        cache_block_size,
+        scale,
+        softcap=0.0,
         kv_cache_dtype=kv_cache_dtype,
         k_scale=k_scale,
         v_scale=v_scale,
     )
 
-    torch.testing.assert_close(output_vllm, output_triton, atol=atol, rtol=rtol)
+    torch.testing.assert_close(output_vllm, output_conch, atol=atol, rtol=rtol)
 
 
 def _triton_vs_flash_attn(
@@ -420,7 +421,6 @@ def _triton_vs_flash_attn(
     num_query_heads: int,
     num_kv_heads: int,
     sequence_length: int,
-    kv_cache_dtype: str,
     dtype: torch.dtype,
     apply_softcap: bool,
 ) -> None:
@@ -433,13 +433,20 @@ def _triton_vs_flash_attn(
         num_kv_heads: Number of key/value heads.
         sequence_length: Sequence length of input.
         cache_block_size: Number of K/V tensors that can fit in a cache block.
-        kv_cache_dtype: Data type of KV cache.
         dtype: Datatype for tensors.
         apply_softcap: Whether or not to apply softcapping.
     """
+    seed: Final = 0
+    seed_everything(seed)
+
+    device: Final = torch.device(current_platform.device)
+    torch.set_default_device(device)
+
+    kv_cache_dtype = "auto"
+
     from vllm.vllm_flash_attn import flash_attn_with_kvcache  # type: ignore[attr-defined, unused-ignore]
 
-    query, _, _, key_cache_triton, value_cache_triton, block_tables, seq_lens = create_tensors(
+    query, _, _, key_cache_conch, value_cache_conch, block_tables, seq_lens = create_tensors(
         head_size,
         sequence_length,
         cache_block_size,
@@ -450,8 +457,6 @@ def _triton_vs_flash_attn(
         "cuda",
         dtype,
     )
-
-    kv_cache_triton = torch.vstack((key_cache_triton[None, :, :], value_cache_triton[None, :, :]))
 
     softcap: float = 0.0
     if apply_softcap:
@@ -467,16 +472,15 @@ def _triton_vs_flash_attn(
     rtol: Final = 1e-3
 
     # Run FlashAttnWithKVCache implementation
-    query_vllm = query.unsqueeze(1)
+    query_fa = query.unsqueeze(1)
 
-    key_cache_vllm, value_cache_vllm = split_kv_cache(kv_cache_triton, num_kv_heads, head_size)
-    key_cache_vllm = key_cache_vllm.permute(0, 2, 1, 3)
-    value_cache_vllm = value_cache_vllm.permute(0, 2, 1, 3)
+    key_cache_fa = key_cache_conch.permute(0, 2, 1, 3)
+    value_cache_fa = value_cache_conch.permute(0, 2, 1, 3)
 
-    output_vllm = flash_attn_with_kvcache(
-        query_vllm,
-        key_cache_vllm,
-        value_cache_vllm,
+    output_fa = flash_attn_with_kvcache(
+        query_fa,
+        key_cache_fa,
+        value_cache_fa,
         block_table=block_tables,
         cache_seqlens=seq_lens,
         softmax_scale=scale,
@@ -485,25 +489,24 @@ def _triton_vs_flash_attn(
         softcap=softcap,
     )
 
-    output_vllm = output_vllm.squeeze(1)
+    output_fa = output_fa.squeeze(1)
 
     # Run Triton implementation
-    output_triton = torch.empty_like(query)
+    output_conch = torch.empty_like(query)
 
     paged_attention(
-        output_triton,
+        output_conch,
         query,
-        kv_cache_triton,
-        num_kv_heads,
-        scale,
+        key_cache_conch,
+        value_cache_conch,
         block_tables,
         seq_lens,
-        cache_block_size,
+        scale,
         softcap,
         kv_cache_dtype,
     )
 
-    assert torch.allclose(output_vllm, output_triton, atol=atol, rtol=rtol)
+    assert torch.allclose(output_fa, output_conch, atol=atol, rtol=rtol)
 
 
 @pytest.mark.parametrize("batch_size", _BATCH_SIZES_ABRIDGED)
@@ -579,7 +582,6 @@ def test_triton_vs_vllm_cuda(
 @pytest.mark.parametrize("head_size", _HEAD_SIZES_FLASH)
 @pytest.mark.parametrize(("num_query_heads", "num_kv_heads"), _NUM_HEADS)
 @pytest.mark.parametrize("sequence_length", _SEQUENCE_LENGTHS)
-@pytest.mark.parametrize("kv_cache_dtype", ["auto"])
 @pytest.mark.parametrize("apply_softcap", [True, False])
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
 def test_triton_vs_flash_attn(
@@ -608,7 +610,6 @@ def test_triton_vs_flash_attn(
         num_query_heads,
         num_kv_heads,
         sequence_length,
-        kv_cache_dtype,
         dtype,
         apply_softcap,
     )

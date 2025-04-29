@@ -8,7 +8,6 @@ from typing import Final
 import pytest
 import torch
 
-from conch.ops.attention.paged_attention import split_kv_cache
 from conch.ops.vllm.reshape_and_cache import reshape_and_cache as reshape_and_cache_triton
 from conch.platforms import current_platform
 from conch.reference.vllm.reshape_and_cache import reshape_and_cache as reshape_and_cache_reference
@@ -21,15 +20,6 @@ _HEAD_SIZES: Final = [128]
 _BLOCK_SIZES: Final = [32]
 _NUM_BLOCKS: Final = [1000]
 _KV_CACHE_DTYPE: Final = ["auto", "fp8"]
-
-
-def _to_conch_layout(
-    key_cache: torch.Tensor, value_cache: torch.Tensor, num_heads: int, head_size: int
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Convert caches in vLLM layout to Conch layout."""
-    k, v = reshape_vllm_kvcache(key_cache, value_cache)
-    kv_cache = torch.vstack((k[None, :, :], v[None, :, :]))
-    return split_kv_cache(kv_cache, num_heads, head_size)
 
 
 @pytest.mark.parametrize("num_tokens", _NUM_TOKENS)
@@ -67,7 +57,8 @@ def test_reshape_and_cache(
     kv = torch.randn((num_tokens, 2, num_heads, head_size), dtype=dtype)
     key, value = kv.unbind(dim=1)
 
-    k_scale = v_scale = 2.0
+    k_scale = torch.full((1,), 2.0)
+    v_scale = torch.full((1,), 2.0)
 
     # Create the KV caches.
     key_caches_vllm, value_caches_vllm = create_kv_caches_with_random(
@@ -83,10 +74,7 @@ def test_reshape_and_cache(
     )
 
     key_cache_vllm, value_cache_vllm = key_caches_vllm[0], value_caches_vllm[0]
-
-    key_cache_triton, value_cache_triton = _to_conch_layout(
-        key_cache_vllm.clone(), value_cache_vllm.clone(), num_heads, head_size
-    )
+    key_cache_conch, value_cache_conch = reshape_vllm_kvcache(key_cache_vllm, value_cache_vllm)
 
     # Run the reference implementation.
     reshape_and_cache_reference(
@@ -95,12 +83,12 @@ def test_reshape_and_cache(
 
     # Call Triton kernel
     reshape_and_cache_triton(
-        key, value, key_cache_triton, value_cache_triton, slot_mapping, kv_cache_dtype, k_scale, v_scale
+        key, value, key_cache_conch, value_cache_conch, slot_mapping, kv_cache_dtype, k_scale, v_scale
     )
 
     # Reshape vLLM key/value caches
-    key_cache_vllm, value_cache_vllm = _to_conch_layout(key_cache_vllm, value_cache_vllm, num_heads, head_size)
+    key_cache_vllm, value_cache_vllm = reshape_vllm_kvcache(key_cache_vllm, value_cache_vllm)
 
     # Compare the results.
-    torch.testing.assert_close(key_cache_triton, key_cache_vllm)
-    torch.testing.assert_close(value_cache_triton, value_cache_vllm)
+    torch.testing.assert_close(key_cache_conch, key_cache_vllm)
+    torch.testing.assert_close(value_cache_conch, value_cache_vllm)

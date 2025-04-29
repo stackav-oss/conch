@@ -17,15 +17,10 @@ def _silu_and_mul_pytorch_ref(x: torch.Tensor) -> torch.Tensor:
 
 def _silu_and_mul_vllm_ref(x: torch.Tensor) -> torch.Tensor:
     """vLLM reference silu and mul implementation."""
-    from vllm._custom_ops import silu_and_mul as silu_and_mul_cuda
+    from vllm.model_executor.layers.activation import SiluAndMul
 
-    d = x.shape[-1] // 2
-    output_shape = x.shape[:-1] + (d,)
-    out = torch.empty(output_shape, dtype=x.dtype, device=x.device)
-
-    silu_and_mul_cuda(out, x)
-
-    return out
+    silu_layer = SiluAndMul()  # type: ignore[no-untyped-call]
+    return silu_layer.forward_cuda(x)
 
 
 def silu_and_mul(x: torch.Tensor) -> torch.Tensor:
