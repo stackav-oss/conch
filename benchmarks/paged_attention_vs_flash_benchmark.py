@@ -2,6 +2,7 @@
 
 """Triton paged attention vs. FlashAttnWithKVCache benchmark."""
 
+import logging
 import sys
 from typing import Final
 
@@ -16,6 +17,9 @@ from conch.third_party.vllm.utils import create_tensors
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.is_nvidia():
+    vllm_logger = logging.getLogger("vllm")
+    vllm_logger.setLevel(logging.CRITICAL)
+
     from vllm.vllm_flash_attn import flash_attn_with_kvcache  # type: ignore[attr-defined, unused-ignore]
 else:
     flash_attn_with_kvcache = None  # type: ignore[assignment]
@@ -194,6 +198,9 @@ def main(
     value_cache_vllm = value_cache_conch.permute(0, 2, 1, 3)
 
     softcap = 30.0
+    kv_cache_dtype = "auto"
+    k_scale = torch.full((1,), 1.0)
+    v_scale = torch.full((1,), 1.0)
 
     # Check accuracy match
     output_vllm = flash_attn_with_kvcache(
@@ -221,6 +228,9 @@ def main(
         block_tables,
         seq_lens,
         softcap=softcap,
+        kv_cache_dtype=kv_cache_dtype,
+        k_scale=k_scale,
+        v_scale=v_scale,
     )
 
     if not torch.allclose(output_vllm, output_conch, atol=absolute_tolerance):
@@ -262,6 +272,10 @@ def main(
             scale,
             block_tables,
             seq_lens,
+            softcap,
+            kv_cache_dtype,
+            k_scale,
+            v_scale,
         ),
         tag="Triton",
         metadata=metadata,

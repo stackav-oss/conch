@@ -2,6 +2,8 @@
 
 """Reference implementation of int8 quantization kernels."""
 
+import logging
+
 import torch
 
 from conch import envs
@@ -19,6 +21,9 @@ def _scaled_int8_quant_pytorch_ref(x: torch.Tensor, scale: torch.Tensor) -> torc
 
 def _scaled_int8_quant_vllm_ref(x: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     """vLLM reference int8 quant impl."""
+    vllm_logger = logging.getLogger("vllm")
+    vllm_logger.setLevel(logging.CRITICAL)
+
     from vllm._custom_ops import scaled_int8_quant as scaled_int8_quant_vllm
 
     output, _, _ = scaled_int8_quant_vllm(x, scale)

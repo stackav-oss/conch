@@ -2,6 +2,8 @@
 
 """Reference implementation of RMS norm kernel."""
 
+import logging
+
 import torch
 
 from conch import envs
@@ -22,6 +24,9 @@ def _rms_norm_pytorch_ref(x: torch.Tensor, weight: torch.Tensor, epsilon: float)
 
 def _rms_norm_vllm_ref(x: torch.Tensor, weight: torch.Tensor, epsilon: float) -> torch.Tensor:
     """vLLM reference rms_norm impl."""
+    vllm_logger = logging.getLogger("vllm")
+    vllm_logger.setLevel(logging.CRITICAL)
+
     from vllm._custom_ops import rms_norm as rms_norm_cuda
 
     out = torch.empty_like(x, dtype=x.dtype, device=x.device)
@@ -57,6 +62,9 @@ def _fused_add_rms_norm_vllm_ref(
     epsilon: float,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """vLLM reference fused_add_rms_norm impl."""
+    vllm_logger = logging.getLogger("vllm")
+    vllm_logger.setLevel(logging.CRITICAL)
+
     from vllm._custom_ops import fused_add_rms_norm as fused_add_rms_norm_cuda
 
     fused_add_rms_norm_cuda(x, residual, weight, epsilon)

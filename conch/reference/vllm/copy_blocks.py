@@ -2,6 +2,8 @@
 
 """PyTorch reference implementation of vLLM copy_blocks."""
 
+import logging
+
 import torch
 
 from conch import envs
@@ -23,6 +25,9 @@ def _copy_blocks_vllm_ref(
     key_caches: list[torch.Tensor], value_caches: list[torch.Tensor], block_mapping: list[tuple[int, int]]
 ) -> None:
     """Reference vLLM implementation of copy_blocks."""
+    vllm_logger = logging.getLogger("vllm")
+    vllm_logger.setLevel(logging.CRITICAL)
+
     from vllm._custom_ops import copy_blocks as copy_blocks_vllm
 
     block_mapping_tensor = torch.tensor(block_mapping, dtype=torch.int64, device=key_caches[0].device).view(-1, 2)

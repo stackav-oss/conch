@@ -2,6 +2,7 @@
 
 """Triton paged attention benchmark."""
 
+import logging
 import sys
 from typing import Final
 
@@ -16,6 +17,9 @@ from conch.third_party.vllm.utils import create_tensors
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.has_cuda():
+    vllm_logger = logging.getLogger("vllm")
+    vllm_logger.setLevel(logging.CRITICAL)
+
     from vllm._custom_ops import paged_attention_v2 as vllm_paged_attention_v2
 else:
     vllm_paged_attention_v2 = None  # type: ignore[assignment]
@@ -205,8 +209,8 @@ def main(
     kv_cache_conch = torch.vstack((key_cache_conch[None, :, :], value_cache_conch[None, :, :]))
     key_cache_conch, value_cache_conch = split_kv_cache(kv_cache_conch, num_kv_heads, head_dim)
 
-    # Using default kv_scale
-    k_scale = v_scale = 1.0
+    k_scale = torch.full((1,), 0.5)
+    v_scale = torch.full((1,), 0.5)
 
     output_conch = torch.empty_like(query)
 
@@ -220,6 +224,7 @@ def main(
         scale,
         block_tables,
         seq_lens,
+        softcap=0.0,
         kv_cache_dtype=kv_cache_dtype,
         k_scale=k_scale,
         v_scale=v_scale,
@@ -317,6 +322,7 @@ def main(
             scale,
             block_tables,
             seq_lens,
+            softcap=0.0,
             kv_cache_dtype=kv_cache_dtype,
             k_scale=k_scale,
             v_scale=v_scale,

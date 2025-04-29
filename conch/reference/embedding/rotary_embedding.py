@@ -2,6 +2,8 @@
 
 """Reference implementation of rotary embedding kernel."""
 
+import logging
+
 import torch
 
 from conch import envs
@@ -99,6 +101,9 @@ def _rotary_embedding_vllm_ref(
     offsets: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """vLLM reference rotary_embedding impl."""
+    vllm_logger = logging.getLogger("vllm")
+    vllm_logger.setLevel(logging.CRITICAL)
+
     from vllm import _custom_ops as ops
 
     cos_sin_cache = cos_sin_cache.to(query.device, dtype=query.dtype)

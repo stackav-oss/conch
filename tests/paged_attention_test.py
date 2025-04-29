@@ -2,6 +2,7 @@
 
 """Test Triton PagedAttention."""
 
+import logging
 import math
 from typing import Final
 
@@ -293,6 +294,11 @@ def _run_paged_vs_sdpa(
     q_paged = q[:, :, -1, :]
     out_paged = torch.zeros_like(q_paged, dtype=dtype, device=device)
 
+    softcap = 0.0
+    kv_cache_dtype = "auto"
+    k_scale = torch.full((1,), 1.0)
+    v_scale = torch.full((1,), 1.0)
+
     paged_attention(
         out_paged,
         q_paged,
@@ -302,6 +308,10 @@ def _run_paged_vs_sdpa(
         block_tables,
         sequence_lengths,
         cache_block_size,
+        softcap,
+        kv_cache_dtype,
+        k_scale,
+        v_scale,
     )
 
     torch.testing.assert_close(final_out_sdpa, out_paged, atol=atol, rtol=rtol)
@@ -329,6 +339,9 @@ def _triton_vs_vllm_cuda(
         kv_cache_dtype: Data type of KV cache.
         dtype: Datatype for tensors.
     """
+    vllm_logger = logging.getLogger("vllm")
+    vllm_logger.setLevel(logging.CRITICAL)
+
     from vllm._custom_ops import paged_attention_v2 as vllm_paged_attention_v2
 
     query, key_cache_vllm, value_cache_vllm, key_cache_triton, value_cache_triton, block_tables, seq_lens = (
@@ -351,8 +364,8 @@ def _triton_vs_vllm_cuda(
     atol: Final = 1e-3
     rtol: Final = 1e-3
 
-    k_scale: Final = 1.0
-    v_scale: Final = 1.0
+    k_scale = torch.full((1,), 0.5)
+    v_scale = torch.full((1,), 0.5)
 
     # Run vLLM reference implementation
     output_vllm = torch.empty_like(query)
@@ -405,6 +418,7 @@ def _triton_vs_vllm_cuda(
         block_tables,
         seq_lens,
         cache_block_size,
+        softcap=0.0,
         kv_cache_dtype=kv_cache_dtype,
         k_scale=k_scale,
         v_scale=v_scale,
@@ -437,6 +451,9 @@ def _triton_vs_flash_attn(
         dtype: Datatype for tensors.
         apply_softcap: Whether or not to apply softcapping.
     """
+    vllm_logger = logging.getLogger("vllm")
+    vllm_logger.setLevel(logging.CRITICAL)
+
     from vllm.vllm_flash_attn import flash_attn_with_kvcache  # type: ignore[attr-defined, unused-ignore]
 
     query, _, _, key_cache_triton, value_cache_triton, block_tables, seq_lens = create_tensors(
@@ -465,6 +482,9 @@ def _triton_vs_flash_attn(
     # There are some small discrepancies in our output that I believe are caused by fp32<->fp16 conversions inside of the Triton kernel.
     atol: Final = 1e-3 if not apply_softcap else 2e-2
     rtol: Final = 1e-3
+
+    k_scale = torch.full((1,), 1.0)
+    v_scale = torch.full((1,), 1.0)
 
     # Run FlashAttnWithKVCache implementation
     query_vllm = query.unsqueeze(1)
@@ -501,6 +521,8 @@ def _triton_vs_flash_attn(
         cache_block_size,
         softcap,
         kv_cache_dtype,
+        k_scale=k_scale,
+        v_scale=v_scale,
     )
 
     assert torch.allclose(output_vllm, output_triton, atol=atol, rtol=rtol)
