@@ -339,9 +339,6 @@ def _triton_vs_vllm_cuda(
         kv_cache_dtype: Data type of KV cache.
         dtype: Datatype for tensors.
     """
-    vllm_logger = logging.getLogger("vllm")
-    vllm_logger.setLevel(logging.CRITICAL)
-
     from vllm._custom_ops import paged_attention_v2 as vllm_paged_attention_v2
 
     query, key_cache_vllm, value_cache_vllm, key_cache_triton, value_cache_triton, block_tables, seq_lens = (

@@ -2,8 +2,6 @@
 
 """Reference implementation of Gemma RMS norm kernel."""
 
-import logging
-
 import torch
 
 from conch import envs
@@ -40,9 +38,6 @@ def _gemma_rms_norm_vllm_ref(
 ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
     """vLLM reference gemma_rms_norm impl."""
     from vllm.model_executor.layers.layernorm import GemmaRMSNorm
-
-    vllm_logger = logging.getLogger("vllm")
-    vllm_logger.setLevel(logging.CRITICAL)
 
     layer = GemmaRMSNorm(hidden_size=weight.size(0), eps=variance_epsilon)
     layer.weight = torch.nn.Parameter(weight)

@@ -2,8 +2,6 @@
 
 """Reference implementation of scaled GEMM."""
 
-import logging
-
 import torch
 
 from conch import envs
@@ -37,9 +35,6 @@ def _scaled_gemm_vllm_ref(
     bias: torch.Tensor | None = None,
 ) -> torch.Tensor:
     from vllm._custom_ops import cutlass_scaled_mm
-
-    vllm_logger = logging.getLogger("vllm")
-    vllm_logger.setLevel(logging.CRITICAL)
 
     return cutlass_scaled_mm(a, b, scale_a, scale_b, out_dtype, bias)
 

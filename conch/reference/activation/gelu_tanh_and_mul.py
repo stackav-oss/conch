@@ -2,8 +2,6 @@
 
 """Reference implementation of gelu tanh and mul kernel."""
 
-import logging
-
 import torch
 import torch.nn.functional as F  # noqa: N812
 
@@ -20,9 +18,6 @@ def _gelu_tanh_and_mul_pytorch_ref(x: torch.Tensor) -> torch.Tensor:
 def _gelu_tanh_and_mul_vllm_ref(x: torch.Tensor) -> torch.Tensor:
     """vLLM reference gelu_tanh_and_mul impl."""
     from vllm.model_executor.layers.activation import GeluAndMul
-
-    vllm_logger = logging.getLogger("vllm")
-    vllm_logger.setLevel(logging.CRITICAL)
 
     gelu_layer = GeluAndMul("tanh")
     return gelu_layer.forward_cuda(x)

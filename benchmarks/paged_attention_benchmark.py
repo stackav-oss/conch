@@ -2,7 +2,6 @@
 
 """Triton paged attention benchmark."""
 
-import logging
 import sys
 from typing import Final
 
@@ -18,9 +17,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.has_cuda():
     from vllm._custom_ops import paged_attention_v2 as vllm_paged_attention_v2
-
-    vllm_logger = logging.getLogger("vllm")
-    vllm_logger.setLevel(logging.CRITICAL)
 else:
     vllm_paged_attention_v2 = None  # type: ignore[assignment]
 

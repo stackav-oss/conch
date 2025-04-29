@@ -2,8 +2,6 @@
 
 """Reference implementation of FP8 quantization kernels."""
 
-import logging
-
 import torch
 
 from conch import envs
@@ -22,9 +20,6 @@ def _scaled_fp8_quant_pytorch_ref(x: torch.Tensor, scale: torch.Tensor) -> torch
 def _scaled_fp8_quant_vllm_ref(x: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     """vLLM reference fp8 quant impl."""
     from vllm._custom_ops import scaled_fp8_quant as scaled_fp8_quant_vllm
-
-    vllm_logger = logging.getLogger("vllm")
-    vllm_logger.setLevel(logging.CRITICAL)
 
     output, _ = scaled_fp8_quant_vllm(x, scale)
     return output

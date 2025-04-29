@@ -2,8 +2,6 @@
 
 """PyTorch reference implementation of vLLM reshape_and_cache."""
 
-import logging
-
 import torch
 
 from conch import envs
@@ -59,9 +57,6 @@ def _reshape_and_cache_vllm_ref(
 ) -> None:
     """Reference vLLM implementation of reshape_and_cache."""
     from vllm._custom_ops import reshape_and_cache as reshape_and_cache_vllm
-
-    vllm_logger = logging.getLogger("vllm")
-    vllm_logger.setLevel(logging.CRITICAL)
 
     reshape_and_cache_vllm(key, value, key_cache, value_cache, slot_mapping, kv_cache_dtype, k_scale, v_scale)
 

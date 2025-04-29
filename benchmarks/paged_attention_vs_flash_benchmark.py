@@ -2,7 +2,6 @@
 
 """Triton paged attention vs. FlashAttnWithKVCache benchmark."""
 
-import logging
 import sys
 from typing import Final
 
@@ -18,9 +17,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.is_nvidia():
     from vllm.vllm_flash_attn import flash_attn_with_kvcache  # type: ignore[attr-defined, unused-ignore]
-
-    vllm_logger = logging.getLogger("vllm")
-    vllm_logger.setLevel(logging.CRITICAL)
 else:
     flash_attn_with_kvcache = None  # type: ignore[assignment]
 
