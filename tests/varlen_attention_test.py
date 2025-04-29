@@ -1,6 +1,6 @@
 # Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
 
-"""Test Triton prefill attention."""
+"""Test Triton varlen attention."""
 
 from typing import Final
 
@@ -10,7 +10,7 @@ import torch.nn.functional as F  # noqa: N812
 from einops import einsum, rearrange
 
 from conch import envs
-from conch.ops.attention.prefill_attention import prefill_attention
+from conch.ops.attention.varlen_attention import varlen_attention
 from conch.platforms import current_platform
 from conch.third_party.vllm.utils import seed_everything
 
@@ -133,7 +133,7 @@ def _run_paged_vs_sdpa(
         # Default PyTorch SDPA
         out_sdpa = F.scaled_dot_product_attention(q_sdpa, k_sdpa, v_sdpa, scale=scale)
 
-    final_out_sdpa = out_sdpa[:, :, -1, :]
+    # final_out_sdpa = out_sdpa[:, :, -1, :]
 
     q_paged = q[:, :, -1, :]
     out_paged = torch.zeros_like(q_paged, dtype=dtype, device=device)

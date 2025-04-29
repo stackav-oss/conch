@@ -31,7 +31,7 @@ def _varlen_attention_kernel(  # noqa: PLR0913, PLR0915
     cxpr_is_varlen: tl.constexpr,
     cxpr_head_size_padded: tl.constexpr,
     cxpr_seq_block_size: tl.constexpr,
-    cxpr_query_group_size_padded: tl.constexpr,
+    # cxpr_query_group_size_padded: tl.constexpr,
 ) -> None:
     """varlen attention kernel."""
     # What batch is this program processing?
@@ -44,12 +44,18 @@ def _varlen_attention_kernel(  # noqa: PLR0913, PLR0915
     # What KV head is this program processing?
     kv_head_index = query_head_index // query_group_size
 
-    if cxpr_is_varlen:
-        seq_start = tl.load(cu_seqlen_ptr + batch_index)
-        seq_end = tl.load(cu_seqlen_ptr + batch_index + 1)
-        seqlen = seq_end - seq_start
-    else:
-        seqlen = max_seqlen
+    assert cxpr_is_varlen
+
+    seq_start = tl.load(cu_seqlen_ptr + batch_index)
+    seq_end = tl.load(cu_seqlen_ptr + batch_index + 1)
+    seqlen = seq_end - seq_start
+
+    # if cxpr_is_varlen:
+    #     seq_start = tl.load(cu_seqlen_ptr + batch_index)
+    #     seq_end = tl.load(cu_seqlen_ptr + batch_index + 1)
+    #     seqlen = seq_end - seq_start
+    # else:
+    #     seqlen = max_seqlen
 
     # TODO(jmanning): How do we avoid duplicate loads of K/V for the same query head?
 
@@ -120,8 +126,8 @@ def varlen_attention_launcher(
     batch_size=2
 
     Q = [
-      [[[1, 2, ... head_size], ..., num_query_heads], ..., seqlen],
-      [[[3, 4, ... head_size], ..., num_query_heads], ..., seqlen],
+      [[1, 2, ... head_size], ..., num_query_heads]],
+      [[3, 4, ... head_size], ..., num_query_heads]],
     ]
 
 
@@ -153,6 +159,9 @@ def varlen_attention_launcher(
         error_msg = "Softcap is not supported yet."
         raise NotImplementedError(error_msg)
 
+    # For prefill, query_seq_len == kv_seq_len, though this may not always be true for other attention?
+    
+
     batch_size = len(cu_seqlen_q) - 1
     _, num_query_heads, head_size = output.shape
     _, num_kv_heads, _ = key.shape
@@ -161,9 +170,9 @@ def varlen_attention_launcher(
     cxpr_head_size_padded = triton.next_power_of_2(head_size)
 
     # How many query heads correspond to the same KV head?
-    query_group_size = num_query_heads // num_kv_heads
+    # query_group_size = num_query_heads // num_kv_heads
     # We pad this size to be at least 16 so that we can use `tl.dot()` operations inside of the kernel
-    cxpr_query_group_size_padded = max(16, triton.next_power_of_2(query_group_size))
+    # cxpr_query_group_size_padded = max(16, triton.next_power_of_2(query_group_size))
 
     # TODO(jmanning): Tune this
     cxpr_seq_block_size = 16
@@ -177,13 +186,14 @@ def varlen_attention_launcher(
         query_ptr=query,
         key_ptr=key,
         value_ptr=value,
-        num_query_heads=num_query_heads,
-        num_kv_heads=num_kv_heads,
+        # num_query_heads=num_query_heads,
+        # num_kv_heads=num_kv_heads,
+        query_group_size=query_group_size,
         head_size=head_size,
         max_seqlen=max_seqlen_q,
         query_batch_stride=query.stride(0),
         query_head_stride=query.stride(1),
         cxpr_head_size_padded=cxpr_head_size_padded,
         cxpr_seq_block_size=cxpr_seq_block_size,
-        cxpr_query_group_size_padded=cxpr_query_group_size_padded,
+        # cxpr_query_group_size_padded=cxpr_query_group_size_padded,
     )
