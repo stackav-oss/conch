@@ -167,10 +167,10 @@ def paged_attention(
     block_tables: torch.Tensor,
     seq_lens: torch.Tensor,
     cache_block_size: int,
-    softcap: float = 0.0,
-    kv_cache_dtype: str = "auto",
-    k_scale: float = 1.0,
-    v_scale: float = 1.0,
+    softcap: float,
+    kv_cache_dtype: str,
+    k_scale: torch.Tensor,
+    v_scale: torch.Tensor,
 ) -> None:
     """PagedAttention interface to verify sizes, split kv_cache, and launch kernel.
 
@@ -183,10 +183,10 @@ def paged_attention(
         block_tables: Tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
         seq_lens: Tensor with the sequence length of each index in the batch, shape: (batch_size, ).
         cache_block_size: Size of the cache block.
-        softcap: (Optional), Logit softcap to apply (0.0 means no softcap will be applied).
-        kv_cache_dtype: (Optional) Data type of the KV cache.
-        k_scale: (Optional) FP8 scaling factor for key cache.
-        v_scale: (Optional) FP8 scaling factor for value cache.
+        softcap: Logit softcap to apply (0.0 means no softcap will be applied).
+        kv_cache_dtype: Data type of the KV cache.
+        k_scale: FP8 scaling factor for key cache.
+        v_scale: FP8 scaling factor for value cache.
     """
     # Check sizes of input tensors
     metadata = _check_size_compatibility(output, query, kv_cache, block_tables, num_kv_heads, cache_block_size)

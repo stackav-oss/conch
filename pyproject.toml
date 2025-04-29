@@ -34,6 +34,7 @@ use_parentheses = true
 explicit_package_bases = true
 strict = true
 exclude = [
+  "build/",
   "conch/third_party/",
 ]
 

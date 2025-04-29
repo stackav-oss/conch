@@ -428,10 +428,10 @@ def paged_attention_launcher(  # noqa: PLR0913
     scale: float,
     block_tables: torch.Tensor,
     seq_lens: torch.Tensor,
-    softcap: float = 0.0,
-    kv_cache_dtype: str = "auto",
-    k_scale: float = 1.0,
-    v_scale: float = 1.0,
+    softcap: float,
+    kv_cache_dtype: str,
+    k_scale: torch.Tensor,
+    v_scale: torch.Tensor,
 ) -> None:
     """PagedAttention kernel launcher.
 
@@ -447,8 +447,8 @@ def paged_attention_launcher(  # noqa: PLR0913
         seq_lens: Tensor with the sequence length of each index in the batch, shape: (batch_size, ).
         softcap: (Optional), Logit softcap to apply (0.0 means no softcap will be applied).
         kv_cache_dtype: If this dtype is fp8, apply scaling.
-        k_scale: Fp8 scaling factor for k.
-        v_scale: Fp8 scaling factor for v.
+        k_scale: (Optional) Fp8 scaling factor for k.
+        v_scale: (Optional) Fp8 scaling factor for v.
     """
     assert query.shape == out.shape  # noqa: S101
     assert key_cache.shape == value_cache.shape  # noqa: S101
@@ -493,6 +493,15 @@ def paged_attention_launcher(  # noqa: PLR0913
 
     num_cache_blocks_per_split = triton.cdiv(max_num_blocks_per_sequence, num_splits)
 
+    k_scale_scalar = 1.0
+    v_scale_scalar = 1.0
+
+    if cxpr_apply_fp8_scaling:
+        assert k_scale.numel() == 1  # noqa: S101
+        assert k_scale.numel() == v_scale.numel()  # noqa: S101
+        k_scale_scalar = k_scale.item()
+        v_scale_scalar = v_scale.item()
+
     # For computing attention for split block (stage 1): parallelize over batches, cache blocks, and KV heads.
     # Note: if the number of cache blocks in a sequence is very large, it is more efficient to handle multiple blocks
     # in one launch of the stage 1 kernel to reduce the overhead of reduction
@@ -512,8 +521,8 @@ def paged_attention_launcher(  # noqa: PLR0913
         scale,
         num_cache_blocks_per_split,
         softcap,
-        k_scale,
-        v_scale,
+        k_scale_scalar,
+        v_scale_scalar,
         # Sizes of relevant tensors
         head_size,
         query_group_size,

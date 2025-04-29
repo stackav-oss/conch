@@ -205,8 +205,8 @@ def main(
     kv_cache_conch = torch.vstack((key_cache_conch[None, :, :], value_cache_conch[None, :, :]))
     key_cache_conch, value_cache_conch = split_kv_cache(kv_cache_conch, num_kv_heads, head_dim)
 
-    # Using default kv_scale
-    k_scale = v_scale = 1.0
+    k_scale = torch.full((1,), 0.5)
+    v_scale = torch.full((1,), 0.5)
 
     output_conch = torch.empty_like(query)
 
@@ -220,6 +220,7 @@ def main(
         scale,
         block_tables,
         seq_lens,
+        softcap=0.0,
         kv_cache_dtype=kv_cache_dtype,
         k_scale=k_scale,
         v_scale=v_scale,
@@ -317,6 +318,7 @@ def main(
             scale,
             block_tables,
             seq_lens,
+            softcap=0.0,
             kv_cache_dtype=kv_cache_dtype,
             k_scale=k_scale,
             v_scale=v_scale,
