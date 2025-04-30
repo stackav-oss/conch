@@ -50,7 +50,8 @@ def _check_output_query_size_compatibility(output: torch.Tensor, query: torch.Te
 
 
 def _check_key_value_size_compatibility(
-    kv_cache: torch.Tensor, num_kv_heads: int, cache_block_size: int, head_size: int
+    key: torch.Tensor,
+    value: torch.Tensor,
 ) -> None:
     """Check size compatibility of Key and Value tensors.
 
@@ -147,7 +148,6 @@ def _check_size_compatibility(
 
 
 def varlen_attention(
-    output: torch.Tensor,
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
@@ -157,11 +157,10 @@ def varlen_attention(
     max_seqlen_k: int,
     scale: float,
     softcap: float = 0.0,
-) -> None:
+) -> torch.Tensor:
     """Varlen attention interface to verify sizes and launch kernel.
 
     Args:
-        output: Tensor to write the output of the attention calculation, shape: (total_num_q, num_query_heads, head_size).
         query: Query tensor, shape: (total_num_q, num_query_heads, head_size).
         key: Key tensor, shape: (total_num_k, num_kv_heads, head_size).
         value: Value tensor, shape: (total_num_k, num_kv_heads, head_size).
@@ -172,6 +171,8 @@ def varlen_attention(
         scale: Scaling factor, 1/sqrt(head_size).
         softcap: (Optional), Logit softcap to apply (0.0 means no softcap will be applied).
     """
+    output = torch.zeros_like(query, device=query.device, dtype=query.dtype)
+
     # Check sizes of input tensors
     _ = _check_size_compatibility(output, query, key, value, cu_seqlen_q, cu_seqlen_k)
 
@@ -187,3 +188,5 @@ def varlen_attention(
         scale=scale,
         softcap=softcap,
     )
+
+    return output
