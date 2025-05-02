@@ -425,9 +425,9 @@ def paged_attention_launcher(  # noqa: PLR0913
     value_cache: torch.Tensor,
     output_scratchpad: torch.Tensor,
     lse_scratchpad: torch.Tensor,
-    scale: float,
     block_tables: torch.Tensor,
     seq_lens: torch.Tensor,
+    scale: float,
     softcap: float,
     kv_cache_dtype: str,
     k_scale: torch.Tensor,
@@ -442,13 +442,13 @@ def paged_attention_launcher(  # noqa: PLR0913
         value_cache: Tensor with cached V values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
         output_scratchpad: Tensor used as scratchpad to share cache block outputs between two stages, shape: (batch_size, max_num_blocks_per_sequence, num_query_heads, head_size)
         lse_scratchpad: Tensor used as scratchpad to share cache block log-sum-exp between two stages, shape: (batch_size, max_num_blocks_per_sequence, num_query_heads)
-        scale: Scaling factor, 1/sqrt(head_size).
         block_tables: Tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
         seq_lens: Tensor with the sequence length of each index in the batch, shape: (batch_size, ).
-        softcap: (Optional), Logit softcap to apply (0.0 means no softcap will be applied).
+        scale: Scaling factor, 1/sqrt(head_size).
+        softcap: Logit softcap to apply (0.0 means no softcap will be applied).
         kv_cache_dtype: If this dtype is fp8, apply scaling.
-        k_scale: (Optional) Fp8 scaling factor for k.
-        v_scale: (Optional) Fp8 scaling factor for v.
+        k_scale: Fp8 scaling factor for k.
+        v_scale: Fp8 scaling factor for v.
     """
     assert query.shape == out.shape  # noqa: S101
     assert key_cache.shape == value_cache.shape  # noqa: S101
