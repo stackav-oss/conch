@@ -34,7 +34,8 @@ def _swizzle_tile(
     grid_n = tl.cdiv(n_dim, cxpr_block_size_n)
     width = cxpr_group_size_m * grid_n
     group_id = pid // width
-    group_size = tl.minimum(grid_m - group_id * cxpr_group_size_m, cxpr_group_size_m)
+    # group_size = tl.minimum(grid_m - group_id * cxpr_group_size_m, cxpr_group_size_m)
+    group_size = cxpr_group_size_m
     pid_m = group_id * cxpr_group_size_m + (pid % group_size)
     pid_n = (pid % width) // group_size
     return pid_m, pid_n
@@ -64,6 +65,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     scale: float,
     num_query_splits: int,
     num_kv_splits: int,
+    max_seqlen_q: int,
     num_cache_blocks_per_split: int,
     softcap: float,
     k_scale: float,
@@ -139,11 +141,14 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # What "split" of the overall data (between 1 and M for query chunks and between 1 and N for KV cache blocks) is this program processing?
     split_index = tl.program_id(1)
     total_num_splits = tl.num_programs(1)
-    # query_split_index = split_index // tl.cdiv(total_num_splits, num_query_splits)
-    # kv_split_index = split_index % tl.cdiv(total_num_splits, num_query_splits)
 
     query_split_index, kv_split_index = (
-        _swizzle_tile(split_index, num_kv_splits, num_query_splits, num_cache_blocks_per_split, total_num_splits, cxpr_query_chunk_size)
+        # _swizzle_tile(split_index, num_kv_splits, num_query_splits, num_cache_blocks_per_split, total_num_splits, cxpr_query_chunk_size)
+        # _swizzle_tile(split_index, M_DIM, total_num_splits, BLOCK_SIZE_M, num_kv_splits, num_query_splits, cxpr_query_chunk_size)
+        # _swizzle_tile(split_index, num_kv_splits, total_num_splits, 1, num_query_splits, cxpr_query_chunk_size)
+        _swizzle_tile(split_index, num_kv_splits, total_num_splits, 1, num_query_splits, 4)
+        # _swizzle_tile(split_index, num_kv_splits, total_num_splits, 1, num_query_splits, cxpr_query_chunk_size)
+        # _swizzle_tile(split_index, num_kv_splits, max_seqlen_q, 1, num_query_splits, cxpr_query_chunk_size)
         if cxpr_swizzle_pid
         else _linear_tile(split_index, total_num_splits, num_query_splits)
     )
@@ -665,6 +670,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
         scale=scale,
         num_query_splits=num_query_splits_stage1,
         num_kv_splits=num_kv_splits,
+        max_seqlen_q=max_seqlen_q,
         num_cache_blocks_per_split=num_cache_blocks_per_split,
         softcap=softcap,
         k_scale=k_scale_scalar,
@@ -693,7 +699,8 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_apply_fp8_scaling=cxpr_apply_fp8_scaling,
         cxpr_is_rocm=cxpr_is_rocm,
         cxpr_is_causal=causal,
-        cxpr_swizzle_pid=False,
+        # cxpr_swizzle_pid=False,
+        cxpr_swizzle_pid=True,
     )
 
     # cxpr_query_chunk_size_stage2: tl.constexpr = 8
