@@ -61,6 +61,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     cxpr_is_softcap: tl.constexpr,
     cxpr_apply_fp8_scaling: tl.constexpr,
     cxpr_is_rocm: tl.constexpr,
+    cxpr_is_causal: tl.constexpr,
 ) -> None:
     """Varlen Attention kernel: compute attention for a split block.
 
@@ -109,6 +110,8 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     total_num_splits = tl.num_programs(1)
     query_split_index = split_index // tl.cdiv(total_num_splits, num_query_splits)
     kv_split_index = split_index % tl.cdiv(total_num_splits, num_query_splits)
+    # kv_split_index = split_index // tl.cdiv(total_num_splits, num_query_splits)
+    # query_split_index = split_index % tl.cdiv(total_num_splits, num_query_splits)
 
     # What query head is this program processing?
     query_head_index = tl.program_id(2)
@@ -130,6 +133,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # to process. So we may have a case where one sequence in a batch has sufficiently fewer cache blocks to process such that a kernel doesn't have
     # any blocks to process.
     if starting_cache_block_index >= current_seq_num_cache_blocks:
+        # print("[SKIPPING!] starting_cache_block_index", starting_cache_block_index)
         return
 
     # Compute length of current sequence's query
@@ -142,8 +146,18 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
     # Similar to above, we launch the same number of splits for all sequences in the batch, so different kernel launches will have different
     # numbers of query tokens to process. If we've already processed all of the query tokens for this sequence, we can skip this kernel.
-    if this_split_offset >= this_query_length:
+    if this_split_offset > this_query_length:
+        # print("[SKIPPING!] this_split_offset", this_split_offset)
+        # print("[SKIPPING!] this_query_length", this_query_length)
         return
+
+    # if query_split_index == 1:
+    #     print("kv_split_index = ", kv_split_index)
+
+    # print("batch_index", batch_index)
+    # print("query_split_index", query_split_index)
+    # print("kv_split_index", kv_split_index)
+    # print("query_head_index", query_head_index)
 
     # """
     # query = [total_num_q, num_query_heads, head_size]
@@ -161,12 +175,15 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
     # Offsets for each query vector in the group
     query_split_offsets = this_split_offset + tl.arange(0, cxpr_query_chunk_size)
+    # query_split_offsets = tl.arange(0, cxpr_query_chunk_size)
     # Need to mask out if any of these tokens are out of bounds
+    # query_split_mask = (this_split_offset + query_split_offsets) < this_query_length
     query_split_mask = query_split_offsets < this_query_length
 
     # Offset for how many tokens in query correspond to other sequences
     num_previous_sequences = tl.load(cu_seqlens_q_ptr + batch_index)
     other_sequences_query_offset = num_previous_sequences * query_batch_stride
+    prev_sequences_this_batch_query_offset = this_split_offset * query_batch_stride
 
     # Offsets to each element of the padded-to-next-power-of-two head size
     head_offsets = tl.arange(0, cxpr_head_size_padded)
@@ -197,6 +214,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Load queries for all of the query heads that correspond to this KV head
     query = tl.load(
         # query_ptr + query_batch_index_offset + query_head_index_offset + query_offsets, mask=query_mask, other=0.0
+        # query_ptr + other_sequences_query_offset + prev_sequences_this_batch_query_offset + query_offsets, mask=query_mask, other=0.0
         query_ptr + other_sequences_query_offset + query_offsets, mask=query_mask, other=0.0
     )
 
@@ -272,6 +290,14 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             # qk_mask = query_split_mask[:, None, None] & query_group_mask[None, :, None] & cache_block_mask[None, None, :]
             qk_mask = query_split_mask[:, None] & cache_block_mask[None, :]
 
+            if cxpr_is_causal:
+                # Causal mask
+                # qk_mask = tl.arange(0, cxpr_cache_block_size) < num_entries_in_cache_block
+                # qk_mask = tl.arange(0, cxpr_cache_block_size) < (num_entries_in_cache_block + this_split_offset - query_split_offsets[:, None])
+                # TODO(jmanning): Implement causal
+                causal_mask = (tl.arange(0, cxpr_cache_block_size) > 0)[None, :]
+                qk_mask = qk_mask & causal_mask
+
             # Set masked out elements to -inf
             qk = tl.where(qk_mask, qk, -float("inf")).to(dtype)
 
@@ -330,16 +356,18 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     output /= l_i[:, None]
 
     other_sequences_scratch_offset = num_previous_sequences * output_scratchpad_batch_stride
+    # prev_sequences_this_batch_scratch_offset = this_split_offset * output_scratchpad_batch_stride
     # Calculate offsets to store the output for this head/batch/split
     # output_batch_index_offset = batch_index * output_scratchpad_batch_stride
-    output_split_index_offset = kv_split_index * output_scratchpad_kv_split_stride
+    output_scratch_split_index_offset = kv_split_index * output_scratchpad_kv_split_stride
     # output_head_index_offset = (kv_head_index * query_group_size) * output_scratchpad_head_stride
-    output_head_index_offset = query_head_index * output_scratchpad_head_stride
+    output_scratch_head_index_offset = query_head_index * output_scratchpad_head_stride
 
     # 2D block of shape (query_group_size_padded, head_size_padded)
-    scratch_offsets = query_split_offsets[:, None] * output_scratchpad_batch_stride + output_split_index_offset + output_head_index_offset + head_offsets[None, :]
+    scratch_offsets = query_split_offsets[:, None] * output_scratchpad_batch_stride + output_scratch_split_index_offset + output_scratch_head_index_offset + head_offsets[None, :]
     # output_offsets = output_batch_index_offset + output_split_index_offset + output_head_index_offset + scratch_offsets
-    output_offsets = other_sequences_scratch_offset + scratch_offsets
+    # output_scratch_offsets = other_sequences_scratch_offset + prev_sequences_this_batch_scratch_offset + scratch_offsets
+    output_scratch_offsets = other_sequences_scratch_offset + scratch_offsets
 
     # if batch_index == 1:
     #     if query_split_index == 0:
@@ -357,7 +385,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # return
 
     # Store output scratchpad results
-    tl.store(output_scratchpad_ptr + output_offsets, output, mask=query_mask)
+    tl.store(output_scratchpad_ptr + output_scratch_offsets, output, mask=query_mask)
 
 
     # Calculate scratchpad log(sum(exp))
@@ -375,6 +403,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     #     + query_group_offsets
     # )
     other_sequences_lse_offset = num_previous_sequences * lse_scratchpad_batch_stride
+    # prev_sequences_this_batch_lse_offset = this_split_offset * lse_scratchpad_batch_stride
     # query_split_offsets = query_split_offsets[:, None] * lse_scratchpad_batch_stride
     # lse_scratch_split_index_offset = kv_split_index * lse_scratchpad_kv_split_stride
 
@@ -382,12 +411,26 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
     lse_scratch_offsets = (
         other_sequences_lse_offset +
+        # prev_sequences_this_batch_lse_offset +
         # query_split_offsets[:, None] * lse_scratchpad_batch_stride +
         query_split_offsets * lse_scratchpad_batch_stride +
         # lse_scratch_split_index_offset * lse_scratchpad_kv_split_stride +
         kv_split_index * lse_scratchpad_kv_split_stride +
         query_head_index
     )
+
+    # if batch_index == 0:
+    #     if query_split_index == 0:
+    #         if kv_split_index == 1:
+    #             if query_head_index == 0:
+    #                 print("lse_scratch_offsets", lse_scratch_offsets)
+    #                 print("lse = ", lse)
+    #                 print("query_split_mask = ", query_split_mask)
+    #                 # print("other_sequences_lse_offset", other_sequences_lse_offset)
+    #                 # print("prev_sequences_this_batch_lse_offset", prev_sequences_this_batch_lse_offset)
+    #                 # print("query_split_offsets", query_split_offsets)
+    #                 # print("kv_split_index", kv_split_index)
+    #                 # print("query_head_index", query_head_index)
 
     # if batch_index == 1:
     #     if query_split_index == 0:
@@ -491,7 +534,8 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
 
     # Similar to above, we launch the same number of splits for all sequences in the batch, so different kernel launches will have different
     # numbers of query tokens to process. If we've already processed all of the query tokens for this sequence, we can skip this kernel.
-    if this_split_offset >= this_query_length:
+    if this_split_offset > this_query_length:
+        # print("[SKIPPING!] this_split_offset", this_split_offset)
         return
 
 
@@ -500,7 +544,9 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
 
     # Offsets for each query vector in the group
     query_split_offsets = this_split_offset + tl.arange(0, cxpr_query_chunk_size)
+    # query_split_offsets = tl.arange(0, cxpr_query_chunk_size)
     # Need to mask out if any of these tokens are out of bounds
+    # query_split_mask = (this_split_offset + query_split_offsets) < this_query_length
     query_split_mask = query_split_offsets < this_query_length
 
     # Offsets to each element of the padded-to-next-power-of-two head size
@@ -526,6 +572,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
         # )
 
         other_sequences_scratch_offset = num_previous_sequences * output_scratchpad_batch_stride
+        # prev_sequences_this_batch_scratch_offset = this_split_offset * output_scratchpad_batch_stride
         # Calculate offsets to store the output for this head/batch/split
         # output_batch_index_offset = batch_index * output_scratchpad_batch_stride
         output_split_index_offset = kv_split_index * output_scratchpad_kv_split_stride
@@ -546,6 +593,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
         # lse_scratch_batch_index_offset = batch_index * lse_scratchpad_batch_stride
         # lse_scratch_split_index_offset = kv_split_index * lse_scratchpad_kv_split_stride
         other_sequences_lse_offset = num_previous_sequences * lse_scratchpad_batch_stride
+        # prev_sequences_this_batch_lse_offset = this_split_offset * lse_scratchpad_batch_stride
         # query_split_offsets = query_split_offsets[:, None] * lse_scratchpad_batch_stride
         # lse_scratch_split_index_offset = kv_split_index * lse_scratchpad_kv_split_stride
 
@@ -553,6 +601,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
 
         lse_scratch_offsets = (
             other_sequences_lse_offset +
+            # prev_sequences_this_batch_scratch_offset +
             # query_split_offsets[:, None] * lse_scratchpad_batch_stride +
             query_split_offsets * lse_scratchpad_batch_stride +
             # lse_scratch_split_index_offset * lse_scratchpad_kv_split_stride +
@@ -563,7 +612,9 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
         # Load log-sum-exp for this cache block, shape -> (cxpr_query_chunk_size,)
         block_lse = tl.load(
             # lse_scratchpad_ptr + lse_scratch_batch_index_offset + lse_scratch_split_index_offset + query_head_index
-            lse_scratchpad_ptr + lse_scratch_offsets, mask=query_split_mask, other=float("-inf")
+            lse_scratchpad_ptr +
+            # prev_sequences_this_batch_lse_offset +
+            lse_scratch_offsets, mask=query_split_mask, other=float("-inf")
         )
 
         # if batch_index == 0:
@@ -617,6 +668,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     # tl.store(output_ptr + output_offsets, output, mask=head_mask)
     
     other_sequences_output_offset = num_previous_sequences * output_batch_stride
+    # prev_sequences_this_batch_output_offset = this_split_offset * output_batch_stride
     output_offsets = query_split_offsets[:, None] * output_batch_stride + query_head_index * output_head_stride + head_offsets[None, :]
 
     # if batch_index == 0:
@@ -625,6 +677,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     #             print("output = ", output)
     #             # print("output_offsets = ", output_offsets)
 
+    # tl.store(output_ptr + other_sequences_output_offset + prev_sequences_this_batch_output_offset + output_offsets, output, mask=query_mask)
     tl.store(output_ptr + other_sequences_output_offset + output_offsets, output, mask=query_mask)
 
 
@@ -644,6 +697,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
     scale: float,
     softcap: float,
     kv_cache_dtype: str = "auto",
+    causal: bool = False,
     # k_scale: torch.Tensor,
     # v_scale: torch.Tensor,
 ) -> None:
@@ -713,8 +767,11 @@ def varlen_attention_launcher(  # noqa: PLR0913
     # Note: we may need to tune this value for a given HW platform.
     num_kv_splits = min(max_num_blocks_per_sequence, MAX_NUM_KV_SPLITS)
 
+    # print(f"{max_seqlen_q = }")
+
     cxpr_query_chunk_size: tl.constexpr = 16
-    num_query_splits = max_seqlen_q // cxpr_query_chunk_size
+    # num_query_splits = max_seqlen_q // cxpr_query_chunk_size + 1
+    num_query_splits = triton.cdiv(max_seqlen_q, cxpr_query_chunk_size)
 
     # query = [cxpr_query_chunk_size, cxpr_query_group_size, cxpr_head_size_padded]
     # key_block = [cxpr_head_size_padded, cxpr_cache_block_size]
@@ -729,6 +786,8 @@ def varlen_attention_launcher(  # noqa: PLR0913
         assert k_scale.numel() == v_scale.numel()  # noqa: S101
         k_scale_scalar = k_scale.item()
         v_scale_scalar = v_scale.item()
+
+    # print(f"{num_query_splits = }, {num_kv_splits = }")
 
     # For computing attention for split block (stage 1): parallelize over batches, cache blocks, and KV heads.
     # Note: if the number of cache blocks in a sequence is very large, it is more efficient to handle multiple blocks
@@ -779,11 +838,12 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_is_softcap=cxpr_is_softcap,
         cxpr_apply_fp8_scaling=cxpr_apply_fp8_scaling,
         cxpr_is_rocm=cxpr_is_rocm,
+        cxpr_is_causal=causal,
     )
 
-    print(f"{output_scratchpad = }")
+    # print(f"{output_scratchpad = }")
     # print(f"{output_scratchpad.numel() = }")
-    print(f"{lse_scratchpad = }")
+    # print(f"{lse_scratchpad = }")
 
     # return
 
@@ -817,3 +877,5 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_cache_block_size,
         cxpr_head_size_padded,
     )
+
+    # print(f"[GRID] {stage1_grid = }, {stage2_grid = }")

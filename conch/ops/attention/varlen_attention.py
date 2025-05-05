@@ -159,6 +159,7 @@ def varlen_attention(
     max_seqlen_k: int,
     scale: float,
     softcap: float = 0.0,
+    causal: bool = False,
 ) -> torch.Tensor:
     """Varlen attention interface to verify sizes and launch kernel.
 
@@ -219,6 +220,10 @@ def varlen_attention(
         scale=scale,
         softcap=softcap,
         kv_cache_dtype="auto",
+        causal=causal,
     )
+
+    # print(f"{output_scratchpad.shape = }")
+    # print(f"{lse_scratchpad.shape = }")
 
     return output
