@@ -857,8 +857,8 @@ def varlen_attention_launcher(  # noqa: PLR0913
     # stage1_grid = (batch_size, num_query_splits * num_kv_splits, num_kv_heads)
     stage1_grid = (batch_size, num_query_splits * num_kv_splits, num_query_heads)
 
-    print(f"[GRID] {stage1_grid = }")
-    print(f"[GRID] {num_query_splits = }, {num_kv_splits = }")
+    # print(f"[GRID] {stage1_grid = }")
+    # print(f"[GRID] {num_query_splits = }, {num_kv_splits = }")
 
     # Launch stage 1 kernel
     _varlen_attention_compute_splits_kernel[stage1_grid](
@@ -944,4 +944,4 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_is_causal=causal,
     )
 
-    print(f"[GRID] {stage1_grid = }, {stage2_grid = }")
+    # print(f"[GRID] {stage1_grid = }, {stage2_grid = }")
