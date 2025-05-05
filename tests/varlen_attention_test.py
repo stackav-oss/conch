@@ -26,10 +26,13 @@ _NUM_SEQS_ABRIDGED: Final = [4, 10]
 # # Too many parameterizations makes the SDPA test cases too slow
 # _SEQUENCE_LENGTHS_ABRIDGED: Final = [240, 333, 1002]
 _NUM_HEADS_ABRIDGED: Final = [(8, 8), (4, 1), (16, 4)]
-_MAX_SEQLEN_Q: Final = 2048
+# _MAX_SEQLEN_Q: Final = 2048
+# _MAX_SEQLEN_Q: Final = 2047
+_MAX_SEQLEN_Q: Final = 1024
 # _SEQUENCE_LENGTHS: Final = [240, 2048]
+_SEQUENCE_LENGTHS: Final = [240, 1024]
 # _SEQUENCE_LENGTHS: Final = [240]
-_SEQUENCE_LENGTHS: Final = [242]
+# _SEQUENCE_LENGTHS: Final = [242]
 # _SEQUENCE_LENGTHS: Final = [33]
 # _SEQUENCE_LENGTHS: Final = [17]
 
@@ -282,22 +285,35 @@ def _create_seqlens(num_seqs: int, different_seqlen_k: bool = False) -> tuple[to
 
 
 @pytest.mark.skipif(not _ENABLE_VLLM, reason="This test case requires vLLM")
-# @pytest.mark.parametrize("num_seqs", _NUM_SEQS_ABRIDGED)
+@pytest.mark.parametrize("num_seqs", _NUM_SEQS_ABRIDGED)
+# @pytest.mark.parametrize("num_seqs", [10])
 # @pytest.mark.parametrize("num_seqs", [1])
-@pytest.mark.parametrize("num_seqs", [4])
+# @pytest.mark.parametrize("num_seqs", [8])
+# @pytest.mark.parametrize("num_seqs", [4])
+# @pytest.mark.parametrize("num_seqs", [5])
+# @pytest.mark.parametrize("num_seqs", [10])
 # @pytest.mark.parametrize("num_seqs", [1])
-# @pytest.mark.parametrize("head_size", _HEAD_SIZES)
-@pytest.mark.parametrize("head_size", [128])
-# @pytest.mark.parametrize(("num_query_heads", "num_kv_heads"), _NUM_HEADS_ABRIDGED)
-@pytest.mark.parametrize(("num_query_heads", "num_kv_heads"), [(8, 8)])
+# @pytest.mark.parametrize("num_seqs", [4])
+# @pytest.mark.parametrize("num_seqs", [1])
+@pytest.mark.parametrize("head_size", _HEAD_SIZES)
+# @pytest.mark.parametrize("head_size", [256])
+# @pytest.mark.parametrize("head_size", [128])
+@pytest.mark.parametrize(("num_query_heads", "num_kv_heads"), _NUM_HEADS_ABRIDGED)
+# @pytest.mark.parametrize(("num_query_heads", "num_kv_heads"), [(16, 4)])
+# @pytest.mark.parametrize(("num_query_heads", "num_kv_heads"), [(8, 8)])
 # @pytest.mark.parametrize(("num_query_heads", "num_kv_heads"), [(1, 1)])
 # @pytest.mark.parametrize("different_seqlen_k", [False])
 # @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
 # @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize("dtype", [torch.float16])
 @pytest.mark.parametrize("sequence_length", _SEQUENCE_LENGTHS)
+# @pytest.mark.parametrize("sequence_length", [2048])
+# @pytest.mark.parametrize("sequence_length", [2047])
+# @pytest.mark.parametrize("sequence_length", [1024])
 # @pytest.mark.parametrize("causal", [False])
-@pytest.mark.parametrize("causal", [True])
+# @pytest.mark.parametrize("causal", [True])
+@pytest.mark.parametrize("causal", [True, False])
+# @pytest.mark.parametrize("causal", [True])
 # @pytest.mark.parametrize("dtype", [torch.float16])
 def test_varlen_attention_vs_flash(
     num_seqs: int,
@@ -432,15 +448,15 @@ def test_varlen_attention_vs_flash(
         causal=causal,
     )
 
-    print(f"{q = }")
+    # print(f"{q = }")
 
-    print(f"{vllm_output = }")
-    print(f"{conch_output = }")
+    # print(f"{vllm_output = }")
+    # print(f"{conch_output = }")
 
     # assert False
 
-    print(f"{vllm_output.shape = }")
-    print(f"{conch_output.shape = }")
+    # print(f"{vllm_output.shape = }")
+    # print(f"{conch_output.shape = }")
 
     # torch.testing.assert_close(vllm_output, pytorch_output, atol=tolerance, rtol=tolerance)
     torch.testing.assert_close(vllm_output, conch_output, atol=tolerance, rtol=tolerance)

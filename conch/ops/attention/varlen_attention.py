@@ -204,6 +204,13 @@ def varlen_attention(
         device=output.device,
     )
 
+
+    print(f"{block_tables = }")
+    print(f"{seq_lens = }")
+    print(f"{cu_seqlens_q = }")
+    print(f"{output_scratchpad.shape = }")
+    print(f"{lse_scratchpad.shape = }")
+
     varlen_attention_launcher(
         output=output,
         query=query,
@@ -223,6 +230,9 @@ def varlen_attention(
         causal=causal,
     )
 
+    # print(f"{block_tables = }")
+    # print(f"{seq_lens = }")
+    # print(f"{cu_seqlens_q = }")
     # print(f"{output_scratchpad.shape = }")
     # print(f"{lse_scratchpad.shape = }")
 

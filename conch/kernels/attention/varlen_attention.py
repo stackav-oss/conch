@@ -215,11 +215,11 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # query_mask = query_split_mask[:, None, None] & query_group_mask[None, :, None] & head_mask[None, None, :]
     query_mask = query_split_mask[:, None] & head_mask[None, :]
 
-    if batch_index == 0:
-        if query_split_index == 0:
-            if kv_split_index == 0:
-                if query_head_index == 0:
-                    print("query_mask = ", query_mask)
+    # if batch_index == 0:
+    #     if query_split_index == 0:
+    #         if kv_split_index == 0:
+    #             if query_head_index == 0:
+    #                 print("query_mask = ", query_mask)
 
     # Offsets for query vector this batch/head
     # query_batch_index_offset = batch_index * query_batch_stride
@@ -297,13 +297,13 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             # qk.shape -> (query_chunk_size, cache_block_size)
             qk = (scale * tl.dot(query, key_block)).to(dtype)
 
-            if batch_index == 0:
-                if query_split_index == 0:
-                    if kv_split_index == 0:
-                        if query_head_index == 0:
-                            print("query = ", query)
-                            print("key_block = ", key_block)
-                            print("qk = ", qk)
+            # if batch_index == 0:
+            #     if query_split_index == 0:
+            #         if kv_split_index == 0:
+            #             if query_head_index == 0:
+            #                 print("query = ", query)
+            #                 print("key_block = ", key_block)
+            #                 print("qk = ", qk)
 
 
             # Need to mask out any elements that represent unused cache block entries or padding elements
@@ -325,23 +325,23 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
                 qk_mask = qk_mask & causal_mask
 
-                if batch_index == 0:
-                    if query_split_index == 0:
-                        if kv_split_index == 0:
-                            if query_head_index == 0:
-                                # print("query_split_mask = ", query_split_mask)
-                                print("causal_mask = ", causal_mask)
-                                print("qk_mask = ", qk_mask)
+                # if batch_index == 0:
+                #     if query_split_index == 0:
+                #         if kv_split_index == 0:
+                #             if query_head_index == 0:
+                #                 # print("query_split_mask = ", query_split_mask)
+                #                 print("causal_mask = ", causal_mask)
+                #                 print("qk_mask = ", qk_mask)
 
 
             # Set masked out elements to -inf
             qk = tl.where(qk_mask, qk, -float("inf")).to(dtype)
 
-            if batch_index == 0:
-                if query_split_index == 0:
-                    if kv_split_index == 0:
-                        if query_head_index == 0:
-                            print("qk = ", qk)
+            # if batch_index == 0:
+            #     if query_split_index == 0:
+            #         if kv_split_index == 0:
+            #             if query_head_index == 0:
+            #                 print("qk = ", qk)
 
             # Handle softcapping
             if cxpr_is_softcap:
@@ -357,11 +357,11 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             # Need to mask out any elements that represent unused cache block entries or padding elements
             p = tl.where(qk_mask, p, 0.0).to(dtype)
 
-            if batch_index == 0:
-                if query_split_index == 0:
-                    if kv_split_index == 0:
-                        if query_head_index == 0:
-                            print("p = ", p)
+            # if batch_index == 0:
+            #     if query_split_index == 0:
+            #         if kv_split_index == 0:
+            #             if query_head_index == 0:
+            #                 print("p = ", p)
 
             # Calculate sum of softmax numerator for this cache block
             l_ij = tl.sum(p, axis=1).to(dtype)
@@ -396,11 +396,11 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             # output.shape -> (query_chunk_size, head_size)
             output += tl.dot(p, value_block).to(dtype)
 
-            if batch_index == 0:
-                if query_split_index == 0:
-                    if kv_split_index == 0:
-                        if query_head_index == 0:
-                            print("output = ", output)
+            # if batch_index == 0:
+            #     if query_split_index == 0:
+            #         if kv_split_index == 0:
+            #             if query_head_index == 0:
+            #                 print("output = ", output)
 
             # Update running max
             m_i = m_ij
@@ -532,6 +532,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     cxpr_query_chunk_size: tl.constexpr,
     cxpr_cache_block_size: tl.constexpr,
     cxpr_head_size_padded: tl.constexpr,
+    cxpr_is_causal: tl.constexpr,
 ) -> None:
     """Varlen Attention kernel: reduce results across all splits.
 
@@ -631,7 +632,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
         # )
 
         effective_seqlen_k = kv_split_index * num_cache_blocks_per_split * cxpr_cache_block_size
-        if effective_seqlen_k <= this_split_offset:
+        if (effective_seqlen_k <= this_split_offset) or not cxpr_is_causal:
             other_sequences_scratch_offset = num_previous_sequences * output_scratchpad_batch_stride
             # prev_sequences_this_batch_scratch_offset = this_split_offset * output_scratchpad_batch_stride
             # Calculate offsets to store the output for this head/batch/split
@@ -856,6 +857,9 @@ def varlen_attention_launcher(  # noqa: PLR0913
     # stage1_grid = (batch_size, num_query_splits * num_kv_splits, num_kv_heads)
     stage1_grid = (batch_size, num_query_splits * num_kv_splits, num_query_heads)
 
+    print(f"[GRID] {stage1_grid = }")
+    print(f"[GRID] {num_query_splits = }, {num_kv_splits = }")
+
     # Launch stage 1 kernel
     _varlen_attention_compute_splits_kernel[stage1_grid](
         # Relevant tensors
@@ -902,9 +906,9 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_is_causal=causal,
     )
 
-    print(f"{output_scratchpad = }")
+    # print(f"{output_scratchpad = }")
     # print(f"{output_scratchpad.numel() = }")
-    print(f"{lse_scratchpad = }")
+    # print(f"{lse_scratchpad = }")
 
     # return
 
@@ -937,6 +941,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_query_chunk_size,
         cxpr_cache_block_size,
         cxpr_head_size_padded,
+        cxpr_is_causal=causal,
     )
 
-    # print(f"[GRID] {stage1_grid = }, {stage2_grid = }")
+    print(f"[GRID] {stage1_grid = }, {stage2_grid = }")
