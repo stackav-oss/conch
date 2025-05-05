@@ -21,6 +21,34 @@ MAX_NUM_KV_SPLITS: Final = 4
 
 
 @triton.jit  # type: ignore[misc]
+def _swizzle_tile(
+    pid: int,
+    m_dim: int,
+    n_dim: int,
+    cxpr_block_size_m: tl.constexpr,
+    cxpr_block_size_n: tl.constexpr,
+    cxpr_group_size_m: tl.constexpr,
+) -> tuple[int, int]:
+    """Return pid based on a swizzled tile of size (m, n)."""
+    grid_m = tl.cdiv(m_dim, cxpr_block_size_m)
+    grid_n = tl.cdiv(n_dim, cxpr_block_size_n)
+    width = cxpr_group_size_m * grid_n
+    group_id = pid // width
+    group_size = tl.minimum(grid_m - group_id * cxpr_group_size_m, cxpr_group_size_m)
+    pid_m = group_id * cxpr_group_size_m + (pid % group_size)
+    pid_n = (pid % width) // group_size
+    return pid_m, pid_n
+
+
+@triton.jit  # type: ignore[misc]
+def _linear_tile(pid: int, n_dim: int, cxpr_block_size_n: tl.constexpr) -> tuple[int, int]:
+    """Return pid based on a linear tile of size (m, n)."""
+    pid_m = pid // tl.cdiv(n_dim, cxpr_block_size_n)
+    pid_n = pid % tl.cdiv(n_dim, cxpr_block_size_n)
+    return pid_m, pid_n
+
+
+@triton.jit  # type: ignore[misc]
 def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Pointers to tensors
     output_scratchpad_ptr: tl.tensor,  # (total_num_q, MAX_NUM_KV_SPLITS, num_query_heads, head_size)
@@ -35,6 +63,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Scalar arguments
     scale: float,
     num_query_splits: int,
+    num_kv_splits: int,
     num_cache_blocks_per_split: int,
     softcap: float,
     k_scale: float,
@@ -63,6 +92,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     cxpr_apply_fp8_scaling: tl.constexpr,
     cxpr_is_rocm: tl.constexpr,
     cxpr_is_causal: tl.constexpr,
+    cxpr_swizzle_pid: tl.constexpr,
 ) -> None:
     """Varlen Attention kernel: compute attention for a split block.
 
@@ -109,8 +139,28 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # What "split" of the overall data (between 1 and M for query chunks and between 1 and N for KV cache blocks) is this program processing?
     split_index = tl.program_id(1)
     total_num_splits = tl.num_programs(1)
-    query_split_index = split_index // tl.cdiv(total_num_splits, num_query_splits)
-    kv_split_index = split_index % tl.cdiv(total_num_splits, num_query_splits)
+    # query_split_index = split_index // tl.cdiv(total_num_splits, num_query_splits)
+    # kv_split_index = split_index % tl.cdiv(total_num_splits, num_query_splits)
+
+    query_split_index, kv_split_index = (
+        _swizzle_tile(split_index, num_kv_splits, num_query_splits, num_cache_blocks_per_split, total_num_splits, cxpr_query_chunk_size)
+        if cxpr_swizzle_pid
+        else _linear_tile(split_index, total_num_splits, num_query_splits)
+    )
+
+    # query_split_index, kv_split_index = _swizzle_tile(
+    #     split_index,
+    #     num_kv_splits,
+    #     num_query_splits,
+    #     num_cache_blocks_per_split,
+    #     total_num_splits,
+    #     cxpr_query_chunk_size,
+    #     # cxpr_query_chunk_size,
+    #     # num_cache_blocks_per_split,
+    #     # cxpr_block_size_m=cxpr_query_chunk_size,
+    #     # cxpr_block_size_n=num_cache_blocks_per_split,
+    #     # cxpr_group_size_m=num_query_splits,
+    # )
 
     # What query head is this program processing?
     query_head_index = tl.program_id(2)
@@ -614,6 +664,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
         # Scalars
         scale=scale,
         num_query_splits=num_query_splits_stage1,
+        num_kv_splits=num_kv_splits,
         num_cache_blocks_per_split=num_cache_blocks_per_split,
         softcap=softcap,
         k_scale=k_scale_scalar,
@@ -638,21 +689,13 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_query_chunk_size=cxpr_query_chunk_size,
         cxpr_cache_block_size=cxpr_cache_block_size,
         cxpr_head_size_padded=cxpr_head_size_padded,
-        # cxpr_query_group_size_padded=cxpr_query_group_size_padded,
         cxpr_is_softcap=cxpr_is_softcap,
         cxpr_apply_fp8_scaling=cxpr_apply_fp8_scaling,
         cxpr_is_rocm=cxpr_is_rocm,
         cxpr_is_causal=causal,
+        cxpr_swizzle_pid=False,
     )
 
-    # print(f"{output_scratchpad = }")
-    # print(f"{output_scratchpad.numel() = }")
-    # print(f"{lse_scratchpad = }")
-
-    # return
-
-    # num_query_splits_stage2 = triton.cdiv(max_seqlen_q, 4)
-    # cxpr_query_chunk_size_stage2: tl.constexpr = 8
     # cxpr_query_chunk_size_stage2: tl.constexpr = 8
     cxpr_query_chunk_size_stage2: tl.constexpr = 16
     num_query_splits_stage2 = triton.cdiv(max_seqlen_q, cxpr_query_chunk_size_stage2)
