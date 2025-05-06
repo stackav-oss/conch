@@ -21,35 +21,6 @@ MAX_NUM_KV_SPLITS: Final = 4
 
 
 @triton.jit  # type: ignore[misc]
-def _swizzle_tile(
-    pid: int,
-    m_dim: int,
-    n_dim: int,
-    cxpr_block_size_m: tl.constexpr,
-    cxpr_block_size_n: tl.constexpr,
-    cxpr_group_size_m: tl.constexpr,
-) -> tuple[int, int]:
-    """Return pid based on a swizzled tile of size (m, n)."""
-    grid_m = tl.cdiv(m_dim, cxpr_block_size_m)
-    grid_n = tl.cdiv(n_dim, cxpr_block_size_n)
-    width = cxpr_group_size_m * grid_n
-    group_id = pid // width
-    # group_size = tl.minimum(grid_m - group_id * cxpr_group_size_m, cxpr_group_size_m)
-    group_size = cxpr_group_size_m
-    pid_m = group_id * cxpr_group_size_m + (pid % group_size)
-    pid_n = (pid % width) // group_size
-    return pid_m, pid_n
-
-
-@triton.jit  # type: ignore[misc]
-def _linear_tile(pid: int, n_dim: int, cxpr_block_size_n: tl.constexpr) -> tuple[int, int]:
-    """Return pid based on a linear tile of size (m, n)."""
-    pid_m = pid // tl.cdiv(n_dim, cxpr_block_size_n)
-    pid_n = pid % tl.cdiv(n_dim, cxpr_block_size_n)
-    return pid_m, pid_n
-
-
-@triton.jit  # type: ignore[misc]
 def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Pointers to tensors
     output_scratchpad_ptr: tl.tensor,  # (total_num_q, MAX_NUM_KV_SPLITS, num_query_heads, head_size)
@@ -59,13 +30,12 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     value_cache_ptr: tl.tensor,  # (num_cache_blocks, num_kv_heads, cache_block_size, head_size)
     block_tables_ptr: tl.tensor,  # (batch_size, max_num_blocks_per_sequence)
     seq_lens_ptr: tl.tensor,  # (batch_size, )
-    cu_seqlens_q_ptr: tl.tensor,  # (batch_size, )
-    cu_seqlens_k_ptr: tl.tensor,  # (batch_size, )
+    cu_seqlens_q_ptr: tl.tensor,  # (batch_size + 1, )
+    cu_seqlens_k_ptr: tl.tensor,  # (batch_size + 1, )
     # Scalar arguments
     scale: float,
     num_query_splits: int,
     num_kv_splits: int,
-    max_seqlen_q: int,
     num_cache_blocks_per_split: int,
     softcap: float,
     k_scale: float,
@@ -94,7 +64,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     cxpr_apply_fp8_scaling: tl.constexpr,
     cxpr_is_rocm: tl.constexpr,
     cxpr_is_causal: tl.constexpr,
-    cxpr_swizzle_pid: tl.constexpr,
 ) -> None:
     """Varlen Attention kernel: compute attention for a split block.
 
@@ -110,6 +79,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         cu_seqlens_k_ptr: Pointer to tensor holding the cumulative sequence lengths for each sequence in the batch, shape: (batch_size, ).
         scale: Scaling factor, 1/sqrt(head_size).
         num_query_splits: The number of "splits" we split each query into.
+        num_kv_splits: The number of "splits" we split the set of KV cache blocks for each query into.
         num_cache_blocks_per_split: The maximum number of cache blocks in each split (max num each kernel will process).
         softcap: Logits softcap to apply.
         k_scale: Fp8 scaling factor for k.
@@ -134,6 +104,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         cxpr_is_softcap: Whether or not logits softcapping will be applied.
         cxpr_apply_fp8_scaling: Whether or not to apply FP8 scaling.
         cxpr_is_rocm: Whether or not we're on AMD.
+        cxpr_is_causal: Whether or not to apply causal masking.
     """
     # What batch is this program processing?
     batch_index = tl.program_id(0)
@@ -142,35 +113,8 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     split_index = tl.program_id(1)
     total_num_splits = tl.num_programs(1)
 
-    query_split_index, kv_split_index = (
-        # _swizzle_tile(split_index, num_kv_splits, num_query_splits, num_cache_blocks_per_split, total_num_splits, cxpr_query_chunk_size)
-        # _swizzle_tile(split_index, M_DIM, total_num_splits, BLOCK_SIZE_M, num_kv_splits, num_query_splits, cxpr_query_chunk_size)
-        # _swizzle_tile(split_index, num_kv_splits, total_num_splits, 1, num_query_splits, cxpr_query_chunk_size)
-        # THIS WORKED:
-        # _swizzle_tile(split_index, num_kv_splits, total_num_splits, 1, num_query_splits, 4)
-        # _swizzle_tile(split_index, num_kv_splits, total_num_splits, 1, num_query_splits, cxpr_query_chunk_size)
-        # _swizzle_tile(split_index, num_kv_splits, max_seqlen_q, 1, num_query_splits, cxpr_query_chunk_size)
-        # NEW:
-        _swizzle_tile(split_index, 1, total_num_splits, 1, num_query_splits, num_kv_splits)
-        # _swizzle_tile(split_index, 1, total_num_splits, 1, num_query_splits, 16)
-        # _swizzle_tile(split_index, num_kv_splits, total_num_splits, 1, num_query_splits, 16)
-        if cxpr_swizzle_pid
-        else _linear_tile(split_index, total_num_splits, num_query_splits)
-    )
-
-    # query_split_index, kv_split_index = _swizzle_tile(
-    #     split_index,
-    #     num_kv_splits,
-    #     num_query_splits,
-    #     num_cache_blocks_per_split,
-    #     total_num_splits,
-    #     cxpr_query_chunk_size,
-    #     # cxpr_query_chunk_size,
-    #     # num_cache_blocks_per_split,
-    #     # cxpr_block_size_m=cxpr_query_chunk_size,
-    #     # cxpr_block_size_n=num_cache_blocks_per_split,
-    #     # cxpr_group_size_m=num_query_splits,
-    # )
+    query_split_index = split_index // tl.cdiv(total_num_splits, num_query_splits)
+    kv_split_index = split_index % tl.cdiv(total_num_splits, num_query_splits)
 
     # What query head is this program processing?
     query_head_index = tl.program_id(2)
@@ -204,12 +148,13 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
     # Similar to above, we launch the same number of splits for all sequences in the batch, so different kernel launches will have different
     # numbers of query tokens to process. If we've already processed all of the query tokens for this sequence, we can skip this kernel.
+    # TODO(jmanning): If {this_query_length == 1} and {seqlen_k > 1} then we have a pure-decode case? So we _should_ process all KV cache blocks
+    # in this case?
     if this_split_offset > this_query_length:
         return
 
     if cxpr_is_causal:
         beginning_seqlen_k = starting_cache_block_index * cxpr_cache_block_size
-
         if beginning_seqlen_k > this_split_offset:
             return
 
@@ -218,10 +163,8 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Need to mask out if any of these tokens are out of bounds
     query_split_mask = query_split_offsets < this_query_length
 
-    # Offset for how many tokens in query correspond to other sequences
+    # How many previous sequences are there before this one?
     num_previous_sequences = tl.load(cu_seqlens_q_ptr + batch_index)
-    other_sequences_query_offset = num_previous_sequences * query_batch_stride
-    prev_sequences_this_batch_query_offset = this_split_offset * query_batch_stride
 
     # Offsets to each element of the padded-to-next-power-of-two head size
     head_offsets = tl.arange(0, cxpr_head_size_padded)
@@ -229,18 +172,24 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     head_mask = head_offsets < head_size
 
     # Offsets for the queries in this block
-    query_offsets = query_split_offsets[:, None] * query_batch_stride + query_head_index * query_head_stride + head_offsets[None, :]
-    # Mask out query vectors, heads, and elements that are just for padding
+    query_offsets = (
+        # Offset for the number of tokens for previous sequences
+        num_previous_sequences * query_batch_stride +
+        # Offsets for each of the sequences in this split
+        query_split_offsets[:, None] * query_batch_stride +
+        # Offset for the query head this program is processing
+        query_head_index * query_head_stride +
+        # Offset for each element of the head
+        head_offsets[None, :]
+    )
+    # Mask out query elements that are just for padding
     query_mask = query_split_mask[:, None] & head_mask[None, :]
 
     # Load queries
-    query = tl.load(
-        query_ptr + other_sequences_query_offset + query_offsets, mask=query_mask, other=0.0
-    )
+    query = tl.load(query_ptr + query_offsets, mask=query_mask, other=0.0)
 
+    # Index/offset for the current kv_head in the key_cache and value_cache
     kv_head_index = query_head_index // query_group_size
-
-    # Offset for the current kv_head in the key_cache and value_cache
     kv_head_index_offset = kv_head_index * kv_head_stride
 
     # Pointer arithmetic to get to the entry in the block_tables for the current batch_index
@@ -275,6 +224,8 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             # Calculate address of current cache block
             kv_cache_block_index_offset = physical_cache_block_number * kv_page_stride
 
+            # TODO(jmanning): Disable boundary checks if cache blocks are full / head_dim is a power of two?
+
             # Load the key block as (cxpr_head_size_padded, cache_block_size)
             # Note: we're loading it transposed here
             key_block_ptr = tl.make_block_ptr(
@@ -295,7 +246,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             # Multiply query vector by key matrix for this cache block (and apply scaling factor)
             # query.shape -> (query_chunk_size, head_size)
             # key_block.shape -> (head_size, cache_block_size)
-            # # qk.shape -> (query_chunk_size, cache_block_size)
             # qk.shape -> (query_chunk_size, cache_block_size)
             qk = (scale * tl.dot(query, key_block)).to(dtype)
 
@@ -365,14 +315,15 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Apply correction for denominator of these cache blocks
     output /= l_i[:, None]
 
-    # Calculate offsets to store the output for this head/batch/split
-    other_sequences_scratch_offset = num_previous_sequences * output_scratchpad_batch_stride
-    output_scratch_split_index_offset = kv_split_index * output_scratchpad_kv_split_stride
-    output_scratch_head_index_offset = query_head_index * output_scratchpad_head_stride
-
-    # 2D block of shape (query_group_size_padded, head_size_padded)
-    scratch_offsets = query_split_offsets[:, None] * output_scratchpad_batch_stride + output_scratch_split_index_offset + output_scratch_head_index_offset + head_offsets[None, :]
-    output_scratch_offsets = other_sequences_scratch_offset + scratch_offsets
+    # Calculate offsets to store the output for this query split/query head
+    # 2D block of shape (query_chunk_size, head_size_padded)
+    output_scratch_offsets = (
+        num_previous_sequences * output_scratchpad_batch_stride +
+        query_split_offsets[:, None] * output_scratchpad_batch_stride +
+        kv_split_index * output_scratchpad_kv_split_stride +
+        query_head_index * output_scratchpad_head_stride +
+        head_offsets[None, :]
+    )
 
     # Store output scratchpad results
     tl.store(output_scratchpad_ptr + output_scratch_offsets, output, mask=query_mask)
@@ -381,10 +332,10 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Note: log() only accepts fp32/fp64 arguments
     lse = m_i + tl.log(l_i.to(tl.float32)).to(dtype)
 
-    # Calculate offsets to store log-sum-exp for this head/batch/split
-    other_sequences_lse_offset = num_previous_sequences * lse_scratchpad_batch_stride
+    # Calculate offsets to store log-sum-exp for this split/head
+    # 1D block of shape (query_chunk_size,)
     lse_scratch_offsets = (
-        other_sequences_lse_offset +
+        num_previous_sequences * lse_scratchpad_batch_stride +
         query_split_offsets * lse_scratchpad_batch_stride +
         kv_split_index * lse_scratchpad_kv_split_stride +
         query_head_index
@@ -495,6 +446,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     # Iterate through every cache block for the current sequence
     for kv_split_index in range(num_kv_splits_this_seq):
         effective_seqlen_k = kv_split_index * num_cache_blocks_per_split * cxpr_cache_block_size
+        # TODO(jmanning): If {this_query_length == 1} and {seqlen_k > 1} then we have a pure-decode case? So we _should_ process all KV cache blocks
         if (effective_seqlen_k <= this_split_offset) or not cxpr_is_causal:
             # Calculate offsets to load the scratch for this head/batch/split
             other_sequences_scratch_offset = num_previous_sequences * output_scratchpad_batch_stride
@@ -675,7 +627,6 @@ def varlen_attention_launcher(  # noqa: PLR0913
         scale=scale,
         num_query_splits=num_query_splits_stage1,
         num_kv_splits=num_kv_splits,
-        max_seqlen_q=max_seqlen_q,
         num_cache_blocks_per_split=num_cache_blocks_per_split,
         softcap=softcap,
         k_scale=k_scale_scalar,
@@ -704,8 +655,6 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_apply_fp8_scaling=cxpr_apply_fp8_scaling,
         cxpr_is_rocm=cxpr_is_rocm,
         cxpr_is_causal=causal,
-        # cxpr_swizzle_pid=False,
-        cxpr_swizzle_pid=True,
     )
 
     # cxpr_query_chunk_size_stage2: tl.constexpr = 8
