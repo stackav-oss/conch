@@ -146,9 +146,14 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         # _swizzle_tile(split_index, num_kv_splits, num_query_splits, num_cache_blocks_per_split, total_num_splits, cxpr_query_chunk_size)
         # _swizzle_tile(split_index, M_DIM, total_num_splits, BLOCK_SIZE_M, num_kv_splits, num_query_splits, cxpr_query_chunk_size)
         # _swizzle_tile(split_index, num_kv_splits, total_num_splits, 1, num_query_splits, cxpr_query_chunk_size)
-        _swizzle_tile(split_index, num_kv_splits, total_num_splits, 1, num_query_splits, 4)
+        # THIS WORKED:
+        # _swizzle_tile(split_index, num_kv_splits, total_num_splits, 1, num_query_splits, 4)
         # _swizzle_tile(split_index, num_kv_splits, total_num_splits, 1, num_query_splits, cxpr_query_chunk_size)
         # _swizzle_tile(split_index, num_kv_splits, max_seqlen_q, 1, num_query_splits, cxpr_query_chunk_size)
+        # NEW:
+        _swizzle_tile(split_index, 1, total_num_splits, 1, num_query_splits, num_kv_splits)
+        # _swizzle_tile(split_index, 1, total_num_splits, 1, num_query_splits, 16)
+        # _swizzle_tile(split_index, num_kv_splits, total_num_splits, 1, num_query_splits, 16)
         if cxpr_swizzle_pid
         else _linear_tile(split_index, total_num_splits, num_query_splits)
     )
