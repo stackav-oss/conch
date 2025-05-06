@@ -175,11 +175,14 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Offsets for the queries in this block
     query_offsets = (
         # Offset for the number of tokens for previous sequences
-        num_previous_sequences * query_batch_stride +
+        num_previous_sequences * query_batch_stride
+        +
         # Offsets for each of the sequences in this split
-        query_split_offsets[:, None] * query_batch_stride +
+        query_split_offsets[:, None] * query_batch_stride
+        +
         # Offset for the query head this program is processing
-        query_head_index * query_head_stride +
+        query_head_index * query_head_stride
+        +
         # Offset for each element of the head
         head_offsets[None, :]
     )
@@ -257,7 +260,9 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             if cxpr_is_causal:
                 # Causal mask
                 effective_seqlen_q_offsets = query_split_offsets
-                effective_seqlen_k_offsets = cache_block_index * cxpr_cache_block_size + tl.arange(0, cxpr_cache_block_size)
+                effective_seqlen_k_offsets = cache_block_index * cxpr_cache_block_size + tl.arange(
+                    0, cxpr_cache_block_size
+                )
                 causal_mask = query_split_offsets[:, None] >= effective_seqlen_k_offsets[None, :]
                 qk_mask = qk_mask & causal_mask
 
@@ -319,11 +324,11 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Calculate offsets to store the output for this query split/query head
     # 2D block of shape (query_chunk_size, head_size_padded)
     output_scratch_offsets = (
-        num_previous_sequences * output_scratchpad_batch_stride +
-        query_split_offsets[:, None] * output_scratchpad_batch_stride +
-        kv_split_index * output_scratchpad_kv_split_stride +
-        query_head_index * output_scratchpad_head_stride +
-        head_offsets[None, :]
+        num_previous_sequences * output_scratchpad_batch_stride
+        + query_split_offsets[:, None] * output_scratchpad_batch_stride
+        + kv_split_index * output_scratchpad_kv_split_stride
+        + query_head_index * output_scratchpad_head_stride
+        + head_offsets[None, :]
     )
 
     # Store output scratchpad results
@@ -336,10 +341,10 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Calculate offsets to store log-sum-exp for this split/head
     # 1D block of shape (query_chunk_size,)
     lse_scratch_offsets = (
-        num_previous_sequences * lse_scratchpad_batch_stride +
-        query_split_offsets * lse_scratchpad_batch_stride +
-        kv_split_index * lse_scratchpad_kv_split_stride +
-        query_head_index
+        num_previous_sequences * lse_scratchpad_batch_stride
+        + query_split_offsets * lse_scratchpad_batch_stride
+        + kv_split_index * lse_scratchpad_kv_split_stride
+        + query_head_index
     )
 
     # Store lse scratchpad results
@@ -421,25 +426,27 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
 
     # 2D block of shape (cxpr_max_num_kv_splits, head_size_padded)
     output_scratchpad_offsets = (
-        batch_index * output_scratchpad_batch_stride +
-        kv_split_offsets[:, None] * output_scratchpad_kv_split_stride +
-        query_head_index * output_scratchpad_head_stride +
-        head_offsets[None, :]
+        batch_index * output_scratchpad_batch_stride
+        + kv_split_offsets[:, None] * output_scratchpad_kv_split_stride
+        + query_head_index * output_scratchpad_head_stride
+        + head_offsets[None, :]
     )
 
     # 1D block of shape (cxpr_max_num_kv_splits,)
     lse_scratchpad_offsets = (
-        batch_index * lse_scratchpad_batch_stride +
+        batch_index * lse_scratchpad_batch_stride
+        +
         # kv_split_offsets[:, None] * lse_scratchpad_kv_split_stride +
-        kv_split_offsets * lse_scratchpad_kv_split_stride +
-        query_head_index
+        kv_split_offsets * lse_scratchpad_kv_split_stride
+        + query_head_index
     )
 
     # 1D block of shape (cxpr_head_size_padded,)
     output_offsets = (
-        batch_index * output_batch_stride +
-        query_index * output_batch_stride +
-        query_head_index * output_head_stride +
+        batch_index * output_batch_stride
+        + query_index * output_batch_stride
+        + query_head_index * output_head_stride
+        +
         # head_offsets[None, :]
         head_offsets
     )
@@ -476,13 +483,10 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     block_output *= alpha[:, None]
     # beta = tl.exp()
 
-
     beta = tl.sum(alpha, axis=0).to(dtype)
     numerator = tl.sum(block_output * alpha[:, None], axis=0).to(dtype)
     acc = numerator / beta
     # acc = tl.where(lse_max == float("-inf"), 0.0, acc)
-
-
 
     # # Iterate through every cache block for the current sequence
     # for kv_split_index in range(num_kv_splits_this_seq):
@@ -520,7 +524,6 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     # # Apply final correction to output
     # output /= l_i[:, None]
 
-
     # block_output *= alpha[None, :]
     # block_output *= alpha[:, None]
 
@@ -554,7 +557,6 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     #     # must avoid direct cast f64->f16
     #     acc = acc.to(tl.float32)
     # tl.store(Out_ptr, acc)
-
 
     # -----
     # -----
