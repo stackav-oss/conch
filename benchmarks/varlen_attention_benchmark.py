@@ -9,8 +9,7 @@ import click
 import torch
 
 from conch import envs
-from conch.kernels.attention.varlen_attention import MAX_NUM_KV_SPLITS, varlen_attention_launcher
-# from conch.ops.attention.varlen_attention import varlen_attention
+from conch.ops.attention.varlen_attention import varlen_attention
 from conch.platforms import current_platform
 from conch.third_party.vllm.utils import create_tensors, seed_everything
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
@@ -195,7 +194,6 @@ def main(
     torch.set_default_device(device)
 
     scale: Final = float(1.0 / (head_dim**0.5))
-    softcap: Final = 0.0
 
     metadata = BenchmarkMetadata(
         platform=current_platform.name(),
@@ -256,16 +254,6 @@ def main(
 
     # scale: Final = float(1.0 / (head_dim**0.5))
 
-    total_num_q = cu_seqlens_q[-1].item()
-
-    # Allocate additional memory for intermediate result (of shape (head_dim,)) for each batch/split/query head
-    output_scratchpad = torch.zeros(
-        (total_num_q, MAX_NUM_KV_SPLITS, num_query_heads, head_dim), dtype=query.dtype, device=query.device
-    )
-
-    # # # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/split/query head
-    lse_scratchpad = torch.zeros((total_num_q, MAX_NUM_KV_SPLITS, num_query_heads), dtype=query.dtype, device=query.device)
-
     alibi_slopes = None
 
     # Create output tensors
@@ -277,37 +265,6 @@ def main(
 
     # k_scale = torch.full((1,), 1.0)
     # v_scale = torch.full((1,), 1.0)
-
-    # # Check accuracy match
-    # output_vllm = flash_attn_varlen_func(
-    #     query_vllm,
-    #     key_cache_vllm,
-    #     value_cache_vllm,
-    #     block_table=block_tables,
-    #     cache_seqlens=seq_lens,
-    #     softmax_scale=scale,
-    #     causal=True,
-    #     alibi_slopes=alibi_slopes,
-    #     softcap=softcap,
-    # )
-
-    # output_vllm = output_vllm.squeeze(1)
-
-    # paged_attention_launcher(
-    #     output_conch,
-    #     query,
-    #     key_cache_conch,
-    #     value_cache_conch,
-    #     output_scratchpad,
-    #     lse_scratchpad,
-    #     block_tables,
-    #     seq_lens,
-    #     scale,
-    #     softcap=softcap,
-    #     kv_cache_dtype=kv_cache_dtype,
-    #     k_scale=k_scale,
-    #     v_scale=v_scale,
-    # )
 
     output_vllm = flash_attn_varlen_func(
         q=query,
@@ -321,35 +278,12 @@ def main(
         seqused_k=seq_lens,
         softmax_scale=scale,
         causal=causal,
-        # softcap=softcap,
     )
 
-    # print(f"{vllm_output = }")
-
-    # output_conch = varlen_attention(
-    # varlen_attention_launcher(
-    #     output=output_conch,
-    #     query=query,
-    #     key_cache=key_cache_conch,
-    #     value_cache=value_cache_conch,
-    #     block_tables=block_tables,
-    #     seq_lens=seq_lens,
-    #     cu_seqlens_q=cu_seqlens_q,
-    #     cu_seqlens_k=cu_seqlens_k,
-    #     max_seqlen_q=max_seqlen_q,
-    #     max_seqlen_k=max_seqlen_k,
-    #     scale=scale,
-    #     softcap=softcap,
-    #     # causal=True,
-    #     causal=causal,
-    # )
-    varlen_attention_launcher(
-        output=output_conch,
+    output_conch = varlen_attention(
         query=query,
         key_cache=key_cache_conch,
         value_cache=value_cache_conch,
-        output_scratchpad=output_scratchpad,
-        lse_scratchpad=lse_scratchpad,
         block_tables=block_tables,
         seq_lens=seq_lens,
         cu_seqlens_q=cu_seqlens_q,
@@ -357,12 +291,8 @@ def main(
         max_seqlen_q=max_seqlen_q,
         max_seqlen_k=max_seqlen_k,
         scale=scale,
-        softcap=softcap,
-        kv_cache_dtype="auto",
         causal=causal,
     )
-
-    # print(f"{q = }")
 
     if not torch.allclose(output_vllm, output_conch, atol=absolute_tolerance):
         print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)
@@ -387,18 +317,7 @@ def main(
             seqused_k=seq_lens,
             softmax_scale=scale,
             causal=causal,
-            # softcap=softcap,
         ),
-        # lambda: flash_attn_with_kvcache(
-        #     query_vllm,
-        #     key_cache_vllm,
-        #     value_cache_vllm,
-        #     block_table=block_tables,
-        #     cache_seqlens=seq_lens,
-        #     softmax_scale=scale,
-        #     causal=True,
-        #     alibi_slopes=alibi_slopes,
-        # ),
         tag="Baseline",
         metadata=metadata,
         num_iterations=num_iterations,
@@ -407,43 +326,10 @@ def main(
     )
 
     triton_result = benchmark_it(
-        # lambda: paged_attention_launcher(
-        #     output_conch,
-        #     query,
-        #     key_cache_conch,
-        #     value_cache_conch,
-        #     output_scratchpad,
-        #     lse_scratchpad,
-        #     block_tables,
-        #     seq_lens,
-        #     scale,
-        #     softcap,
-        #     kv_cache_dtype,
-        #     k_scale,
-        #     v_scale,
-        # ),
-        # lambda: varlen_attention(
-        #     query=query,
-        #     key_cache=key_cache_conch,
-        #     value_cache=value_cache_conch,
-        #     block_tables=block_tables,
-        #     seq_lens=seq_lens,
-        #     cu_seqlens_q=cu_seqlens_q,
-        #     cu_seqlens_k=cu_seqlens_k,
-        #     max_seqlen_q=max_seqlen_q,
-        #     max_seqlen_k=max_seqlen_k,
-        #     scale=scale,
-        #     softcap=softcap,
-        #     # causal=True,
-        #     causal=causal,
-        # ),
-        lambda: varlen_attention_launcher(
-            output=output_conch,
+        lambda: varlen_attention(
             query=query,
             key_cache=key_cache_conch,
             value_cache=value_cache_conch,
-            output_scratchpad=output_scratchpad,
-            lse_scratchpad=lse_scratchpad,
             block_tables=block_tables,
             seq_lens=seq_lens,
             cu_seqlens_q=cu_seqlens_q,
@@ -451,8 +337,6 @@ def main(
             max_seqlen_q=max_seqlen_q,
             max_seqlen_k=max_seqlen_k,
             scale=scale,
-            softcap=softcap,
-            kv_cache_dtype="auto",
             causal=causal,
         ),
         tag="Triton",
