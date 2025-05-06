@@ -708,6 +708,21 @@ def varlen_attention_launcher(  # noqa: PLR0913
     # How many query heads correspond to the same KV head?
     query_group_size = num_query_heads // num_kv_heads
 
+    # TODO(jmanning): What if we went back to grouping by queries that correspond to the same KV head?
+    # If we have MHA, then there's no advantage to this -> well there kinda is though? We get more parallelism? Though more memory accesses
+    # If we have GQA/MQA, we might see some wins from it
+    # (batch_index * max_seqlen_q, num_kv_splits, num_kv_heads)
+
+    # batch_index, seq_index = linear_tile(tl.program_id(0))
+    # this_seqlen_q_start = load(cu_seqlens_q_ptr + batch_index)
+    # this_seqlen_q_end = load(cu_seqlens_q_ptr + batch_index + 1)
+    # this_seqlen_q = this_seqlen_q_end - this_query_start
+
+    # if seq_index >= this_seqlen_q:
+    #   return
+
+
+
     # What is the maximum number of stage 1 kernels to launch per batch/head?
     # Each kernel processes up to {cache_block_size} tokens at a time (in many cases cache_block_size=32 for vLLM), so we can process
     # a sequence up to {MAX_NUM_KV_SPLITS * cache_block_size} == 64 * 32 == 2048 tokens before a stage 1 kernel will process multiple cache
