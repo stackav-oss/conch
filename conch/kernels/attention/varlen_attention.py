@@ -446,6 +446,11 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
 
     # Iterate through every cache block for the current sequence
     for kv_split_index in range(num_kv_splits_this_seq):
+        # if cxpr_is_causal:
+        #     beginning_seqlen_k = starting_cache_block_index * cxpr_cache_block_size
+        #     if beginning_seqlen_k > this_split_offset:
+        #         return
+
         effective_seqlen_k = kv_split_index * num_cache_blocks_per_split * cxpr_cache_block_size
         # TODO(jmanning): If {this_query_length == 1} and {seqlen_k > 1} then we have a pure-decode case? So we _should_ process all KV cache blocks
         if (effective_seqlen_k <= this_split_offset) or not cxpr_is_causal:
@@ -608,10 +613,6 @@ def varlen_attention_launcher(  # noqa: PLR0913
     # Note: we may need to tune this value for a given HW platform.
     num_kv_splits = min(max_num_blocks_per_sequence, MAX_NUM_KV_SPLITS)
 
-    print(f"{max_num_blocks_per_sequence = }")
-    print(f"{MAX_NUM_KV_SPLITS = }")
-    print(f"{num_kv_splits = }")
-
     # cxpr_query_chunk_size: tl.constexpr = 16
     # cxpr_query_chunk_size: tl.constexpr = 32
     cxpr_query_chunk_size: tl.constexpr = 32
@@ -627,6 +628,11 @@ def varlen_attention_launcher(  # noqa: PLR0913
         assert k_scale.numel() == v_scale.numel()  # noqa: S101
         k_scale_scalar = k_scale.item()
         v_scale_scalar = v_scale.item()
+
+    print(f"{max_num_blocks_per_sequence = }")
+    print(f"{MAX_NUM_KV_SPLITS = }")
+    print(f"{num_kv_splits = }")
+    print(f"{num_cache_blocks_per_split = }")
 
     # For computing attention for split block (stage 1): parallelize over batches, cache blocks, and KV heads.
     # Note: if the number of cache blocks in a sequence is very large, it is more efficient to handle multiple blocks
