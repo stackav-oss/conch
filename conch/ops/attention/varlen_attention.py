@@ -174,14 +174,9 @@ def varlen_attention(
         scale: Scaling factor, 1/sqrt(head_size).
         softcap: (Optional), Logit softcap to apply (0.0 means no softcap will be applied).
     """
-    output = torch.zeros_like(query, device=query.device, dtype=query.dtype)
-
-    batch_size = cu_seqlens_q[-1].item()
-
-    # print(f"{batch_size = }")
-    # return
-
     total_num_q, num_query_heads, head_size = query.shape
+
+    output = torch.zeros_like(query, device=query.device, dtype=query.dtype)
 
     # Check sizes of input tensors
     # _ = _check_size_compatibility(output, query, key_cache, value_cache, cu_seqlens_q, cu_seqlens_k)
@@ -191,7 +186,7 @@ def varlen_attention(
     # Allocate additional memory for intermediate result (of shape (head_size,)) for each batch/query head/cache block
     output_scratchpad = torch.zeros(
         # (metadata.batch_size, MAX_NUM_SPLITS, metadata.num_query_heads, metadata.head_size),
-        (batch_size, MAX_NUM_KV_SPLITS, num_query_heads, head_size),
+        (total_num_q, MAX_NUM_KV_SPLITS, num_query_heads, head_size),
         dtype=output.dtype,
         device=output.device,
     )
@@ -199,7 +194,7 @@ def varlen_attention(
     # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/query head/cache block
     lse_scratchpad = torch.zeros(
         # (metadata.batch_size, MAX_NUM_SPLITS, metadata.num_query_heads),
-        (batch_size, MAX_NUM_KV_SPLITS, num_query_heads),
+        (total_num_q, MAX_NUM_KV_SPLITS, num_query_heads),
         dtype=output.dtype,
         device=output.device,
     )
