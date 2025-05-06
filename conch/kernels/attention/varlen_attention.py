@@ -17,10 +17,10 @@ from conch.platforms import current_platform
 # The maximum number of stage 1 kernels to launch to split processing of the sequence
 # MAX_NUM_KV_SPLITS: Final = 64
 # MAX_NUM_KV_SPLITS: Final = 1
-# MAX_NUM_KV_SPLITS: Final = 4
+MAX_NUM_KV_SPLITS: Final = 4
 # MAX_NUM_KV_SPLITS: Final = 8
 # MAX_NUM_KV_SPLITS: Final = 16
-MAX_NUM_KV_SPLITS: Final = 32
+# MAX_NUM_KV_SPLITS: Final = 32
 
 
 @triton.jit  # type: ignore[misc]
@@ -99,9 +99,9 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         kv_cache_block_stride: Stride of the k/v tensors in the 2nd dimension.
         kv_head_element_stride: Stride of the k/v tensors in the 3rd dimension.
         block_tables_batch_stride: Stride of the block table tensor in the 0th dimension.
+        cxpr_query_chunk_size: The size of the query chunks (must be power of two!).
         cxpr_cache_block_size: The size of the cache blocks (must be power of two!).
         cxpr_head_size_padded: The head size of the attention layer padded to the next power of two.
-        cxpr_query_group_size_padded: The query group size padded to the next power of two.
         cxpr_is_softcap: Whether or not logits softcapping will be applied.
         cxpr_apply_fp8_scaling: Whether or not to apply FP8 scaling.
         cxpr_is_rocm: Whether or not we're on AMD.
@@ -145,22 +145,22 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     this_query_length = this_query_end - this_query_start
 
     # Offset for how many tokens in query correspond to previous splits for this sequence
-    this_split_offset = query_split_index * cxpr_query_chunk_size
+    this_query_split_offset = query_split_index * cxpr_query_chunk_size
 
     # Similar to above, we launch the same number of splits for all sequences in the batch, so different kernel launches will have different
     # numbers of query tokens to process. If we've already processed all of the query tokens for this sequence, we can skip this kernel.
     # TODO(jmanning): If {this_query_length == 1} and {seqlen_k > 1} then we have a pure-decode case? So we _should_ process all KV cache blocks
     # in this case?
-    if this_split_offset > this_query_length:
+    if this_query_split_offset > this_query_length:
         return
 
     if cxpr_is_causal:
         beginning_seqlen_k = starting_cache_block_index * cxpr_cache_block_size
-        if beginning_seqlen_k > this_split_offset:
+        if (this_query_split_offset + cxpr_query_chunk_size) < beginning_seqlen_k:
             return
 
     # Offsets for each query vector in the group
-    query_split_offsets = this_split_offset + tl.arange(0, cxpr_query_chunk_size)
+    query_split_offsets = this_query_split_offset + tl.arange(0, cxpr_query_chunk_size)
     # Need to mask out if any of these tokens are out of bounds
     query_split_mask = query_split_offsets < this_query_length
 
@@ -420,18 +420,18 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     this_query_length = this_query_end - this_query_start
 
     # Offset for how many tokens in query correspond to previous splits for this sequence
-    this_split_offset = query_split_index * cxpr_query_chunk_size
+    this_query_split_offset = query_split_index * cxpr_query_chunk_size
 
     # Similar to above, we launch the same number of splits for all sequences in the batch, so different kernel launches will have different
     # numbers of query tokens to process. If we've already processed all of the query tokens for this sequence, we can skip this kernel.
-    if this_split_offset > this_query_length:
+    if this_query_split_offset > this_query_length:
         return
 
     # Offset for how many tokens in query correspond to other sequences
     num_previous_sequences = tl.load(cu_seqlens_q_ptr + batch_index)
 
     # Offsets for each query vector in the group
-    query_split_offsets = this_split_offset + tl.arange(0, cxpr_query_chunk_size)
+    query_split_offsets = this_query_split_offset + tl.arange(0, cxpr_query_chunk_size)
     # Need to mask out if any of these tokens are out of bounds
     query_split_mask = query_split_offsets < this_query_length
 
@@ -446,25 +446,11 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
 
     # Iterate through every cache block for the current sequence
     for kv_split_index in range(num_kv_splits_this_seq):
-        # if cxpr_is_causal:
-        #     beginning_seqlen_k = starting_cache_block_index * cxpr_cache_block_size
-        #     if beginning_seqlen_k > this_split_offset:
-        #         return
-
         effective_seqlen_k = kv_split_index * num_cache_blocks_per_split * cxpr_cache_block_size
         # TODO(jmanning): If {this_query_length == 1} and {seqlen_k > 1} then we have a pure-decode case? So we _should_ process all KV cache blocks
-        if (effective_seqlen_k <= this_split_offset) or not cxpr_is_causal:
-        # if (this_split_offset < effective_seqlen_k) or not cxpr_is_causal:
+        if (effective_seqlen_k <= this_query_split_offset) or not cxpr_is_causal:
             # Calculate offsets to load the scratch for this head/batch/split
-            # other_sequences_scratch_offset = num_previous_sequences * output_scratchpad_batch_stride
-            # output_split_index_offset = kv_split_index * output_scratchpad_kv_split_stride
-            # output_head_index_offset = query_head_index * output_scratchpad_head_stride
-
             # 2D block of shape (query_group_size_padded, head_size_padded)
-            # scratch_offsets = query_split_offsets[:, None] * output_scratchpad_batch_stride + output_split_index_offset + output_head_index_offset + head_offsets[None, :]
-            # output_offsets = output_batch_index_offset + output_split_index_offset + output_head_index_offset + scratch_offsets
-            # output_offsets = other_sequences_scratch_offset + scratch_offsets
-
             output_scratchpad_offsets = (
                 num_previous_sequences * output_scratchpad_batch_stride +
                 query_split_offsets[:, None] * output_scratchpad_batch_stride +
@@ -475,7 +461,6 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
 
 
             # Load output for this cache block, shape -> (cxpr_query_chunk_size, cxpr_head_size_padded)
-            # block_output = tl.load(output_scratchpad_ptr + output_offsets, mask=query_mask, other=0.0)
             block_output = tl.load(output_scratchpad_ptr + output_scratchpad_offsets, mask=query_mask, other=0.0)
 
             # Calculate offsets to load log-sum-exp for this head/batch/cache block
@@ -516,9 +501,6 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     output /= l_i[:, None]
 
     # Calculate offsets to store the output for this head/batch
-    # other_sequences_output_offset = num_previous_sequences * output_batch_stride
-    # output_offsets = query_split_offsets[:, None] * output_batch_stride + query_head_index * output_head_stride + head_offsets[None, :]
-
     output_offsets = (
         num_previous_sequences * output_batch_stride +
         query_split_offsets[:, None] * output_batch_stride +
@@ -614,7 +596,6 @@ def varlen_attention_launcher(  # noqa: PLR0913
     num_kv_splits = min(max_num_blocks_per_sequence, MAX_NUM_KV_SPLITS)
 
     # cxpr_query_chunk_size: tl.constexpr = 16
-    # cxpr_query_chunk_size: tl.constexpr = 32
     cxpr_query_chunk_size: tl.constexpr = 32
     num_query_splits_stage1 = triton.cdiv(max_seqlen_q, cxpr_query_chunk_size)
 
@@ -628,11 +609,6 @@ def varlen_attention_launcher(  # noqa: PLR0913
         assert k_scale.numel() == v_scale.numel()  # noqa: S101
         k_scale_scalar = k_scale.item()
         v_scale_scalar = v_scale.item()
-
-    print(f"{max_num_blocks_per_sequence = }")
-    print(f"{MAX_NUM_KV_SPLITS = }")
-    print(f"{num_kv_splits = }")
-    print(f"{num_cache_blocks_per_split = }")
 
     # For computing attention for split block (stage 1): parallelize over batches, cache blocks, and KV heads.
     # Note: if the number of cache blocks in a sequence is very large, it is more efficient to handle multiple blocks

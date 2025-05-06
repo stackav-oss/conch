@@ -31,6 +31,7 @@ _NUM_HEADS_ABRIDGED: Final = [(8, 8), (4, 1), (16, 4)]
 _MAX_SEQLEN_Q: Final = 1024
 # _SEQUENCE_LENGTHS: Final = [240, 2048]
 _SEQUENCE_LENGTHS: Final = [240, 1024]
+# _SEQUENCE_LENGTHS: Final = [121, 240, 484, 1024]
 # _SEQUENCE_LENGTHS: Final = [240]
 # _SEQUENCE_LENGTHS: Final = [242]
 # _SEQUENCE_LENGTHS: Final = [33]
@@ -291,30 +292,20 @@ def _create_seqlens(num_seqs: int, different_seqlen_k: bool = False) -> tuple[to
 # @pytest.mark.parametrize("num_seqs", [8])
 # @pytest.mark.parametrize("num_seqs", [4])
 # @pytest.mark.parametrize("num_seqs", [5])
-# @pytest.mark.parametrize("num_seqs", [10])
-# @pytest.mark.parametrize("num_seqs", [1])
-# @pytest.mark.parametrize("num_seqs", [4])
-# @pytest.mark.parametrize("num_seqs", [1])
 @pytest.mark.parametrize("head_size", _HEAD_SIZES)
-# @pytest.mark.parametrize("head_size", [256])
 # @pytest.mark.parametrize("head_size", [128])
 @pytest.mark.parametrize(("num_query_heads", "num_kv_heads"), _NUM_HEADS_ABRIDGED)
 # @pytest.mark.parametrize(("num_query_heads", "num_kv_heads"), [(16, 4)])
 # @pytest.mark.parametrize(("num_query_heads", "num_kv_heads"), [(8, 8)])
 # @pytest.mark.parametrize(("num_query_heads", "num_kv_heads"), [(1, 1)])
-# @pytest.mark.parametrize("different_seqlen_k", [False])
-# @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
-# @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize("dtype", [torch.float16])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+# @pytest.mark.parametrize("dtype", [torch.float16])
 @pytest.mark.parametrize("sequence_length", _SEQUENCE_LENGTHS)
-# @pytest.mark.parametrize("sequence_length", [2048])
-# @pytest.mark.parametrize("sequence_length", [2047])
+# @pytest.mark.parametrize("sequence_length", [240])
 # @pytest.mark.parametrize("sequence_length", [1024])
 # @pytest.mark.parametrize("causal", [False])
 # @pytest.mark.parametrize("causal", [True])
 @pytest.mark.parametrize("causal", [True, False])
-# @pytest.mark.parametrize("causal", [True])
-# @pytest.mark.parametrize("dtype", [torch.float16])
 def test_varlen_attention_vs_flash(
     num_seqs: int,
     head_size: int,
