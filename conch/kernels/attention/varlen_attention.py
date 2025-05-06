@@ -241,6 +241,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         # Offset for each element of the head
         head_offsets[None, :]
     )
+
     # Mask out query elements that are just for padding
     query_mask = query_split_mask[:, None] & head_mask[None, :]
 
@@ -613,6 +614,22 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     )
 
 
+def _get_tuning_parameters() -> dict[str, int]:
+    """Get block sizes/tuning parameters for current device."""
+    device_name = torch.cuda.get_device_name() if torch.cuda.is_available() else ""
+
+    if "H100" in device_name:
+        return {
+            "query_chunk_size_stage1": 64,
+            "query_chunk_size_stage2": 64,
+        }
+
+    return {
+        "query_chunk_size_stage1": 32,
+        "query_chunk_size_stage2": 32,
+    }
+
+
 def varlen_attention_launcher(  # noqa: PLR0913
     output: torch.Tensor,
     query: torch.Tensor,
@@ -671,6 +688,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
     num_cache_blocks, num_kv_heads, cache_block_size, _ = key_cache.shape
     batch_size, max_num_blocks_per_sequence = block_tables.shape
 
+    # TODO(jmanning):
     # If total_num_q == batch_size, then that's a pure-decode case
     # I.e. just one Query token per sequence
     # -> In that case, we can do the optimization for query groups
@@ -697,13 +715,15 @@ def varlen_attention_launcher(  # noqa: PLR0913
     # Note: we may need to tune this value for a given HW platform.
     num_kv_splits = min(max_num_blocks_per_sequence, MAX_NUM_KV_SPLITS)
 
-    # cxpr_query_chunk_size: tl.constexpr = 16
-    cxpr_query_chunk_size: tl.constexpr = 32
-    # cxpr_query_chunk_size: tl.constexpr = 64
-    num_query_splits_stage1 = triton.cdiv(max_seqlen_q, cxpr_query_chunk_size)
+    tuning_parameters = _get_tuning_parameters()
+    query_chunk_size_stage1 = tuning_parameters["query_chunk_size_stage1"]
+    query_chunk_size_stage2 = tuning_parameters["query_chunk_size_stage2"]
+
+    num_query_splits_stage1 = triton.cdiv(max_seqlen_q, query_chunk_size_stage1)
 
     num_cache_blocks_per_split = triton.cdiv(max_num_blocks_per_sequence, num_kv_splits)
 
+    # TODO(jmanning): Support KV8 scaling
     k_scale_scalar = 1.0
     v_scale_scalar = 1.0
 
@@ -754,7 +774,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
         kv_head_element_stride=key_cache.stride(3),
         block_tables_batch_stride=block_tables.stride(0),
         # Constexpr sizes
-        cxpr_query_chunk_size=cxpr_query_chunk_size,
+        cxpr_query_chunk_size=query_chunk_size_stage1,
         cxpr_cache_block_size=cxpr_cache_block_size,
         cxpr_head_size_padded=cxpr_head_size_padded,
         cxpr_is_softcap=cxpr_is_softcap,
@@ -763,19 +783,10 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_is_causal=causal,
     )
 
-    # cxpr_query_chunk_size_stage2: tl.constexpr = 1
-    # cxpr_query_chunk_size_stage2: tl.constexpr = 4
-    # cxpr_query_chunk_size_stage2: tl.constexpr = 8
-    # cxpr_query_chunk_size_stage2: tl.constexpr = 16
-    cxpr_query_chunk_size_stage2: tl.constexpr = 32
-    # cxpr_query_chunk_size_stage2: tl.constexpr = 64
-    # cxpr_query_chunk_size_stage2: tl.constexpr = 128
-    num_query_splits_stage2 = triton.cdiv(max_seqlen_q, cxpr_query_chunk_size_stage2)
+    num_query_splits_stage2 = triton.cdiv(max_seqlen_q, query_chunk_size_stage2)
 
-    # For reducing over splits (stage 2): parallelize over batches and query heads
+    # For reducing over splits (stage 2): parallelize over batches, query splits, and query heads
     stage2_grid = (batch_size, num_query_splits_stage2, num_query_heads)
-
-    # For each seq in batch and for each query head, accumulate the results for each token in the query across all of the KV cache blocks
 
     # Launch stage 2 kernel
     _varlen_attention_reduce_splits_kernel[stage2_grid](
@@ -798,7 +809,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
         lse_scratchpad_batch_stride=lse_scratchpad.stride(0),
         lse_scratchpad_kv_split_stride=lse_scratchpad.stride(1),
         # Constexpr sizes
-        cxpr_query_chunk_size=cxpr_query_chunk_size_stage2,
+        cxpr_query_chunk_size=query_chunk_size_stage2,
         cxpr_cache_block_size=cxpr_cache_block_size,
         cxpr_head_size_padded=cxpr_head_size_padded,
         cxpr_is_causal=causal,
