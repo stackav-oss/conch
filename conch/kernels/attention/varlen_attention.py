@@ -783,6 +783,9 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_is_causal=causal,
     )
 
+    print(f"{output_scratchpad = }")
+    print(f"{lse_scratchpad = }")
+
     num_query_splits_stage2 = triton.cdiv(max_seqlen_q, query_chunk_size_stage2)
 
     # For reducing over splits (stage 2): parallelize over batches, query splits, and query heads

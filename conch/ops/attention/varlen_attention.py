@@ -183,6 +183,8 @@ def varlen_attention(
 
     # Note: we could allocate this scratch outside of this function so that we could reuse it. vLLM allocates the scratch memory inline like this
 
+    # TODO(jmanning): Are we actually using all of this scratchpad memory?
+
     # Allocate additional memory for intermediate result (of shape (head_size,)) for each batch/query head/cache block
     output_scratchpad = torch.zeros(
         # (metadata.batch_size, MAX_NUM_SPLITS, metadata.num_query_heads, metadata.head_size),
