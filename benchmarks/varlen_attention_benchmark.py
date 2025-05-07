@@ -192,9 +192,9 @@ def main(
         gpu: Which gpu to run on.
         csv: Flag to indicate whether or not to print results in CSV format.
     """
-    if not current_platform.is_nvidia() or flash_attn_varlen_func is None:
-        error_msg = "Platform must be Nvidia and vLLM must be installed & enabled via CONCH_ENABLE_VLLM=1"
-        raise NotImplementedError(error_msg)
+    # if not current_platform.is_nvidia() or flash_attn_varlen_func is None:
+    #     error_msg = "Platform must be Nvidia and vLLM must be installed & enabled via CONCH_ENABLE_VLLM=1"
+    #     raise NotImplementedError(error_msg)
 
     seed: Final = 0
     seed_everything(seed)
@@ -289,20 +289,6 @@ def main(
     # k_scale = torch.full((1,), 1.0)
     # v_scale = torch.full((1,), 1.0)
 
-    output_vllm = flash_attn_varlen_func(
-        q=query,
-        k=key_cache_fa,
-        v=value_cache_fa,
-        cu_seqlens_q=cu_seqlens_q,
-        # cu_seqlens_k=cu_seqlens_k,
-        max_seqlen_q=max_seqlen_q,
-        max_seqlen_k=max_seqlen_k,
-        block_table=block_tables,
-        seqused_k=seq_lens,
-        softmax_scale=scale,
-        causal=causal,
-    )
-
     output_conch = varlen_attention(
         query=query,
         key_cache=key_cache_conch,
@@ -315,37 +301,6 @@ def main(
         max_seqlen_k=max_seqlen_k,
         scale=scale,
         causal=causal,
-    )
-
-    if not torch.allclose(output_vllm, output_conch, atol=absolute_tolerance):
-        print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)
-        print(f"Output max diff: {(output_conch - output_vllm).abs().max().item()}", file=sys.stderr)
-
-        if verbose:
-            print(f"Reference output: {output_vllm}", file=sys.stderr)
-            print(f"Triton output: {output_conch}", file=sys.stderr)
-    else:
-        print(f"Results matched with atol={absolute_tolerance} :)", file=sys.stderr)
-
-    baseline_result = benchmark_it(
-        lambda: flash_attn_varlen_func(
-            q=query,
-            k=key_cache_fa,
-            v=value_cache_fa,
-            cu_seqlens_q=cu_seqlens_q,
-            # cu_seqlens_k=cu_seqlens_k,
-            max_seqlen_q=max_seqlen_q,
-            max_seqlen_k=max_seqlen_k,
-            block_table=block_tables,
-            seqused_k=seq_lens,
-            softmax_scale=scale,
-            causal=causal,
-        ),
-        tag="Baseline",
-        metadata=metadata,
-        num_iterations=num_iterations,
-        num_warmup_iterations=num_warmup_iterations,
-        device=query.device,
     )
 
     triton_result = benchmark_it(
@@ -372,7 +327,54 @@ def main(
     # Print results
     triton_result.print_parameters(csv=csv)
     triton_result.print_results(csv=csv)
-    baseline_result.print_results(csv=csv)
+
+    if flash_attn_varlen_func is not None:
+        output_vllm = flash_attn_varlen_func(
+            q=query,
+            k=key_cache_fa,
+            v=value_cache_fa,
+            cu_seqlens_q=cu_seqlens_q,
+            # cu_seqlens_k=cu_seqlens_k,
+            max_seqlen_q=max_seqlen_q,
+            max_seqlen_k=max_seqlen_k,
+            block_table=block_tables,
+            seqused_k=seq_lens,
+            softmax_scale=scale,
+            causal=causal,
+        )
+
+        if not torch.allclose(output_vllm, output_conch, atol=absolute_tolerance):
+            print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)
+            print(f"Output max diff: {(output_conch - output_vllm).abs().max().item()}", file=sys.stderr)
+
+            if verbose:
+                print(f"Reference output: {output_vllm}", file=sys.stderr)
+                print(f"Triton output: {output_conch}", file=sys.stderr)
+        else:
+            print(f"Results matched with atol={absolute_tolerance} :)", file=sys.stderr)
+
+        baseline_result = benchmark_it(
+            lambda: flash_attn_varlen_func(
+                q=query,
+                k=key_cache_fa,
+                v=value_cache_fa,
+                cu_seqlens_q=cu_seqlens_q,
+                # cu_seqlens_k=cu_seqlens_k,
+                max_seqlen_q=max_seqlen_q,
+                max_seqlen_k=max_seqlen_k,
+                block_table=block_tables,
+                seqused_k=seq_lens,
+                softmax_scale=scale,
+                causal=causal,
+            ),
+            tag="Baseline",
+            metadata=metadata,
+            num_iterations=num_iterations,
+            num_warmup_iterations=num_warmup_iterations,
+            device=query.device,
+        )
+
+        baseline_result.print_results(csv=csv)
 
 
 if __name__ == "__main__":
