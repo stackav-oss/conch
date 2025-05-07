@@ -28,9 +28,11 @@ _NUM_SEQS_ABRIDGED: Final = [4, 10]
 _NUM_HEADS_ABRIDGED: Final = [(8, 8), (4, 1), (16, 4)]
 # _MAX_SEQLEN_Q: Final = 2048
 # _MAX_SEQLEN_Q: Final = 2047
-_MAX_SEQLEN_Q: Final = 1024
+# _MAX_SEQLEN_Q: Final = 1024
 # _SEQUENCE_LENGTHS: Final = [240, 2048]
+# _SEQUENCE_LENGTHS: Final = [240, 343, 1024]
 _SEQUENCE_LENGTHS: Final = [240, 343, 1024]
+# _SEQUENCE_LENGTHS: Final = [1]
 # _SEQUENCE_LENGTHS: Final = [121, 240, 484, 1024]
 # _SEQUENCE_LENGTHS: Final = [240]
 # _SEQUENCE_LENGTHS: Final = [242]
@@ -53,30 +55,30 @@ def _get_tolerance_for_dtype(dtype: torch.dtype) -> float:
     raise NotImplementedError(msg)
 
 
-def _create_seqlens(num_seqs: int, different_seqlen_k: bool = False) -> tuple[torch.Tensor, torch.Tensor, int, int]:
-    """Create list of seqlens for query/key."""
-    seqlens_q = [0]
-    seqlens_k = [0]
-
-    max_seqlen_q = 0
-    max_seqlen_k = 0
-
-    for i in range(num_seqs):
-        seqlen_q = random.randint(1, _MAX_SEQLEN_Q)
-        seqlen_k = seqlen_q + random.randint(1, _MAX_SEQLEN_Q) if different_seqlen_k else seqlen_q
-
-        max_seqlen_q = max(max_seqlen_q, seqlen_q)
-        max_seqlen_k = max(max_seqlen_k, seqlen_k)
-
-        seqlens_q.append(seqlen_q)
-        seqlens_k.append(seqlen_k)
-
-    return (
-        torch.tensor(seqlens_q, dtype=torch.int32),
-        torch.tensor(seqlens_k, dtype=torch.int32),
-        max_seqlen_q,
-        max_seqlen_k,
-    )
+# def _create_seqlens(num_seqs: int, different_seqlen_k: bool = False) -> tuple[torch.Tensor, torch.Tensor, int, int]:
+#     """Create list of seqlens for query/key."""
+#     seqlens_q = [0]
+#     seqlens_k = [0]
+# 
+#     max_seqlen_q = 0
+#     max_seqlen_k = 0
+# 
+#     for i in range(num_seqs):
+#         seqlen_q = random.randint(1, _MAX_SEQLEN_Q)
+#         seqlen_k = seqlen_q + random.randint(1, _MAX_SEQLEN_Q) if different_seqlen_k else seqlen_q
+# 
+#         max_seqlen_q = max(max_seqlen_q, seqlen_q)
+#         max_seqlen_k = max(max_seqlen_k, seqlen_k)
+# 
+#         seqlens_q.append(seqlen_q)
+#         seqlens_k.append(seqlen_k)
+# 
+#     return (
+#         torch.tensor(seqlens_q, dtype=torch.int32),
+#         torch.tensor(seqlens_k, dtype=torch.int32),
+#         max_seqlen_q,
+#         max_seqlen_k,
+#     )
 
 
 # def _attention_forward_core_ref_impl(
@@ -306,15 +308,17 @@ def _create_seqlens(num_seqs: int, different_seqlen_k: bool = False) -> tuple[to
 # @pytest.mark.parametrize("causal", [False])
 # @pytest.mark.parametrize("causal", [True])
 @pytest.mark.parametrize("causal", [True, False])
+@pytest.mark.parametrize("is_pure_decode", [True, False])
 def test_varlen_attention_vs_flash(
     num_seqs: int,
     head_size: int,
     num_query_heads: int,
     num_kv_heads: int,
+    dtype: torch.dtype,
     sequence_length: int,
     causal: bool,
+    is_pure_decode: bool,
     # different_seqlen_k: bool,
-    dtype: torch.dtype,
 ) -> None:
     """Test Varlen Attention Triton kernel with various configurations vs. vLLM FlashAttnVarlen."""
     from vllm.vllm_flash_attn import flash_attn_varlen_func  # type: ignore[attr-defined, unused-ignore]
@@ -372,15 +376,26 @@ def test_varlen_attention_vs_flash(
 
     starting_item = torch.as_tensor([0], dtype=torch.int32)
 
-    cu_seqlens_q = torch.cumsum(seq_lens, dim=0, dtype=torch.int32)
-    # cu_seqlens_k = torch.cumsum(seq_lens, dim=0, dtype=torch.int32)
+    if is_pure_decode:
+        seqlens_q = torch.ones((num_seqs,), dtype=torch.int32)
 
-    cu_seqlens_q = torch.cat((starting_item, cu_seqlens_q), dim=0)
-    cu_seqlens_k = cu_seqlens_q.clone()
-    # cu_seqlens_k = torch.cat((starting_item, cu_seqlens_k), dim=0)
+        cu_seqlens_q = torch.cumsum(seqlens_q, dim=0, dtype=torch.int32)
+        cu_seqlens_q = torch.cat((starting_item, cu_seqlens_q), dim=0)
 
-    max_seqlen_q = torch.max(seq_lens).item()
-    max_seqlen_k = max_seqlen_q
+        cu_seqlens_k = torch.cumsum(seq_lens, dim=0, dtype=torch.int32)
+        cu_seqlens_k = torch.cat((starting_item, cu_seqlens_k), dim=0)
+
+        max_seqlen_q = torch.max(seqlens_q).item()
+        max_seqlen_k = torch.max(seq_lens).item()
+    else:
+        # cu_seqlens_q = torch.cumsum(seq_lens, dim=0, dtype=torch.int32)
+        cu_seqlens_q = torch.cumsum(seq_lens, dim=0, dtype=torch.int32)
+        cu_seqlens_q = torch.cat((starting_item, cu_seqlens_q), dim=0)
+        # cu_seqlens_k = torch.cumsum(seq_lens, dim=0, dtype=torch.int32)
+        cu_seqlens_k = cu_seqlens_q.clone()
+
+        max_seqlen_q = torch.max(seq_lens).item()
+        max_seqlen_k = max_seqlen_q
 
     # print(f"{seq_lens = }")
     # print(f"{cu_seqlens_q = }")

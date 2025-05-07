@@ -202,6 +202,8 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     this_query_end = tl.load(cu_seqlens_q_ptr + batch_index + 1)
     this_query_length = this_query_end - this_query_start
 
+    is_pure_decode = (this_query_length == 1)
+
     # Offset for how many tokens in query correspond to previous splits for this sequence
     this_query_split_offset = query_split_index * cxpr_query_chunk_size
 
@@ -212,7 +214,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     if this_query_split_offset > this_query_length:
         return
 
-    if cxpr_is_causal:
+    if cxpr_is_causal and not is_pure_decode:
         beginning_seqlen_k = starting_cache_block_index * cxpr_cache_block_size
         if (this_query_split_offset + cxpr_query_chunk_size) < beginning_seqlen_k:
             return
@@ -324,14 +326,16 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             cache_block_mask = tl.arange(0, cxpr_cache_block_size) < num_entries_in_cache_block
             qk_mask = query_split_mask[:, None] & cache_block_mask[None, :]
 
-            if cxpr_is_causal:
+            needs_causal_mask = (cxpr_is_causal and not is_pure_decode)
+
+            if needs_causal_mask:
                 # Causal mask
                 effective_seqlen_q_offsets = query_split_offsets
                 effective_seqlen_k_offsets = cache_block_index * cxpr_cache_block_size + tl.arange(0, cxpr_cache_block_size)
                 causal_mask = query_split_offsets[:, None] >= effective_seqlen_k_offsets[None, :]
                 qk_mask = qk_mask & causal_mask
 
-            if needs_qk_mask or cxpr_is_causal:
+            if needs_qk_mask or needs_causal_mask:
                 # Set masked out elements to -inf
                 qk = tl.where(qk_mask, qk, -float("inf")).to(dtype)
 
@@ -493,6 +497,8 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     this_query_end = tl.load(cu_seqlens_q_ptr + batch_index + 1)
     this_query_length = this_query_end - this_query_start
 
+    is_pure_decode = (this_query_length == 1)
+
     # Offset for how many tokens in query correspond to previous splits for this sequence
     this_query_split_offset = query_split_index * cxpr_query_chunk_size
 
@@ -539,7 +545,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     for kv_split_index in range(num_kv_splits_this_seq):
         effective_seqlen_k = kv_split_index * num_cache_blocks_per_split * cxpr_cache_block_size
         # TODO(jmanning): If {this_query_length == 1} and {seqlen_k > 1} then we have a pure-decode case? So we _should_ process all KV cache blocks
-        if (effective_seqlen_k <= this_query_split_offset) or not cxpr_is_causal:
+        if ((effective_seqlen_k <= this_query_split_offset) or not cxpr_is_causal) or is_pure_decode:
             # Calculate offsets to load the scratch for this head/batch/split
             # 2D block of shape (query_group_size_padded, head_size_padded)
             output_scratchpad_offsets = (
@@ -782,9 +788,6 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_is_rocm=cxpr_is_rocm,
         cxpr_is_causal=causal,
     )
-
-    print(f"{output_scratchpad = }")
-    print(f"{lse_scratchpad = }")
 
     num_query_splits_stage2 = triton.cdiv(max_seqlen_q, query_chunk_size_stage2)
 

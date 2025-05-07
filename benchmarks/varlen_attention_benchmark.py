@@ -104,6 +104,14 @@ def _create_seqlens(num_seqs: int, different_seqlen_k: bool = False) -> tuple[to
     help="Flag for printing results in CSV format",
 )
 @click.option(
+    "--pure-decode",
+    required=False,
+    type=bool,
+    is_flag=True,
+    default=False,
+    help="Flag for printing results in CSV format",
+)
+@click.option(
     "-i",
     "--num-iterations",
     required=False,
@@ -160,6 +168,7 @@ def main(
     num_query_heads: int,
     num_kv_heads: int,
     causal: bool,
+    pure_decode: bool,
     num_iterations: int,
     num_warmup_iterations: int,
     absolute_tolerance: float,
@@ -204,6 +213,8 @@ def main(
             "batch_size": batch_size,
             "num_query_heads": num_query_heads,
             "num_kv_heads": num_kv_heads,
+            "causal": causal,
+            "pure_decode": pure_decode,
         },
     )
 
@@ -225,15 +236,27 @@ def main(
 
     starting_item = torch.as_tensor([0], dtype=torch.int32)
 
-    cu_seqlens_q = torch.cumsum(seq_lens, dim=0, dtype=torch.int32)
-    # cu_seqlens_k = torch.cumsum(seq_lens, dim=0, dtype=torch.int32)
+    if pure_decode:
+        seqlens_q = torch.ones((batch_size,), dtype=torch.int32)
 
-    cu_seqlens_q = torch.cat((starting_item, cu_seqlens_q), dim=0)
-    cu_seqlens_k = cu_seqlens_q.clone()
-    # cu_seqlens_k = torch.cat((starting_item, cu_seqlens_k), dim=0)
+        cu_seqlens_q = torch.cumsum(seqlens_q, dim=0, dtype=torch.int32)
+        cu_seqlens_q = torch.cat((starting_item, cu_seqlens_q), dim=0)
 
-    max_seqlen_q = torch.max(seq_lens).item()
-    max_seqlen_k = max_seqlen_q
+        cu_seqlens_k = torch.cumsum(seq_lens, dim=0, dtype=torch.int32)
+        cu_seqlens_k = torch.cat((starting_item, cu_seqlens_k), dim=0)
+
+        max_seqlen_q = torch.max(seqlens_q).item()
+        max_seqlen_k = torch.max(seq_lens).item()
+    else:
+        cu_seqlens_q = torch.cumsum(seq_lens, dim=0, dtype=torch.int32)
+        # cu_seqlens_k = torch.cumsum(seq_lens, dim=0, dtype=torch.int32)
+
+        cu_seqlens_q = torch.cat((starting_item, cu_seqlens_q), dim=0)
+        cu_seqlens_k = cu_seqlens_q.clone()
+        # cu_seqlens_k = torch.cat((starting_item, cu_seqlens_k), dim=0)
+
+        max_seqlen_q = torch.max(seq_lens).item()
+        max_seqlen_k = max_seqlen_q
 
     # print(f"{seq_lens = }")
     # print(f"{cu_seqlens_q = }")
