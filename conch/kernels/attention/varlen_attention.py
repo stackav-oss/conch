@@ -244,6 +244,8 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         head_offsets[None, :]
     )
 
+    # query_offsets = tl.max_contiguous(tl.multiple_of(query_offsets, [cxpr_query_chunk_size, cxpr_head_size_padded]), [cxpr_query_chunk_size, cxpr_head_size_padded])
+
     # Mask out query elements that are just for padding
     query_mask = query_split_mask[:, None] & head_mask[None, :]
 
@@ -269,6 +271,22 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Keep running denominator of softmax
     l_i = tl.full([cxpr_query_chunk_size], 0.0, dtype=dtype)
 
+    cache_block_offsets = tl.arange(0, cxpr_cache_block_size)
+
+    key_block_offsets = (
+        head_offsets[:, None] +
+        cache_block_offsets[None, :] * kv_cache_block_stride
+    )
+
+    key_block_offsets = tl.max_contiguous(tl.multiple_of(key_block_offsets, [cxpr_head_size_padded, cxpr_cache_block_size]), [cxpr_head_size_padded, cxpr_cache_block_size])
+
+    value_block_offsets = (
+        cache_block_offsets[:, None] * kv_cache_block_stride +
+        head_offsets[None, :]
+    )
+
+    value_block_offsets = tl.max_contiguous(tl.multiple_of(value_block_offsets, [cxpr_cache_block_size, cxpr_head_size_padded]), [cxpr_cache_block_size, cxpr_head_size_padded])
+
     # Iterate through the cache blocks that this kernel is assigned to
     for relative_cache_block_index in range(num_cache_blocks_per_split):
         # Get the actual index of the cache block
@@ -286,6 +304,11 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             needs_cache_block_mask = (num_entries_in_cache_block != cxpr_cache_block_size)
             needs_qk_mask = needs_query_split_mask or needs_cache_block_mask
 
+            # Need to mask out any elements that represent unused cache block entries or padding elements
+            cache_block_mask = cache_block_offsets < num_entries_in_cache_block
+
+            qk_mask = query_split_mask[:, None] & cache_block_mask[None, :]
+
             # Offset from the block_table row for the current batch by the number of cache blocks
             current_cache_block_number_ptr = current_block_table_ptr + cache_block_index
             physical_cache_block_number = tl.load(current_cache_block_number_ptr)
@@ -295,21 +318,28 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
             # Load the key block as (cxpr_head_size_padded, cache_block_size)
             # Note: we're loading it transposed here
-            key_block_ptr = tl.make_block_ptr(
-                key_cache_ptr + kv_cache_block_index_offset + kv_head_index_offset,
-                shape=(head_size, num_entries_in_cache_block),
-                strides=(kv_head_element_stride, kv_cache_block_stride),
-                offsets=(0, 0),
-                block_shape=(cxpr_head_size_padded, cxpr_cache_block_size),
-                order=(1, 0),
-            )
+            # key_block_ptr = tl.make_block_ptr(
+            #     key_cache_ptr + kv_cache_block_index_offset + kv_head_index_offset,
+            #     shape=(head_size, num_entries_in_cache_block),
+            #     strides=(kv_head_element_stride, kv_cache_block_stride),
+            #     offsets=(0, 0),
+            #     block_shape=(cxpr_head_size_padded, cxpr_cache_block_size),
+            #     order=(1, 0),
+            # )
 
-            key_block = _load_2d_block_ptr(
-                key_block_ptr,
-                mask_first_dim=needs_head_mask,
-                mask_second_dim=needs_cache_block_mask,
-                padding_option="zero",
-            )
+            # key_block = _load_2d_block_ptr(
+            #     key_block_ptr,
+            #     mask_first_dim=needs_head_mask,
+            #     mask_second_dim=needs_cache_block_mask,
+            #     padding_option="zero",
+            # )
+
+            # key_block_mask = cache_block_mask[:, None] & head_mask[None, :]
+            key_block_mask = head_mask[:, None] & cache_block_mask[None, :]
+
+            # key_block = tl.load(key_cache_ptr + kv_cache_block_index_offset + kv_head_index_offset + key_block_offsets, mask=key_block_mask, other=0.0)
+            # key_block = _load(key_cache_ptr + kv_cache_block_index_offset + kv_head_index_offset + key_block_offsets, use_mask=(needs_cache_block_mask or needs_head_mask), mask=key_block_mask, other=0.0)
+            key_block = _load(key_cache_ptr + kv_cache_block_index_offset + kv_head_index_offset + key_block_offsets, use_mask=(needs_cache_block_mask or needs_head_mask), mask=key_block_mask, other=0.0)
 
             if cxpr_apply_fp8_scaling:
                 # Dequantize (multiply by scale factor)
@@ -321,10 +351,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             # key_block.shape -> (head_size, cache_block_size)
             # qk.shape -> (query_chunk_size, cache_block_size)
             qk = (scale * tl.dot(query, key_block)).to(dtype)
-
-            # Need to mask out any elements that represent unused cache block entries or padding elements
-            cache_block_mask = tl.arange(0, cxpr_cache_block_size) < num_entries_in_cache_block
-            qk_mask = query_split_mask[:, None] & cache_block_mask[None, :]
 
             needs_causal_mask = (cxpr_is_causal and not is_pure_decode)
 
@@ -362,21 +388,26 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             output *= alpha[:, None]
 
             # Load the value block as (cache_block_size, cxpr_head_size_padded)
-            value_block_ptr = tl.make_block_ptr(
-                value_cache_ptr + kv_cache_block_index_offset + kv_head_index_offset,
-                shape=(num_entries_in_cache_block, head_size),
-                strides=(kv_cache_block_stride, kv_head_element_stride),
-                offsets=(0, 0),
-                block_shape=(cxpr_cache_block_size, cxpr_head_size_padded),
-                order=(0, 1),
-            )
+            # value_block_ptr = tl.make_block_ptr(
+            #     value_cache_ptr + kv_cache_block_index_offset + kv_head_index_offset,
+            #     shape=(num_entries_in_cache_block, head_size),
+            #     strides=(kv_cache_block_stride, kv_head_element_stride),
+            #     offsets=(0, 0),
+            #     block_shape=(cxpr_cache_block_size, cxpr_head_size_padded),
+            #     order=(0, 1),
+            # )
 
-            value_block = _load_2d_block_ptr(
-                value_block_ptr,
-                mask_first_dim=needs_cache_block_mask,
-                mask_second_dim=needs_head_mask,
-                padding_option="zero",
-            )
+            # value_block = _load_2d_block_ptr(
+            #     value_block_ptr,
+            #     mask_first_dim=needs_cache_block_mask,
+            #     mask_second_dim=needs_head_mask,
+            #     padding_option="zero",
+            # )
+
+            value_block_mask = cache_block_mask[:, None] & head_mask[None, :]
+
+            # value_block = tl.load(value_cache_ptr + kv_cache_block_index_offset + kv_head_index_offset + value_block_offsets, mask=value_block_mask, other=0.0)
+            value_block = _load(value_cache_ptr + kv_cache_block_index_offset + kv_head_index_offset + value_block_offsets, use_mask=(needs_cache_block_mask or needs_head_mask), mask=value_block_mask, other=0.0)
 
             if cxpr_apply_fp8_scaling:
                 # Dequantize (multiply by scale factor)
