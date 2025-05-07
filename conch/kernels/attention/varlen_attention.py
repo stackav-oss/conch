@@ -95,6 +95,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     cu_seqlens_k_ptr: tl.tensor,  # (batch_size + 1, )
     # Scalar arguments
     scale: float,
+    batch_size: int,
     num_query_splits: int,
     num_cache_blocks_per_split: int,
     softcap: float,
@@ -166,17 +167,24 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         cxpr_is_causal: Whether or not to apply causal masking.
     """
     # What batch is this program processing?
-    batch_index = tl.program_id(0)
+    # batch_index = tl.program_id(0)
+    query_split_index = tl.program_id(0)
 
     # What "split" of the overall data (between 1 and M for query chunks and between 1 and N for KV cache blocks) is this program processing?
-    split_index = tl.program_id(1)
-    total_num_splits = tl.num_programs(1)
+    # split_index = tl.program_id(1)
+    # total_num_splits = tl.num_programs(1)
+    kv_split_index = tl.program_id(1)
 
-    query_split_index = split_index // tl.cdiv(total_num_splits, num_query_splits)
-    kv_split_index = split_index % tl.cdiv(total_num_splits, num_query_splits)
+    # query_split_index = split_index // tl.cdiv(total_num_splits, num_query_splits)
+    # kv_split_index = split_index % tl.cdiv(total_num_splits, num_query_splits)
 
     # What query head is this program processing?
-    query_head_index = tl.program_id(2)
+    # query_head_index = tl.program_id(2)
+    batch_and_query_head_index = tl.program_id(2)
+    total_num_axis_2 = tl.num_programs(2)
+
+    batch_index = batch_and_query_head_index // tl.cdiv(total_num_axis_2, batch_size)
+    query_head_index = batch_and_query_head_index % tl.cdiv(total_num_axis_2, batch_size)
 
     # Get type that we should be using for accumulating results/intermediate calculations
     dtype = output_scratchpad_ptr.dtype.element_ty
@@ -742,7 +750,8 @@ def varlen_attention_launcher(  # noqa: PLR0913
     # For computing attention for split block (stage 1): parallelize over batches, cache blocks, and KV heads.
     # Note: if the number of cache blocks in a sequence is very large, it is more efficient to handle multiple blocks
     # in one launch of the stage 1 kernel to reduce the overhead of reduction
-    stage1_grid = (batch_size, num_query_splits_stage1 * num_kv_splits, num_query_heads)
+    # stage1_grid = (batch_size, num_query_splits_stage1 * num_kv_splits, num_query_heads)
+    stage1_grid = (num_query_splits_stage1, num_kv_splits, batch_size * num_query_heads)
 
     # Launch stage 1 kernel
     _varlen_attention_compute_splits_kernel[stage1_grid](
@@ -758,6 +767,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cu_seqlens_k_ptr=cu_seqlens_k,
         # Scalars
         scale=scale,
+        batch_size=batch_size,
         num_query_splits=num_query_splits_stage1,
         num_cache_blocks_per_split=num_cache_blocks_per_split,
         softcap=softcap,
