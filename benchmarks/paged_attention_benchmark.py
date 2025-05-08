@@ -10,7 +10,6 @@ import torch
 
 from conch import envs
 from conch.kernels.attention.paged_attention import MAX_NUM_SPLITS, paged_attention_launcher
-from conch.ops.attention.paged_attention import split_kv_cache
 from conch.platforms import current_platform
 from conch.third_party.vllm.utils import create_tensors
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
@@ -202,11 +201,8 @@ def main(
     # # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/split/query head
     lse_scratchpad = torch.zeros((batch_size, MAX_NUM_SPLITS, num_query_heads), dtype=query.dtype, device=query.device)
 
-    kv_cache_conch = torch.vstack((key_cache_conch[None, :, :], value_cache_conch[None, :, :]))
-    key_cache_conch, value_cache_conch = split_kv_cache(kv_cache_conch, num_kv_heads, head_dim)
-
-    # Using default kv_scale
-    k_scale = v_scale = 1.0
+    k_scale = torch.full((1,), 0.5)
+    v_scale = torch.full((1,), 0.5)
 
     output_conch = torch.empty_like(query)
 
@@ -217,9 +213,10 @@ def main(
         value_cache_conch,
         output_scratchpad,
         lse_scratchpad,
-        scale,
         block_tables,
         seq_lens,
+        scale,
+        softcap=0.0,
         kv_cache_dtype=kv_cache_dtype,
         k_scale=k_scale,
         v_scale=v_scale,
@@ -314,9 +311,10 @@ def main(
             value_cache_conch,
             output_scratchpad,
             lse_scratchpad,
-            scale,
             block_tables,
             seq_lens,
+            scale,
+            softcap=0.0,
             kv_cache_dtype=kv_cache_dtype,
             k_scale=k_scale,
             v_scale=v_scale,
