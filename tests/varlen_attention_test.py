@@ -340,6 +340,9 @@ def test_varlen_attention_vs_pytorch(
         cache_block_size,
     )
 
+    key_cache_fa = key_cache_conch.permute(0, 2, 1, 3)
+    value_cache_fa = value_cache_conch.permute(0, 2, 1, 3)
+
     q = torch.empty(total_num_q, num_query_heads, head_size, dtype=dtype, device=device)
     q.uniform_(-scale, scale)
 
@@ -358,8 +361,10 @@ def test_varlen_attention_vs_pytorch(
 
     conch_output = varlen_attention(
         query=q,
-        key_cache=key_cache_conch,
-        value_cache=value_cache_conch,
+        # key_cache=key_cache_conch,
+        # value_cache=value_cache_conch,
+        key_cache=key_cache_fa,
+        value_cache=value_cache_fa,
         block_tables=block_tables,
         seq_lens=seq_lens,
         cu_seqlens_q=cu_seqlens_q,
@@ -467,8 +472,10 @@ def test_varlen_attention_vs_flash_attn(
 
     conch_output = varlen_attention(
         query=q,
-        key_cache=key_cache_conch,
-        value_cache=value_cache_conch,
+        # key_cache=key_cache_conch,
+        # value_cache=value_cache_conch,
+        key_cache=key_cache_fa,
+        value_cache=value_cache_fa,
         block_tables=block_tables,
         seq_lens=seq_lens,
         cu_seqlens_q=cu_seqlens_q,
