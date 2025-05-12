@@ -10,52 +10,44 @@ _REQUIREMENTS: Final = [
     "numpy>=1.26.4",
 ]
 
-_DEFAULT_PLATFORM_REQUIREMENTS: Final = [
+_DEFAULT_PLATFORM_TORCH_REQUIREMENTS: Final = [
     "torch>=2.6.0",
+]
+
+_DEFAULT_PLATFORM_TRITON_REQUIREMENTS: Final = [
     "triton>=3.1.0",
 ]
 
 # --extra-index-url https://download.pytorch.org/whl/rocm6.2
-_ROCM_PLATFORM_REQUIREMENTS: Final = [
-    "amdsmi==6.2.4",
+_ROCM_PLATFORM_TORCH_REQUIREMENTS: Final = [
     "torch==2.6.0+rocm6.2.4",
+]
+
+_ROCM_PLATFORM_TRITON_REQUIREMENTS: Final = [
     "pytorch-triton-rocm>=3.1.0",
 ]
 
-_XPU_PLATFORM_REQUIREMENTS: Final = [
+_XPU_PLATFORM_TORCH_REQUIREMENTS: Final = [
     "torch>=2.6.0",
+]
+
+_XPU_PLATFORM_TRITON_REQUIREMENTS: Final = [
     "pytorch-triton-xpu>=3.2.0",
 ]
 
-_PLATFORM_REQUIREMENTS: Final = {
-    "cpu": _DEFAULT_PLATFORM_REQUIREMENTS,
-    "cuda": _DEFAULT_PLATFORM_REQUIREMENTS,
-    "rocm": _ROCM_PLATFORM_REQUIREMENTS,
-    "xpu": _XPU_PLATFORM_REQUIREMENTS,
+_PLATFORM_TORCH_REQUIREMENTS: Final = {
+    "cpu": _DEFAULT_PLATFORM_TORCH_REQUIREMENTS,
+    "cuda": _DEFAULT_PLATFORM_TORCH_REQUIREMENTS,
+    "rocm": _ROCM_PLATFORM_TORCH_REQUIREMENTS,
+    "xpu": _XPU_PLATFORM_TORCH_REQUIREMENTS,
 }
 
-
-def get_default_dependencies() -> list[str]:
-    """Determine the appropriate dependencies based on detected hardware."""
-    platform = get_platform()
-    return _REQUIREMENTS + _PLATFORM_REQUIREMENTS[platform]
-
-
-def get_optional_dependencies() -> dict[str, list[str]]:
-    """Get optional dependency groups."""
-    return {
-        "dev": [
-            "click>=8.1.8",
-            "coverage>=7.8.0",
-            "einops>=0.8.0",
-            "matplotlib>=3.10.1",
-            "mypy>=1.15.0",
-            "pandas>=2.2.3",
-            "pre-commit>=4.2.0",
-            "pytest>=8.3.4",
-            "ruff>=0.4.10",
-        ],
-    }
+_PLATFORM_TRITON_REQUIREMENTS: Final = {
+    "cpu": _DEFAULT_PLATFORM_TRITON_REQUIREMENTS,
+    "cuda": _DEFAULT_PLATFORM_TRITON_REQUIREMENTS,
+    "rocm": _ROCM_PLATFORM_TRITON_REQUIREMENTS,
+    "xpu": _XPU_PLATFORM_TRITON_REQUIREMENTS,
+}
 
 
 def get_platform() -> str | Literal["cuda", "rocm", "cpu", "xpu"]:
@@ -92,6 +84,31 @@ def get_platform() -> str | Literal["cuda", "rocm", "cpu", "xpu"]:
 
     print("No GPU detected, defaulting to CPU backend")
     return "cpu"
+
+
+def get_default_dependencies() -> list[str]:
+    """Default dependencies, required by all platforms."""
+    return _REQUIREMENTS
+
+
+def get_optional_dependencies() -> dict[str, list[str]]:
+    """Get optional dependency groups."""
+    platform = get_platform()
+    return {
+        "dev": [
+            "click>=8.1.8",
+            "coverage>=7.8.0",
+            "einops>=0.8.0",
+            "matplotlib>=3.10.1",
+            "mypy>=1.15.0",
+            "pandas>=2.2.3",
+            "pre-commit>=4.2.0",
+            "pytest>=8.3.4",
+            "ruff>=0.4.10",
+        ],
+        "torch": _PLATFORM_TORCH_REQUIREMENTS[platform],
+        "triton": _PLATFORM_TRITON_REQUIREMENTS[platform],
+    }
 
 
 setup(  # type: ignore[no-untyped-call]
