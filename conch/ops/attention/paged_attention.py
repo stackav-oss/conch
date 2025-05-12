@@ -49,31 +49,36 @@ def _check_output_query_size_compatibility(out: torch.Tensor, query: torch.Tenso
         raise ValueError(msg)
 
 
-def _check_kv_cache_size_compatibility(
-    kv_cache: torch.Tensor, num_kv_heads: int, cache_block_size: int, head_size: int
-) -> None:
+def _check_kv_cache_size_compatibility(key_cache: torch.Tensor, value_cache: torch.Tensor, head_size: int) -> None:
     """Check size compatibility of KV cache tensor.
 
     Args:
-        kv_cache: KV cache tensor.
-        num_kv_heads: Expected number of kv heads.
-        cache_block_size: Expected size of cache block.
+        key_cache: Key cache tensor.
+        value_cache: Key cache tensor.
         head_size: Size of attention head, deduced from out/query tensor sizes.
 
     Raises:
         ValueError if sizes are mismatched.
     """
-    # Key/Value Cache tensor should be a 3-D tensor of shape (2, num_blocks, cache_block_size * num_kv_heads * head_size)
-    expected_kv_cache_shape_dims: Final = 3
+    # Key/Value Cache tensor should be a 4-D tensor of shape (num_blocks, num_kv_heads, cache_block_size, head_size)
+    expected_kv_cache_shape_dims: Final = 4
 
-    if len(kv_cache_shape := kv_cache.shape) != expected_kv_cache_shape_dims:
-        msg = f"kv_cache tensor has unexpected shape (shape={kv_cache_shape}), expected {expected_kv_cache_shape_dims}-D tensor"
+    if len(key_cache.shape) != expected_kv_cache_shape_dims:
+        msg = f"key_cache tensor has unexpected shape ({key_cache.shape = }), expected {expected_kv_cache_shape_dims}-D tensor"
         raise ValueError(msg)
 
-    expected_cache_line_size: Final = cache_block_size * num_kv_heads * head_size
-    if kv_cache_shape[2] != expected_cache_line_size:
-        msg = f"kv_cache line size ({kv_cache_shape[2]}) does not match expected ({expected_cache_line_size})"
+    if len(value_cache.shape) != expected_kv_cache_shape_dims:
+        msg = f"value_cache tensor has unexpected shape ({value_cache.shape = }), expected {expected_kv_cache_shape_dims}-D tensor"
         raise ValueError(msg)
+
+    if key_cache.shape != value_cache.shape:
+        msg = f"Shape of key and value cache tensors do not match ({key_cache.shape = }, {value_cache.shape = })"
+        raise ValueError(msg)
+
+    if key_cache.size(-1) != head_size:
+        msg = (
+            f"Last dimension in key/value_cache shape ({key_cache.shape = }) does not match head_size ({head_size = })"
+        )
 
 
 def _check_block_table_size_compatibility(block_tables: torch.Tensor, batch_size: int) -> None:
@@ -96,20 +101,18 @@ def _check_block_table_size_compatibility(block_tables: torch.Tensor, batch_size
 def _check_size_compatibility(
     out: torch.Tensor,
     query: torch.Tensor,
-    kv_cache: torch.Tensor,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
     block_tables: torch.Tensor,
-    num_kv_heads: int,
-    cache_block_size: int,
 ) -> PagedAttentionMetadata:
     """Check size compatibility of tensors for PagedAttention and return Metadata if successful.
 
     Args:
         out: Tensor to write the output of the attention calculation, shape: (batch_size, num_heads, head_size).
         query: Query tensor, shape: (batch_size, num_heads, head_size).
-        kv_cache: Combined KV cache tensor, shape: (2, num_blocks, cache_block_size * num_kv_heads * head_size).
+        key_cache: Tensor holding cache for K, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
+        value_cache: Tensor holding cache for V, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
         block_tables: Tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
-        num_kv_heads: The number of KV heads.
-        cache_block_size: Size of the cache block.
 
     Raises:
         ValueError if sizes are mismatched.
@@ -120,8 +123,8 @@ def _check_size_compatibility(
     _check_output_query_size_compatibility(out, query)
     batch_size, num_query_heads, head_size = out.shape
 
-    _check_kv_cache_size_compatibility(kv_cache, num_kv_heads, cache_block_size, head_size)
-    _, num_cache_blocks, _ = kv_cache.shape
+    _check_kv_cache_size_compatibility(key_cache, value_cache, head_size)
+    num_cache_blocks, num_kv_heads, cache_block_size, _ = key_cache.shape
 
     _check_block_table_size_compatibility(block_tables, batch_size)
     _, max_num_blocks_per_sequence = block_tables.shape
@@ -136,62 +139,36 @@ def _check_size_compatibility(
     )
 
 
-def split_kv_cache(kv_cache: torch.Tensor, num_kv_heads: int, head_size: int) -> tuple[torch.Tensor, torch.Tensor]:
-    """Split KV cache tensor into key_cache and value_cache.
-
-    Args:
-        kv_cache: Combined KV cache tensor, shape: (2, num_blocks, cache_block_size * num_kv_heads * head_size).
-        num_kv_heads: Number of KV heads.
-        head_size: Head size/dimension.
-
-    Returns:
-        Tuple of tensors, (key_cache, value_cache).
-    """
-    num_blocks: int = kv_cache.shape[1]
-
-    key_cache = kv_cache[0]
-    key_cache = key_cache.view(num_blocks, num_kv_heads, -1, head_size)
-
-    value_cache = kv_cache[1]
-    value_cache = value_cache.view(num_blocks, num_kv_heads, -1, head_size)
-
-    return key_cache, value_cache
-
-
 def paged_attention(
     output: torch.Tensor,
     query: torch.Tensor,
-    kv_cache: torch.Tensor,
-    num_kv_heads: int,
-    scale: float,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
     block_tables: torch.Tensor,
     seq_lens: torch.Tensor,
-    cache_block_size: int,
+    scale: float | None = None,
     softcap: float = 0.0,
     kv_cache_dtype: str = "auto",
-    k_scale: float = 1.0,
-    v_scale: float = 1.0,
+    k_scale: torch.Tensor | None = None,
+    v_scale: torch.Tensor | None = None,
 ) -> None:
-    """PagedAttention interface to verify sizes, split kv_cache, and launch kernel.
+    """PagedAttention interface to verify sizes and launch kernel.
 
     Args:
         output: Tensor to write the output of the attention calculation, shape: (batch_size, num_heads, head_size).
         query: Query tensor, shape: (batch_size, num_heads, head_size).
-        kv_cache: Tensor holding cache for K and V values, shape: (2, num_blocks, cache_block_size * num_kv_heads * head_size).
-        num_kv_heads: The number of KV heads.
-        scale: Scaling factor, 1/sqrt(head_size).
+        key_cache: Tensor holding cache for K, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
+        value_cache: Tensor holding cache for V, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
         block_tables: Tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
         seq_lens: Tensor with the sequence length of each index in the batch, shape: (batch_size, ).
-        cache_block_size: Size of the cache block.
-        softcap: (Optional), Logit softcap to apply (0.0 means no softcap will be applied).
-        kv_cache_dtype: (Optional) Data type of the KV cache.
-        k_scale: (Optional) FP8 scaling factor for key cache.
-        v_scale: (Optional) FP8 scaling factor for value cache.
+        scale: Scaling factor, 1/sqrt(head_size).
+        softcap: Logit softcap to apply (0.0 means no softcap will be applied).
+        kv_cache_dtype: Data type of the KV cache.
+        k_scale: FP8 scaling factor for key cache.
+        v_scale: FP8 scaling factor for value cache.
     """
     # Check sizes of input tensors
-    metadata = _check_size_compatibility(output, query, kv_cache, block_tables, num_kv_heads, cache_block_size)
-
-    key_cache, value_cache = split_kv_cache(kv_cache, num_kv_heads, metadata.head_size)
+    metadata = _check_size_compatibility(output, query, key_cache, value_cache, block_tables)
 
     # Note: we could allocate this scratch outside of this function so that we could reuse it. vLLM allocates the scratch memory inline like this
 
@@ -216,9 +193,9 @@ def paged_attention(
         value_cache,
         output_scratchpad,
         lse_scratchpad,
-        scale,
         block_tables,
         seq_lens,
+        scale,
         softcap,
         kv_cache_dtype,
         k_scale,

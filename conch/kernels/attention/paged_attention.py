@@ -425,13 +425,13 @@ def paged_attention_launcher(  # noqa: PLR0913
     value_cache: torch.Tensor,
     output_scratchpad: torch.Tensor,
     lse_scratchpad: torch.Tensor,
-    scale: float,
     block_tables: torch.Tensor,
     seq_lens: torch.Tensor,
+    scale: float | None = None,
     softcap: float = 0.0,
     kv_cache_dtype: str = "auto",
-    k_scale: float = 1.0,
-    v_scale: float = 1.0,
+    k_scale: torch.Tensor | None = None,
+    v_scale: torch.Tensor | None = None,
 ) -> None:
     """PagedAttention kernel launcher.
 
@@ -442,10 +442,10 @@ def paged_attention_launcher(  # noqa: PLR0913
         value_cache: Tensor with cached V values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
         output_scratchpad: Tensor used as scratchpad to share cache block outputs between two stages, shape: (batch_size, max_num_blocks_per_sequence, num_query_heads, head_size)
         lse_scratchpad: Tensor used as scratchpad to share cache block log-sum-exp between two stages, shape: (batch_size, max_num_blocks_per_sequence, num_query_heads)
-        scale: Scaling factor, 1/sqrt(head_size).
         block_tables: Tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
         seq_lens: Tensor with the sequence length of each index in the batch, shape: (batch_size, ).
-        softcap: (Optional), Logit softcap to apply (0.0 means no softcap will be applied).
+        scale: Scaling factor, 1/sqrt(head_size).
+        softcap: Logit softcap to apply (0.0 means no softcap will be applied).
         kv_cache_dtype: If this dtype is fp8, apply scaling.
         k_scale: Fp8 scaling factor for k.
         v_scale: Fp8 scaling factor for v.
@@ -493,6 +493,19 @@ def paged_attention_launcher(  # noqa: PLR0913
 
     num_cache_blocks_per_split = triton.cdiv(max_num_blocks_per_sequence, num_splits)
 
+    # Use default scaling factor if not provided
+    if scale is None:
+        scale = float(1.0 / (head_size**0.5))
+
+    k_scale_scalar = 1.0
+    v_scale_scalar = 1.0
+
+    if cxpr_apply_fp8_scaling:
+        assert k_scale is not None  # noqa: S101
+        assert v_scale is not None  # noqa: S101
+        k_scale_scalar = k_scale.item()
+        k_scale_scalar = v_scale.item()
+
     # For computing attention for split block (stage 1): parallelize over batches, cache blocks, and KV heads.
     # Note: if the number of cache blocks in a sequence is very large, it is more efficient to handle multiple blocks
     # in one launch of the stage 1 kernel to reduce the overhead of reduction
@@ -512,8 +525,8 @@ def paged_attention_launcher(  # noqa: PLR0913
         scale,
         num_cache_blocks_per_split,
         softcap,
-        k_scale,
-        v_scale,
+        k_scale_scalar,
+        v_scale_scalar,
         # Sizes of relevant tensors
         head_size,
         query_group_size,

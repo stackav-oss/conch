@@ -56,6 +56,7 @@ def main(results_directory: Path, use_cached_results: bool) -> None:
     os.environ["CONCH_BENCH_ENABLE_ALL_REF"] = "1"
     os.environ["CONCH_ENABLE_BNB"] = "1"
     os.environ["CONCH_ENABLE_VLLM"] = "1"
+    os.environ["VLLM_CONFIGURE_LOGGING"] = "0"
 
     # Create directory for output if it doesn't exist already
     results_directory.mkdir(parents=True, exist_ok=True)

@@ -66,7 +66,9 @@ def _machete_quantize_and_pack(
 
     w_q_machete = w_q_packed.t().contiguous().t()
     if enable_machete and vllm_custom_ops is not None:
-        w_q_machete = vllm_custom_ops.machete_prepack_B(w_q_machete, wtype)
+        w_q_machete = vllm_custom_ops.machete_prepack_B(
+            w_q_machete, a_type=w.dtype, b_type=wtype, group_scales_type=w.dtype
+        )
 
     return w_ref, w_q_machete, w_q_packed, w_s
 
@@ -228,12 +230,11 @@ def main(
     rtol = 1e-1
 
     if enable_machete and vllm_custom_ops is not None:
-        machete_output = vllm_custom_ops.machete_gemm(
+        machete_output = vllm_custom_ops.machete_mm(
             a=a,
             b_q=w_q_machete,
             b_type=weight_dtype_vllm,
-            b_scales=w_s,
-            b_zeros=None,
+            b_group_scales=w_s,
             b_group_size=group_size,
         )
 
@@ -257,12 +258,11 @@ def main(
 
     if enable_machete and vllm_custom_ops is not None:
         baseline_result = benchmark_it(
-            lambda: vllm_custom_ops.machete_gemm(
+            lambda: vllm_custom_ops.machete_mm(
                 a=a,
                 b_q=w_q_machete,
                 b_type=weight_dtype_vllm,
-                b_scales=w_s,
-                b_zeros=None,
+                b_group_scales=w_s,
                 b_group_size=group_size,
             ),
             tag="Baseline",

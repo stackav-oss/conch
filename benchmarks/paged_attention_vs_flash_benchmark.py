@@ -10,7 +10,6 @@ import torch
 
 from conch import envs
 from conch.kernels.attention.paged_attention import MAX_NUM_SPLITS, paged_attention_launcher
-from conch.ops.attention.paged_attention import split_kv_cache
 from conch.platforms import current_platform
 from conch.third_party.vllm.utils import create_tensors
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
@@ -183,9 +182,6 @@ def main(
 
     alibi_slopes = None
 
-    kv_cache_conch = torch.vstack((key_cache_conch[None, :, :], value_cache_conch[None, :, :]))
-    key_cache_conch, value_cache_conch = split_kv_cache(kv_cache_conch, num_kv_heads, head_dim)
-
     # Create output tensors
     query_vllm = query.unsqueeze(1)
     output_conch = torch.empty_like(query)
@@ -194,6 +190,9 @@ def main(
     value_cache_vllm = value_cache_conch.permute(0, 2, 1, 3)
 
     softcap = 30.0
+    kv_cache_dtype = "auto"
+    k_scale = torch.full((1,), 1.0)
+    v_scale = torch.full((1,), 1.0)
 
     # Check accuracy match
     output_vllm = flash_attn_with_kvcache(
@@ -217,10 +216,13 @@ def main(
         value_cache_conch,
         output_scratchpad,
         lse_scratchpad,
-        scale,
         block_tables,
         seq_lens,
+        scale,
         softcap=softcap,
+        kv_cache_dtype=kv_cache_dtype,
+        k_scale=k_scale,
+        v_scale=v_scale,
     )
 
     if not torch.allclose(output_vllm, output_conch, atol=absolute_tolerance):
@@ -259,9 +261,13 @@ def main(
             value_cache_conch,
             output_scratchpad,
             lse_scratchpad,
-            scale,
             block_tables,
             seq_lens,
+            scale,
+            softcap,
+            kv_cache_dtype,
+            k_scale,
+            v_scale,
         ),
         tag="Triton",
         metadata=metadata,

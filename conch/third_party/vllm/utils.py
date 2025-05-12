@@ -137,12 +137,12 @@ def reshape_vllm_kvcache(
         value_cache_vllm: vLLM value cache, shape: (num_cache_blocks, num_kv_heads, head_size, cache_block_size).
 
     Returns:
-        Reshaped key and value caches as (num_cache_blocks, num_kv_heads * cache_block_size * head_size).
+        Reshaped key and value caches as (num_cache_blocks, num_kv_heads, cache_block_size, head_size).
     """
     num_cache_blocks, num_kv_heads, head_size, cache_block_size = value_cache_vllm.shape
 
-    k = key_cache_vllm.permute(0, 1, 3, 2, 4).reshape(num_cache_blocks, num_kv_heads * cache_block_size * head_size)
-    v = value_cache_vllm.permute(0, 1, 3, 2).reshape(num_cache_blocks, num_kv_heads * cache_block_size * head_size)
+    k = key_cache_vllm.permute(0, 1, 3, 2, 4).contiguous().reshape(num_cache_blocks, num_kv_heads, cache_block_size, head_size)
+    v = value_cache_vllm.permute(0, 1, 3, 2).contiguous().reshape(num_cache_blocks, num_kv_heads, cache_block_size, head_size)
 
     return k, v
 
