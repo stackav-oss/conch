@@ -503,6 +503,8 @@ def paged_attention_launcher(  # noqa: PLR0913
     if cxpr_apply_fp8_scaling:
         assert k_scale is not None  # noqa: S101
         assert v_scale is not None  # noqa: S101
+        assert k_scale.numel() == 1  # noqa: S101
+        assert k_scale.numel() == v_scale.numel()  # noqa: S101
         k_scale_scalar = k_scale.item()
         k_scale_scalar = v_scale.item()
 
