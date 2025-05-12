@@ -58,10 +58,7 @@ def _dequantize(quantized_tensor: torch.Tensor, inv_scale: float, dtype: torch.d
 )
 @click.option(
     "--verbose",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing verbose output",
 )
 @click.option(
@@ -73,10 +70,7 @@ def _dequantize(quantized_tensor: torch.Tensor, inv_scale: float, dtype: torch.d
 )
 @click.option(
     "--csv",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing results in CSV format",
 )
 def main(

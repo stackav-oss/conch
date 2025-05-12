@@ -87,26 +87,17 @@ def _is_floating_point_type(dtype: torch.dtype) -> bool:
 )
 @click.option(
     "--use-bias",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for adding a bias",
 )
 @click.option(
     "--use-scalar-scale-a",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for using scalar or vector for scale_a",
 )
 @click.option(
     "--use-scalar-scale-b",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for using scalar or vector for scale_b",
 )
 @click.option(
@@ -125,10 +116,7 @@ def _is_floating_point_type(dtype: torch.dtype) -> bool:
 )
 @click.option(
     "--verbose",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing verbose output",
 )
 @click.option(
@@ -140,10 +128,7 @@ def _is_floating_point_type(dtype: torch.dtype) -> bool:
 )
 @click.option(
     "--csv",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing results in CSV format",
 )
 def main(

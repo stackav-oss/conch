@@ -68,16 +68,11 @@ def _to_torch_dtype(dtype_str: str) -> torch.dtype:
 )
 @click.option(
     "--compress-statistics",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for double-quantization",
 )
 @click.option(
     "--enable-bnb",
-    required=False,
-    type=bool,
     is_flag=True,
     default=envs.CONCH_BENCH_ENABLE_ALL_REF,
     help="Flag to enable BNB reference impl",
@@ -98,10 +93,7 @@ def _to_torch_dtype(dtype_str: str) -> torch.dtype:
 )
 @click.option(
     "--verbose",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing verbose output",
 )
 @click.option(
@@ -113,10 +105,7 @@ def _to_torch_dtype(dtype_str: str) -> torch.dtype:
 )
 @click.option(
     "--csv",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing results in CSV format",
 )
 def main(  # noqa: PLR0913

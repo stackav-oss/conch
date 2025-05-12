@@ -44,10 +44,7 @@ _TABLE_OP_NAME_TO_BENCHMARK: Final = {
 )
 @click.option(
     "--use-cached-results",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag to use cached benchmark results if they exist",
 )
 def main(results_directory: Path, use_cached_results: bool) -> None:
