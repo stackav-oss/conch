@@ -17,7 +17,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 @click.command()
 @click.option(
-    "-s",
     "--embedding-size",
     required=False,
     type=int,
@@ -25,7 +24,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Embedding size",
 )
 @click.option(
-    "-t",
     "--num-tokens",
     required=False,
     type=int,
@@ -33,7 +31,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of tokens",
 )
 @click.option(
-    "-i",
     "--num-iterations",
     required=False,
     type=int,
@@ -41,7 +38,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of iterations",
 )
 @click.option(
-    "-w",
     "--num-warmup-iterations",
     required=False,
     type=int,
@@ -49,7 +45,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of warmup iterations",
 )
 @click.option(
-    "-a",
     "--absolute-tolerance",
     required=False,
     type=float,
@@ -57,7 +52,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Absolute tolerance to match with",
 )
 @click.option(
-    "-v",
     "--verbose",
     required=False,
     type=bool,
@@ -66,7 +60,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Flag for printing verbose output",
 )
 @click.option(
-    "-g",
     "--gpu",
     required=False,
     type=str,

@@ -24,7 +24,6 @@ else:
 
 @click.command()
 @click.option(
-    "-h",
     "--head-dim",
     required=True,
     type=int,
@@ -32,7 +31,6 @@ else:
     help="Head dimension",
 )
 @click.option(
-    "-s",
     "--seq-len",
     required=True,
     type=int,
@@ -40,7 +38,6 @@ else:
     help="Sequence length (for k/v)",
 )
 @click.option(
-    "-c",
     "--cache-block-size",
     required=True,
     type=int,
@@ -48,7 +45,6 @@ else:
     help="Number of KV vectors in each cache block",
 )
 @click.option(
-    "-b",
     "--batch-size",
     required=False,
     type=int,
@@ -56,7 +52,6 @@ else:
     help="Batch size",
 )
 @click.option(
-    "-h",
     "--num-query-heads",
     required=False,
     type=int,
@@ -64,7 +59,6 @@ else:
     help="Number of query heads",
 )
 @click.option(
-    "-k",
     "--num-kv-heads",
     required=False,
     type=int,
@@ -72,7 +66,6 @@ else:
     help="Number of kv heads",
 )
 @click.option(
-    "-d",
     "--kv-cache-dtype",
     required=False,
     type=click.Choice(["auto", "fp8", "fp8_e4m3"]),
@@ -80,7 +73,6 @@ else:
     help="Dtype of KV cache",
 )
 @click.option(
-    "-i",
     "--num-iterations",
     required=False,
     type=int,
@@ -88,7 +80,6 @@ else:
     help="Number of iterations",
 )
 @click.option(
-    "-w",
     "--num-warmup-iterations",
     required=False,
     type=int,
@@ -96,7 +87,6 @@ else:
     help="Number of warmup iterations",
 )
 @click.option(
-    "-a",
     "--absolute-tolerance",
     required=False,
     type=float,
@@ -104,7 +94,6 @@ else:
     help="Absolute tolerance to match with",
 )
 @click.option(
-    "-v",
     "--verbose",
     required=False,
     type=bool,
@@ -113,7 +102,6 @@ else:
     help="Flag for printing verbose output",
 )
 @click.option(
-    "-g",
     "--gpu",
     required=False,
     type=str,

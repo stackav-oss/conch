@@ -37,7 +37,6 @@ def _is_floating_point_type(dtype: torch.dtype) -> bool:
 
 @click.command()
 @click.option(
-    "-m",
     "--m-dim",
     required=True,
     type=int,
@@ -45,7 +44,6 @@ def _is_floating_point_type(dtype: torch.dtype) -> bool:
     help="1st dimension of A matrix (M x K)",
 )
 @click.option(
-    "-k",
     "--k-dim",
     required=True,
     type=int,
@@ -53,7 +51,6 @@ def _is_floating_point_type(dtype: torch.dtype) -> bool:
     help="Common dimension of A and B matrices (M x K) * (K * N)",
 )
 @click.option(
-    "-n",
     "--n-dim",
     required=True,
     type=int,
@@ -113,7 +110,6 @@ def _is_floating_point_type(dtype: torch.dtype) -> bool:
     help="Flag for using scalar or vector for scale_b",
 )
 @click.option(
-    "-i",
     "--num-iterations",
     required=False,
     type=int,
@@ -121,7 +117,6 @@ def _is_floating_point_type(dtype: torch.dtype) -> bool:
     help="Number of iterations",
 )
 @click.option(
-    "-w",
     "--num-warmup-iterations",
     required=False,
     type=int,
@@ -129,7 +124,6 @@ def _is_floating_point_type(dtype: torch.dtype) -> bool:
     help="Number of warmup iterations",
 )
 @click.option(
-    "-v",
     "--verbose",
     required=False,
     type=bool,
@@ -138,7 +132,6 @@ def _is_floating_point_type(dtype: torch.dtype) -> bool:
     help="Flag for printing verbose output",
 )
 @click.option(
-    "-g",
     "--gpu",
     required=False,
     type=str,

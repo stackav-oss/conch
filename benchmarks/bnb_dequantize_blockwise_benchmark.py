@@ -84,7 +84,6 @@ def _to_torch_dtype(dtype_str: str) -> torch.dtype:
     help="Flag to enable BNB reference impl",
 )
 @click.option(
-    "-i",
     "--num-iterations",
     required=False,
     type=int,
@@ -92,7 +91,6 @@ def _to_torch_dtype(dtype_str: str) -> torch.dtype:
     help="Number of iterations",
 )
 @click.option(
-    "-w",
     "--num-warmup-iterations",
     required=False,
     type=int,
@@ -100,7 +98,6 @@ def _to_torch_dtype(dtype_str: str) -> torch.dtype:
     help="Number of warmup iterations",
 )
 @click.option(
-    "-v",
     "--verbose",
     required=False,
     type=bool,
@@ -109,7 +106,6 @@ def _to_torch_dtype(dtype_str: str) -> torch.dtype:
     help="Flag for printing verbose output",
 )
 @click.option(
-    "-g",
     "--gpu",
     required=False,
     type=str,
