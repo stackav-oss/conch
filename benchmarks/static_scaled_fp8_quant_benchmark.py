@@ -22,7 +22,6 @@ def _dequantize(quantized_tensor: torch.Tensor, inv_scale: float, dtype: torch.d
 
 @click.command()
 @click.option(
-    "-h",
     "--hidden-size",
     required=True,
     type=int,
@@ -30,7 +29,6 @@ def _dequantize(quantized_tensor: torch.Tensor, inv_scale: float, dtype: torch.d
     help="Hidden dimension",
 )
 @click.option(
-    "-t",
     "--num-tokens",
     required=True,
     type=int,
@@ -38,7 +36,6 @@ def _dequantize(quantized_tensor: torch.Tensor, inv_scale: float, dtype: torch.d
     help="Number of tokens",
 )
 @click.option(
-    "-s",
     "--scale",
     required=True,
     type=float,
@@ -46,7 +43,6 @@ def _dequantize(quantized_tensor: torch.Tensor, inv_scale: float, dtype: torch.d
     help="Scaling arg",
 )
 @click.option(
-    "-i",
     "--num-iterations",
     required=False,
     type=int,
@@ -54,7 +50,6 @@ def _dequantize(quantized_tensor: torch.Tensor, inv_scale: float, dtype: torch.d
     help="Number of iterations",
 )
 @click.option(
-    "-w",
     "--num-warmup-iterations",
     required=False,
     type=int,
@@ -62,7 +57,6 @@ def _dequantize(quantized_tensor: torch.Tensor, inv_scale: float, dtype: torch.d
     help="Number of warmup iterations",
 )
 @click.option(
-    "-v",
     "--verbose",
     required=False,
     type=bool,
@@ -71,7 +65,6 @@ def _dequantize(quantized_tensor: torch.Tensor, inv_scale: float, dtype: torch.d
     help="Flag for printing verbose output",
 )
 @click.option(
-    "-g",
     "--gpu",
     required=False,
     type=str,

@@ -75,7 +75,6 @@ def _machete_quantize_and_pack(
 
 @click.command()
 @click.option(
-    "-m",
     "--m-dim",
     required=True,
     type=int,
@@ -83,7 +82,6 @@ def _machete_quantize_and_pack(
     help="1st dimension of A matrix (M x K)",
 )
 @click.option(
-    "-k",
     "--k-dim",
     required=True,
     type=int,
@@ -91,7 +89,6 @@ def _machete_quantize_and_pack(
     help="Common dimension of A and B matrices (M x K) * (K * N)",
 )
 @click.option(
-    "-n",
     "--n-dim",
     required=True,
     type=int,
@@ -121,7 +118,6 @@ def _machete_quantize_and_pack(
     help="Flag for enabling running Machete (only on H100)",
 )
 @click.option(
-    "-i",
     "--num-iterations",
     required=False,
     type=int,
@@ -129,7 +125,6 @@ def _machete_quantize_and_pack(
     help="Number of iterations",
 )
 @click.option(
-    "-w",
     "--num-warmup-iterations",
     required=False,
     type=int,
@@ -137,7 +132,6 @@ def _machete_quantize_and_pack(
     help="Number of warmup iterations",
 )
 @click.option(
-    "-v",
     "--verbose",
     required=False,
     type=bool,
@@ -146,7 +140,6 @@ def _machete_quantize_and_pack(
     help="Flag for printing verbose output",
 )
 @click.option(
-    "-g",
     "--gpu",
     required=False,
     type=str,
