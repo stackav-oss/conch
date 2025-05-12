@@ -60,10 +60,7 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 )
 @click.option(
     "--verbose",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing verbose output",
 )
 @click.option(
@@ -75,10 +72,7 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 )
 @click.option(
     "--csv",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag to output results in CSV format",
 )
 def main(

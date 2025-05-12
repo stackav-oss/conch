@@ -111,8 +111,6 @@ def _machete_quantize_and_pack(
 )
 @click.option(
     "--enable-machete",
-    required=False,
-    type=bool,
     is_flag=True,
     default=envs.CONCH_BENCH_ENABLE_ALL_REF,
     help="Flag for enabling running Machete (only on H100)",
@@ -133,10 +131,7 @@ def _machete_quantize_and_pack(
 )
 @click.option(
     "--verbose",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing verbose output",
 )
 @click.option(
@@ -148,10 +143,7 @@ def _machete_quantize_and_pack(
 )
 @click.option(
     "--csv",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing results in CSV format",
 )
 def main(

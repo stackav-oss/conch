@@ -65,18 +65,12 @@ else:
 )
 @click.option(
     "--causal",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag to toggle causal/non-causal attention",
 )
 @click.option(
     "--pure-decode",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for making all q_seqlens == 1",
 )
 @click.option(
@@ -102,10 +96,7 @@ else:
 )
 @click.option(
     "--verbose",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing verbose output",
 )
 @click.option(
@@ -117,10 +108,7 @@ else:
 )
 @click.option(
     "--csv",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing results in CSV format",
 )
 def main(
