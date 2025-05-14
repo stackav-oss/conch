@@ -15,7 +15,6 @@ from triton.language.extra import libdevice  # type: ignore[attr-defined]
 from conch.platforms import current_platform
 
 # The maximum number of stage 1 kernels to launch to split processing of the sequence
-# MAX_NUM_KV_SPLITS: Final = 4
 MAX_NUM_KV_SPLITS: Final = 4
 
 # Note: adding `bool` or `str` type annotations to these load/store helper functions doesn't work
@@ -189,6 +188,12 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # What is the first cache block index in the set for this split
     starting_cache_block_index = kv_split_index * num_cache_blocks_per_split
 
+    # We launch the same number of splits for all sequences in the batch, so different kernel launches will have different numbers of cache blocks
+    # to process. So we may have a case where one sequence in a batch has sufficiently fewer cache blocks to process such that a kernel doesn't have
+    # any blocks to process.
+    if starting_cache_block_index >= current_seq_num_cache_blocks:
+        return
+
     # Compute length of current sequence's query
     this_query_start = tl.load(cu_seqlens_q_ptr + batch_index)
     this_query_end = tl.load(cu_seqlens_q_ptr + batch_index + 1)
@@ -199,36 +204,10 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
     # Offset for how many tokens in query correspond to previous splits for this sequence
     this_query_split_offset = query_split_index * cxpr_query_chunk_size
-    # We launch the same number of splits for all sequences in the batch, so different kernel launches will have different numbers of cache blocks
-    # to process. So we may have a case where one sequence in a batch has sufficiently fewer cache blocks to process such that a kernel doesn't have
-    # any blocks to process.
-    if starting_cache_block_index >= current_seq_num_cache_blocks:
-        # print("Early exit! starting_cache_block_index >= current_seq_num_cache_blocks")
-        # if this_query_split_offset == 64:
-        #     print("EARLY: starting_cache_block_index >= current_seq_num_cache_blocks")
-        return
-
-    # Compute length of current sequence's query
-    # this_query_start = tl.load(cu_seqlens_q_ptr + batch_index)
-    # this_query_end = tl.load(cu_seqlens_q_ptr + batch_index + 1)
-    # this_query_length = this_query_end - this_query_start
-
-    # # If the query length is just one token, then we have a decode case
-    # is_pure_decode = this_query_length == 1
-
-    # # Offset for how many tokens in query correspond to previous splits for this sequence
-    # this_query_split_offset = query_split_index * cxpr_query_chunk_size
 
     # Similar to above, we launch the same number of splits for all sequences in the batch, so different kernel launches will have different
     # numbers of query tokens to process. If we've already processed all of the query tokens for this sequence, we can skip this kernel.
     if this_query_split_offset >= this_query_length:
-        # if split_index == 5:
-        #     print("Early exit! this_query_split_offset >= this_query_length")
-        #     print("query_split_index = ", query_split_index)
-        #     print("this_query_split_offset = ", this_query_split_offset)
-        #     print("this_query_length = ", this_query_length)
-        # if this_query_split_offset == 64:
-        #     print("EARLY: query_split_offset >= this_query_length... IMPOSSIBLE??")
         return
 
     if cxpr_is_causal and not is_pure_decode:
@@ -236,33 +215,14 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         beginning_seqlen_k = starting_cache_block_index * cxpr_cache_block_size
         # What is the last Q token in this block?
         end_seqlen_q = this_query_split_offset + cxpr_query_chunk_size
-        if end_seqlen_q < beginning_seqlen_k:
-            # if split_index == 5:
-            # if beginning_seqlen_k == 80:
-            #     print("Early causal exit! end_seqlen_q < beginning_seqlen_k")
-            #     print("end_seqlen_q = ", end_seqlen_q)
-            #     print("beginning_seqlen_k = ", beginning_seqlen_k)
-            #     print("query_split_index = ", query_split_index)
-            #     print("kv_split_index = ", kv_split_index)
-            # if this_query_split_offset == 64:
-            #     print("EARLY: end_seqlen_q < beginning_seqlen_k????")
-            #     print("end_seqlen_q = ", end_seqlen_q)
-            #     print("beginning_seqlen_k = ", beginning_seqlen_k)
-            return
-    else:
-        beginning_seqlen_k = 0
 
-    # if beginning_seqlen_k:
-    #     print("begin_seqlen_k = 80, this_query_split_offset = ", this_query_split_offset)
+        if end_seqlen_q < beginning_seqlen_k:
+            return
 
     # Offsets for each query vector in the group
     query_split_offsets = this_query_split_offset + tl.arange(0, cxpr_query_chunk_size)
     # Need to mask out if any of these tokens are out of bounds
     query_split_mask = query_split_offsets < this_query_length
-
-    # if split_index == 9:
-    # if this_query_split_offset == 64:
-    #     print("query_split_offsets = ", query_split_offsets)
 
     # How many previous sequences are there before this one?
     num_previous_sequences = tl.load(cu_seqlens_q_ptr + batch_index)
@@ -287,6 +247,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     needs_query_split_mask = (this_query_split_offset + cxpr_query_chunk_size) > this_query_length
     needs_head_mask = head_size != cxpr_head_size_padded
     needs_query_mask = needs_query_split_mask or needs_head_mask
+    needs_causal_mask = cxpr_is_causal and not is_pure_decode
 
     # Load queries
     query = _load(query_ptr + query_offsets, use_mask=needs_query_mask, mask=query_mask, other=0.0)
@@ -306,35 +267,16 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Keep running denominator of softmax
     l_i = tl.full([cxpr_query_chunk_size], 0.0, dtype=dtype)
 
-
     # Iterate through the cache blocks that this kernel is assigned to
     for cache_block_index in range(starting_cache_block_index, starting_cache_block_index + num_cache_blocks_per_split):
-    # for relative_cache_block_index in range(num_cache_blocks_per_split):
-    # for relative_cache_block_index in range(num_cache_blocks_per_split):
-        # cache_block_index = starting_cache_block_index + relative_cache_block_index
-
-        # if split_index == 9:
-        #     # print("relative_cache_block_index = ", relative_cache_block_index)
-        #     print("starting_cache_block_index = ", starting_cache_block_index)
-        #     print("cache_block_index = ", cache_block_index)
-        # # if beginning_seqlen_k == 80:
-        #     print("cache_block_index = ", cache_block_index)
         # If our cache block index is greater than or equal to the number of active cache blocks for the current sequence,
         # skip this block
         # Note: `break` / `continue` is unsupported in Triton, so we have to nest here
-        # if cache_block_index <= current_seq_num_cache_blocks:
         if cache_block_index < current_seq_num_cache_blocks:
             # Calculate number of entries in this cache block (will be a value between 1 and cache_block_size)
             num_entries_in_cache_block = min(
-                # current_sequence_length - ((cache_block_index - 1) * cxpr_cache_block_size), cxpr_cache_block_size
                 current_sequence_length - (cache_block_index * cxpr_cache_block_size), cxpr_cache_block_size
             )
-
-            # if split_index == 9:
-            #     # print("relative_cache_block_index = ", relative_cache_block_index)
-            #     print("starting_cache_block_index = ", starting_cache_block_index)
-            #     print("cache_block_index = ", cache_block_index)
-            #     print("num_entries_in_cache_block = ", num_entries_in_cache_block)
 
             needs_cache_block_mask = num_entries_in_cache_block != cxpr_cache_block_size
             needs_qk_mask = needs_query_split_mask or needs_cache_block_mask
@@ -380,59 +322,10 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             cache_block_mask = cache_block_offsets < num_entries_in_cache_block
             qk_mask = query_split_mask[:, None] & cache_block_mask[None, :]
 
-            # if kv_split_index == 1:
-            # if split_index == (total_num_splits - 1):
-            #     print("current_sequence_length = ", current_sequence_length)
-            #     print("this_query_split_offset = ", this_query_split_offset)
-            #     print("cache_block_index = ", cache_block_index)
-            #     print("num_entries_in_cache_block = ", num_entries_in_cache_block)
-            #     # print("query_split_mask = ", query_split_mask[:, None])
-            #     print("cache_block_mask = ", cache_block_mask[None, :])
-            #     # print("qk_mask = ", qk_mask)
-            # if batch_index == 3:
-            #     if query_head_index == 0:
-            #         if kv_split_index == 1:
-            #             if split_index == (total_num_splits - 1):
-            #                 # if cache_block_index == 17:
-            #                 if cache_block_index == 16:
-            #                     print("current_sequence_length = ", current_sequence_length)
-            #                     print("num_entries_in_cache_block = ", num_entries_in_cache_block)
-            #                     print("query_split_mask = ", query_split_mask[:, None])
-            #                     print("cache_block_mask = ", cache_block_mask[None, :])
-            #                     print("qk_mask = ", qk_mask)
-
-            needs_causal_mask = cxpr_is_causal and not is_pure_decode
-
             if needs_causal_mask:
-                # Causal mask
-                # effective_seqlen_k_offsets = (cache_block_index - 1) * cxpr_cache_block_size + cache_block_offsets
                 effective_seqlen_k_offsets = cache_block_index * cxpr_cache_block_size + cache_block_offsets
-                # if beginning_seqlen_k == 80:
-                #     print("effective_seqlen_k_offsets = ", effective_seqlen_k_offsets)
-                # causal_mask = query_split_offsets[:, None] >= effective_seqlen_k_offsets[None, :]
-                # causal_mask = query_split_offsets[:, None] < effective_seqlen_k_offsets[None, :]
                 causal_mask = query_split_offsets[:, None] >= effective_seqlen_k_offsets[None, :]
                 qk_mask = qk_mask & causal_mask
-
-                # if split_index == 9 and cache_block_index == 5:
-                #     print("query_split_offsets = ", query_split_offsets)
-                #     print("effective_seqlen_k_offsets = ", effective_seqlen_k_offsets)
-                #     print("query_split_mask = ", query_split_mask)
-                #     print("causal_mask = ", causal_mask)
-                #     print("qk_mask = ", qk_mask)
-
-                # if batch_index == 3:
-                #     if query_head_index == 0:
-                #         if kv_split_index == 1:
-                #             if split_index == (total_num_splits - 1):
-                #                 # if cache_block_index == 17:
-                #                 if cache_block_index == 16:
-                #                     print("effective_seqlen_k_offsets = ", effective_seqlen_k_offsets)
-                #                     print("query_split_offsets = ", query_split_offsets)
-                #                     print("query_split_mask = ", query_split_mask)
-                #                     print("causal_mask = ", causal_mask)
-                #                     print("qk_mask = ", qk_mask)
-                #     # print("qk_mask = ", qk_mask)
 
             if needs_qk_mask or needs_causal_mask:
                 # Set masked out elements to -inf
@@ -443,67 +336,22 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
                 # tanh can only accept fp32 or fp64 arguments
                 qk = (softcap * libdevice.tanh((qk / softcap).to(tl.float32))).to(dtype)
 
-            # if batch_index == 3:
-            #     if query_head_index == 0:
-            #         if kv_split_index == 1:
-            #             if split_index == (total_num_splits - 1):
-            #                 # if cache_block_index == 17:
-            #                 if cache_block_index == 16:
-            #                     print("qk = ", qk)
-
             # Reduce maximum between running max and the max of (scale * Q * K) for this cache block
             m_ij = tl.maximum(m_i, tl.max(qk, axis=1)).to(dtype)
-
-            # if batch_index == 3:
-            #     if query_head_index == 0:
-            #         if kv_split_index == 1:
-            #             if split_index == (total_num_splits - 1):
-            #                 # if cache_block_index == 17:
-            #                 if cache_block_index == 16:
-            #                     print("m_ij = ", m_ij)
 
             # Calculate numerator of softmax for this cache block
             p = tl.exp((qk - m_ij[:, None]).to(tl.float32)).to(dtype)
             # Need to mask out any elements that represent unused cache block entries or padding elements
             p = tl.where(qk_mask, p, 0.0).to(dtype)
 
-            # if batch_index == 3:
-            #     if query_head_index == 0:
-            #         if kv_split_index == 1:
-            #             if split_index == (total_num_splits - 1):
-            #                 # if cache_block_index == 17:
-            #                 if cache_block_index == 16:
-            #                     print("p = ", p)
-
             # Calculate sum of softmax numerator for this cache block
             l_ij = tl.sum(p, axis=1).to(dtype)
 
             # Calculate correction factor for this cache block
-            # if cxpr_is_causal:
-            #     alpha = tl.exp(tl.where(m_i > float("-inf"), m_i - m_ij, float("-inf")).to(tl.float32)).to(dtype)
-            # else:
             alpha = tl.exp((m_i - m_ij).to(tl.float32)).to(dtype)
-            # alpha = tl.exp(tl.where(m_i > float("-inf"), m_i - m_ij, float("-inf")).to(tl.float32)).to(dtype)
-
-            # if batch_index == 3:
-            #     if query_head_index == 0:
-            #         if kv_split_index == 1:
-            #             if split_index == (total_num_splits - 1):
-            #                 # if cache_block_index == 17:
-            #                 if cache_block_index == 16:
-            #                     print("alpha = ", alpha)
 
             # Apply scaling factor to running output
             output *= alpha[:, None]
-
-            # if batch_index == 3:
-            #     if query_head_index == 0:
-            #         if kv_split_index == 1:
-            #             if split_index == (total_num_splits - 1):
-            #                 # if cache_block_index == 17:
-            #                 if cache_block_index == 16:
-            #                     print("output = ", output)
-            #                     print("query_split_index = ", query_split_index)
 
             # Load the value block as (cache_block_size, cxpr_head_size_padded)
             value_block_ptr = tl.make_block_ptr(
@@ -537,11 +385,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             m_i = m_ij
             # Update running denominator
             l_i = l_i * alpha + l_ij
-    # else:
-    #     print("SKIPPING!")
-
-    # Avoid NaNs from dividing by zero
-    # l_i = tl.where(l_i > 0, l_i, 1.0).to(dtype)
 
     # Apply correction for denominator of these cache blocks
     output /= l_i[:, None]
@@ -655,8 +498,6 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     # Similar to above, we launch the same number of splits for all sequences in the batch, so different kernel launches will have different
     # numbers of query tokens to process. If we've already processed all of the query tokens for this sequence, we can skip this kernel.
     if this_query_split_offset >= this_query_length:
-        # if this_query_split_offset == 64:
-        #     print("HOW???")
         return
 
     # Accumulator for the output of this batch/head
@@ -671,6 +512,8 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
 
     # The length of the current sequence will tell us how many cache blocks we need to read
     current_seq_num_cache_blocks = tl.cdiv(current_sequence_length, cxpr_cache_block_size)
+
+    num_kv_splits_this_seq = tl.cdiv(current_seq_num_cache_blocks, num_cache_blocks_per_split)
 
     # Offset for how many tokens in query correspond to other sequences
     num_previous_sequences = tl.load(cu_seqlens_q_ptr + batch_index)
@@ -690,69 +533,19 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     needs_query_split_mask = (this_query_split_offset + cxpr_query_chunk_size) > this_query_length
     needs_head_mask = head_size != cxpr_head_size_padded
     needs_query_mask = needs_query_split_mask or needs_head_mask
-
-    num_kv_splits_this_seq = tl.cdiv(current_seq_num_cache_blocks, num_cache_blocks_per_split)
-
-    num_iterations = 0
-
-    # if batch_index == 3:
-    #     if query_split_index == 8:
-    #         if query_head_index == 0:
-    #             print("this_query_split_offset = ", this_query_split_offset)
-    #             print("current_seq_num_cache_blocks = ", current_seq_num_cache_blocks)
-    #             print("num_cache_blocks_per_split = ", num_cache_blocks_per_split)
-    #             print("num_kv_splits_this_seq = ", num_kv_splits_this_seq)
-    #             print("query_split_mask = ", query_split_mask)
-
-
-
-    """
-    JACOB:
-
-    for non-causal cases, all q attend to all KV.
-    For decode cases, Q attends to everything in KV.
-
-    For causal cases.
-    We only want to consider splits where the queries attended to the KV cache blocks in that split.
-    So, if our query split only includes the first 10 tokens but the split starts at KV=80, then we don't need to consider it.
-    I think we need some masking here.
-
-    For instance:
-    this_query_split_offset = 64
-    this_query_split_indices = 64 + (0, 32)
-    beginning_seqlen_k = 80
-
-    causal mask:
-    [False, False, False, ... /*query_index==80*/True, True, True]
-    """
-
     needs_causal_mask = cxpr_is_causal and not is_pure_decode
 
     # Iterate through every cache block for the current sequence
     for kv_split_index in range(num_kv_splits_this_seq):
-        beginning_seqlen_k = kv_split_index * num_cache_blocks_per_split * cxpr_cache_block_size
-        # if query_split_index == 2:
-        #     print("beginning_seqlen_k = ", beginning_seqlen_k)
-        #     print("this_query_split_offset = ", this_query_split_offset)
-
-        # effective_seqlen_k = kv_split_index * num_cache_blocks_per_split * cxpr_cache_block_size
-        # if ((effective_seqlen_k <= this_query_split_offset) or not cxpr_is_causal) or is_pure_decode:
-        # if batch_index == 3:
-        #     if query_split_index == 8:
-        #         if query_head_index == 0:
-        #             print("effective_seqlen_k = ", effective_seqlen_k)
-        # if ((effective_seqlen_k <= this_query_split_offset) or not cxpr_is_causal) or is_pure_decode:
-        # if ((beginning_seqlen_k <= this_query_split_offset) or not cxpr_is_causal) or is_pure_decode:
         consider_split = not cxpr_is_causal or is_pure_decode
-        if needs_causal_mask:
-            consider_split = this_query_split_offset + cxpr_query_chunk_size >= beginning_seqlen_k
-        # if ((this_query_split_offset + cxpr_query_chunk_size >= beginning_seqlen_k) or not cxpr_is_causal) or is_pure_decode:
-        if consider_split:
-        # if True:
-            # if query_split_index == 2:
-            #     print("WENT FOR IT: ", beginning_seqlen_k)
-            num_iterations += 1
 
+        beginning_seqlen_k = 0
+
+        if needs_causal_mask:
+            beginning_seqlen_k = kv_split_index * num_cache_blocks_per_split * cxpr_cache_block_size
+            consider_split = this_query_split_offset + cxpr_query_chunk_size >= beginning_seqlen_k
+
+        if consider_split:
             # Calculate offsets to load the scratch for this head/batch/split
             # 2D block of shape (query_group_size_padded, head_size_padded)
             output_scratchpad_offsets = (
@@ -763,59 +556,23 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
                 + head_offsets[None, :]
             )
 
-            # needs_causal_mask = cxpr_is_causal and not is_pure_decode
-
-            if not needs_causal_mask:
-                beginning_seqlen_k = 0
-
             this_query_split_mask = query_split_offsets >= beginning_seqlen_k
             this_query_mask = this_query_split_mask[:, None] & head_mask[None, :]
 
-            needs_this_query_mask = needs_head_mask
-            # needs_this_query_split_mask = needs_causal_mask
             needs_this_query_split_mask = False
+            needs_this_query_mask = needs_head_mask
 
             if needs_causal_mask:
                 needs_this_query_split_mask = (this_query_split_offset + cxpr_query_chunk_size) >= beginning_seqlen_k
                 needs_this_query_mask = needs_this_query_mask or needs_this_query_split_mask
-                # needs_this_query_split_mask = needs_this_query_split_mask and cxpr_is_causal
-                # needs_this_query_mask = needs_this_query_split_mask or needs_head_mask
-                # needs_this_query_split_mask = needs_this_query_split_mask and not is_pure_decode
-
-            # if needs_causal_mask:
-            #     # Causal mask
-            #     # end_k: tl.constexpr = cxpr_cache_block_size * num_cache_blocks_per_split
-            #     # effective_seqlen_k_offsets = kv_split_index * num_cache_blocks_per_split * cxpr_cache_block_size + tl.arange(0, cxpr_cache_block_size * num_cache_blocks_per_split)
-            #     # effective_seqlen_k_offsets = kv_split_index * num_cache_blocks_per_split * cxpr_cache_block_size + tl.arange(0, cxpr_split_size)
-            #     effective_seqlen_k_offsets = kv_split_index * num_cache_blocks_per_split * cxpr_cache_block_size + tl.arange(0, cxpr_cache_block_size)
-            #     causal_mask = query_split_offsets[:, None] >= effective_seqlen_k_offsets[None, :]
-            #     query_mask = query_mask & causal_mask
-            #     if query_split_index == 2:
-            #         print("causal_mask = ", causal_mask)
-            #         print("query_mask = ", query_mask)
-            #         print("output_scratchpad_offsets = ", output_scratchpad_offsets)
-
-            # if query_split_index == 2:
-            #     print("this_query_mask = ", this_query_mask)
 
             # Load output for this cache block, shape -> (cxpr_query_chunk_size, cxpr_head_size_padded)
             block_output = _load(
                 output_scratchpad_ptr + output_scratchpad_offsets,
-                # use_mask=(needs_query_mask or needs_causal_mask),
-                # use_mask=needs_query_mask,
                 use_mask=needs_this_query_mask,
-                # mask=query_mask,
                 mask=this_query_mask,
                 other=0.0,
             )
-
-            # if query_split_index == 2:
-            #     print("block_output = ", block_output)
-
-            # if batch_index == 3:
-            #     if query_split_index == 8:
-            #         if query_head_index == 0:
-            #             print("block_output = ", block_output)
 
             # Calculate offsets to load log-sum-exp for this head/batch/cache block
             lse_scratchpad_offsets = (
@@ -825,74 +582,27 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
                 + query_head_index
             )
 
-            # if query_split_index == 2:
-            #     print("this_query_split_mask = ", this_query_split_mask)
-
             # Load log-sum-exp for this cache block, shape -> (cxpr_query_chunk_size,)
             block_lse = _load(
                 lse_scratchpad_ptr + lse_scratchpad_offsets,
                 use_mask=needs_this_query_split_mask,
-                # TODO(jmanning): Is this mask correct? might not want to consider if causal mask is not applting?
-                # mask=query_split_mask,
                 mask=this_query_split_mask,
                 other=float("-inf"),
             )
 
-            # if query_split_index == 2:
-            #     print("block_lse = ", block_lse)
-
-            # if batch_index == 3:
-            #     if query_split_index == 8:
-            #         if query_head_index == 0:
-            #             print("block_lse = ", block_lse)
-
-            # if batch_index == 3:
-            #     if query_split_index == 8:
-            #         if query_head_index == 0:
-            #             print("m_i = ", m_i)
-
             # Reduce running max lse
             m_ij = tl.maximum(m_i, block_lse).to(dtype)
 
-            # if query_split_index == 2:
-            #     print("m_ij = ", m_ij)
-
             # Calculate correction factor from previous cache blocks
             # Note: exp() only accepts fp32/fp64 arguments
-            # alpha = tl.exp((m_i - m_ij).to(tl.float32)).to(dtype)
-            # if cxpr_is_causal:
-            #     alpha = tl.exp(tl.where(m_i > float("-inf"), m_i - m_ij, float("-inf")).to(tl.float32)).to(dtype)
-            # else:
-            #     alpha = tl.exp((m_i - m_ij).to(tl.float32)).to(dtype)
             alpha = tl.exp((m_i - m_ij).to(tl.float32)).to(dtype)
-            # alpha = tl.exp(tl.where(m_i > float("-inf"), m_i - m_ij, float("-inf")).to(tl.float32)).to(dtype)
-
-            # if query_split_index == 2:
-            #     print("alpha = ", alpha)
-
-            # if batch_index == 3:
-            #     if query_split_index == 8:
-            #         if query_head_index == 0:
-            #             print("alpha = ", alpha)
 
             # Apply correction factor
             output *= alpha[:, None]
 
-            # if query_split_index == 2:
-            #     print("output = ", output)
-
-            # output = tl.where(query_mask, output, 0.0).to(dtype)
-
             # Calculate correction factor from this cache block
             # Note: exp() only accepts fp32/fp64 arguments
-            # beta = tl.exp((block_lse - m_ij).to(tl.float32)).to(dtype)
-            # beta = tl.exp((block_lse - m_ij).to(tl.float32)).to(dtype)
-            # if cxpr_is_causal:
-            #     beta = tl.exp(tl.where(block_lse > float("-inf"), block_lse - m_ij, float("-inf")).to(tl.float32)).to(dtype)
-            # else:
-            #     beta = tl.exp((block_lse - m_ij).to(tl.float32)).to(dtype)
             beta = tl.exp((block_lse - m_ij).to(tl.float32)).to(dtype)
-            # beta = tl.exp(tl.where(block_lse > float("-inf"), block_lse - m_ij, float("-inf")).to(tl.float32)).to(dtype)
 
             # Apply second correction factor and accumulate running output
             output += (beta[:, None] * block_output).to(dtype)
@@ -901,30 +611,9 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
             m_i = m_ij
             # Update running final scale factor
             l_i = l_i * alpha + beta
-        # else:
-        #     if query_split_index == 2:
-        #         print("SKPPED: beginning_seqlen_k = ", beginning_seqlen_k)
-
-    # if this_query_split_offset == 64:
-    #     print("num_iterations = ", num_iterations)
-
-    # if batch_index == 3:
-    #     if query_split_index == 8:
-    #         if query_head_index == 0:
-    #             print("output = ", output)
-    #             print("l_i = ", l_i)
-
-    # Avoid NaNs from dividing by zero
-    # l_i = tl.where(l_i > 0, l_i, 1.0).to(dtype)
 
     # Apply final correction to output
     output /= l_i[:, None]
-
-    # if batch_index == 3:
-    #     if query_split_index == 8:
-    #         if query_head_index == 0:
-    #             print("final output = ", output)
-    #             print("query_mask = ", query_mask)
 
     # Calculate offsets to store the output for this head/batch
     output_offsets = (
@@ -1040,8 +729,6 @@ def varlen_attention_launcher(  # noqa: PLR0913
     # Note: we may need to tune this value for a given HW platform.
     num_kv_splits = min(max_num_blocks_per_sequence, MAX_NUM_KV_SPLITS)
 
-    # print(f"{num_kv_splits = }")
-
     # Different platforms may require different query chunk sizes
     tuning_parameters = _get_tuning_parameters()
     query_chunk_size_stage1 = tuning_parameters["query_chunk_size_stage1"]
@@ -1052,8 +739,6 @@ def varlen_attention_launcher(  # noqa: PLR0913
 
     # How many cache blocks will each kernel process?
     num_cache_blocks_per_split = triton.cdiv(max_num_blocks_per_sequence, num_kv_splits)
-
-    # print(f"{num_cache_blocks_per_split = }")
 
     # Use default scaling factor if not provided
     if scale is None:
@@ -1143,5 +828,4 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_cache_block_size=cxpr_cache_block_size,
         cxpr_head_size_padded=cxpr_head_size_padded,
         cxpr_is_causal=causal,
-        # cxpr_split_size_padded=triton.next_power_of_2(cxpr_cache_block_size * num_cache_blocks_per_split),
     )
