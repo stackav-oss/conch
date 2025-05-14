@@ -15,24 +15,21 @@ from conch.third_party.vllm.utils import create_tensors, seed_everything
 _ENABLE_VLLM: Final = envs.CONCH_ENABLE_VLLM and current_platform.has_cuda()
 _HEAD_SIZES: Final = [64, 96, 128, 256]
 _NUM_SEQS_ABRIDGED: Final = [4, 10]
-# # MHA, MQA, and GQA
-# # - MHA: num_query_heads == num_kv_heads
-# # - MQA: num_kv_heads == 1
-# # - GQA: num_query_heads != num_kv_heads && num_kv_heads != 1
+# MHA, MQA, and GQA
+# - MHA: num_query_heads == num_kv_heads
+# - MQA: num_kv_heads == 1
+# - GQA: num_query_heads != num_kv_heads && num_kv_heads != 1
 _NUM_HEADS_ABRIDGED: Final = [(8, 8), (4, 1), (16, 4)]
-_SEQUENCE_LENGTHS: Final = [240, 343, 1024]
+_SEQUENCE_LENGTHS: Final = [256, 257, 343, 1024, 1025]
 
 
 def _get_tolerance_for_dtype(dtype: torch.dtype) -> float:
     """Get expected tolerance to match to for a given dtype."""
     if dtype == torch.float16:
-        return 5e-3
+        return 5e-4
 
     if dtype == torch.bfloat16:
-        return 3e-2
-
-    if dtype == torch.float32:
-        return 2e-3
+        return 1e-3
 
     msg = f"Unsupported dtype: '{dtype}'"
     raise NotImplementedError(msg)
