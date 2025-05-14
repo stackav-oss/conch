@@ -726,6 +726,8 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     [False, False, False, ... /*query_index==80*/True, True, True]
     """
 
+    needs_causal_mask = cxpr_is_causal and not is_pure_decode
+
     # Iterate through every cache block for the current sequence
     for kv_split_index in range(num_kv_splits_this_seq):
         beginning_seqlen_k = kv_split_index * num_cache_blocks_per_split * cxpr_cache_block_size
@@ -741,7 +743,11 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
         #             print("effective_seqlen_k = ", effective_seqlen_k)
         # if ((effective_seqlen_k <= this_query_split_offset) or not cxpr_is_causal) or is_pure_decode:
         # if ((beginning_seqlen_k <= this_query_split_offset) or not cxpr_is_causal) or is_pure_decode:
-        if ((this_query_split_offset + cxpr_query_chunk_size >= beginning_seqlen_k) or not cxpr_is_causal) or is_pure_decode:
+        consider_split = not cxpr_is_causal or is_pure_decode
+        if needs_causal_mask:
+            consider_split = this_query_split_offset + cxpr_query_chunk_size >= beginning_seqlen_k
+        # if ((this_query_split_offset + cxpr_query_chunk_size >= beginning_seqlen_k) or not cxpr_is_causal) or is_pure_decode:
+        if consider_split:
         # if True:
             # if query_split_index == 2:
             #     print("WENT FOR IT: ", beginning_seqlen_k)
@@ -757,14 +763,24 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
                 + head_offsets[None, :]
             )
 
+            # needs_causal_mask = cxpr_is_causal and not is_pure_decode
+
+            if not needs_causal_mask:
+                beginning_seqlen_k = 0
+
             this_query_split_mask = query_split_offsets >= beginning_seqlen_k
             this_query_mask = this_query_split_mask[:, None] & head_mask[None, :]
 
-            needs_this_query_split_mask = (this_query_split_offset + cxpr_query_chunk_size) >= beginning_seqlen_k
-            needs_this_query_split_mask = needs_this_query_split_mask and cxpr_is_causal
-            needs_this_query_mask = needs_this_query_split_mask or needs_head_mask
+            needs_this_query_mask = needs_head_mask
+            # needs_this_query_split_mask = needs_causal_mask
+            needs_this_query_split_mask = False
 
-            # needs_causal_mask = cxpr_is_causal and not is_pure_decode
+            if needs_causal_mask:
+                needs_this_query_split_mask = (this_query_split_offset + cxpr_query_chunk_size) >= beginning_seqlen_k
+                needs_this_query_mask = needs_this_query_mask or needs_this_query_split_mask
+                # needs_this_query_split_mask = needs_this_query_split_mask and cxpr_is_causal
+                # needs_this_query_mask = needs_this_query_split_mask or needs_head_mask
+                # needs_this_query_split_mask = needs_this_query_split_mask and not is_pure_decode
 
             # if needs_causal_mask:
             #     # Causal mask
@@ -779,8 +795,8 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
             #         print("query_mask = ", query_mask)
             #         print("output_scratchpad_offsets = ", output_scratchpad_offsets)
 
-            if query_split_index == 2:
-                print("this_query_mask = ", this_query_mask)
+            # if query_split_index == 2:
+            #     print("this_query_mask = ", this_query_mask)
 
             # Load output for this cache block, shape -> (cxpr_query_chunk_size, cxpr_head_size_padded)
             block_output = _load(
@@ -793,8 +809,8 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
                 other=0.0,
             )
 
-            if query_split_index == 2:
-                print("block_output = ", block_output)
+            # if query_split_index == 2:
+            #     print("block_output = ", block_output)
 
             # if batch_index == 3:
             #     if query_split_index == 8:
@@ -809,8 +825,8 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
                 + query_head_index
             )
 
-            if query_split_index == 2:
-                print("this_query_split_mask = ", this_query_split_mask)
+            # if query_split_index == 2:
+            #     print("this_query_split_mask = ", this_query_split_mask)
 
             # Load log-sum-exp for this cache block, shape -> (cxpr_query_chunk_size,)
             block_lse = _load(
@@ -822,8 +838,8 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
                 other=float("-inf"),
             )
 
-            if query_split_index == 2:
-                print("block_lse = ", block_lse)
+            # if query_split_index == 2:
+            #     print("block_lse = ", block_lse)
 
             # if batch_index == 3:
             #     if query_split_index == 8:
@@ -838,8 +854,8 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
             # Reduce running max lse
             m_ij = tl.maximum(m_i, block_lse).to(dtype)
 
-            if query_split_index == 2:
-                print("m_ij = ", m_ij)
+            # if query_split_index == 2:
+            #     print("m_ij = ", m_ij)
 
             # Calculate correction factor from previous cache blocks
             # Note: exp() only accepts fp32/fp64 arguments
@@ -851,8 +867,8 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
             alpha = tl.exp((m_i - m_ij).to(tl.float32)).to(dtype)
             # alpha = tl.exp(tl.where(m_i > float("-inf"), m_i - m_ij, float("-inf")).to(tl.float32)).to(dtype)
 
-            if query_split_index == 2:
-                print("alpha = ", alpha)
+            # if query_split_index == 2:
+            #     print("alpha = ", alpha)
 
             # if batch_index == 3:
             #     if query_split_index == 8:
@@ -862,8 +878,8 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
             # Apply correction factor
             output *= alpha[:, None]
 
-            if query_split_index == 2:
-                print("output = ", output)
+            # if query_split_index == 2:
+            #     print("output = ", output)
 
             # output = tl.where(query_mask, output, 0.0).to(dtype)
 
@@ -889,8 +905,8 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
         #     if query_split_index == 2:
         #         print("SKPPED: beginning_seqlen_k = ", beginning_seqlen_k)
 
-    if this_query_split_offset == 64:
-        print("num_iterations = ", num_iterations)
+    # if this_query_split_offset == 64:
+    #     print("num_iterations = ", num_iterations)
 
     # if batch_index == 3:
     #     if query_split_index == 8:
@@ -1024,7 +1040,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
     # Note: we may need to tune this value for a given HW platform.
     num_kv_splits = min(max_num_blocks_per_sequence, MAX_NUM_KV_SPLITS)
 
-    print(f"{num_kv_splits = }")
+    # print(f"{num_kv_splits = }")
 
     # Different platforms may require different query chunk sizes
     tuning_parameters = _get_tuning_parameters()
@@ -1037,7 +1053,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
     # How many cache blocks will each kernel process?
     num_cache_blocks_per_split = triton.cdiv(max_num_blocks_per_sequence, num_kv_splits)
 
-    print(f"{num_cache_blocks_per_split = }")
+    # print(f"{num_cache_blocks_per_split = }")
 
     # Use default scaling factor if not provided
     if scale is None:

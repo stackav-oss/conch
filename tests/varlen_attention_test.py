@@ -13,9 +13,9 @@ from conch.platforms import current_platform
 from conch.third_party.vllm.utils import create_tensors, seed_everything
 
 _ENABLE_VLLM: Final = envs.CONCH_ENABLE_VLLM and current_platform.has_cuda()
-# _HEAD_SIZES: Final = [64, 96, 128, 256]
+_HEAD_SIZES: Final = [64, 96, 128, 256]
 # _HEAD_SIZES: Final = [64]
-_HEAD_SIZES: Final = [32]
+# _HEAD_SIZES: Final = [32]
 _NUM_SEQS_ABRIDGED: Final = [1]
 # _NUM_SEQS_ABRIDGED: Final = [4, 10]
 #_NUM_SEQS_ABRIDGED: Final = [4]
@@ -23,9 +23,9 @@ _NUM_SEQS_ABRIDGED: Final = [1]
 # # - MHA: num_query_heads == num_kv_heads
 # # - MQA: num_kv_heads == 1
 # # - GQA: num_query_heads != num_kv_heads && num_kv_heads != 1
-# _NUM_HEADS_ABRIDGED: Final = [(8, 8), (4, 1), (16, 4)]
+_NUM_HEADS_ABRIDGED: Final = [(8, 8), (4, 1), (16, 4)]
 # _NUM_HEADS_ABRIDGED: Final = [(4, 1)]
-_NUM_HEADS_ABRIDGED: Final = [(1, 1)]
+# _NUM_HEADS_ABRIDGED: Final = [(1, 1)]
 # _SEQUENCE_LENGTHS: Final = [240, 343, 1024]
 #_SEQUENCE_LENGTHS: Final = [257, 240, 343, 1024]
 # _SEQUENCE_LENGTHS: Final = [257]
@@ -231,8 +231,8 @@ def _varlen_attention_pytorch(
 # @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize("dtype", [torch.float16])
 @pytest.mark.parametrize("sequence_length", _SEQUENCE_LENGTHS)
-# @pytest.mark.parametrize("causal", [True, False])
-@pytest.mark.parametrize("causal", [True])
+@pytest.mark.parametrize("causal", [True, False])
+# @pytest.mark.parametrize("causal", [True])
 def test_varlen_attention_vs_pytorch(
     num_seqs: int,
     head_size: int,
@@ -283,7 +283,7 @@ def test_varlen_attention_vs_pytorch(
     total_num_q = int(cu_seqlens_q[-1].item())
     total_num_k = int(cu_seqlens_k[-1].item())
 
-    print(f"{seq_lens = }")
+    # print(f"{seq_lens = }")
 
     key_contiguous, value_contiguous = _convert_paged_to_contiguous(
         key_cache_conch,
@@ -433,7 +433,7 @@ def test_varlen_attention_vs_flash_attn(
         max_seqlen_q = int(torch.max(seq_lens).item())
         max_seqlen_k = int(max_seqlen_q)
 
-    print(f"{seq_lens = }")
+    # print(f"{seq_lens = }")
 
     key_cache_fa = key_cache_conch.permute(0, 2, 1, 3)
     value_cache_fa = value_cache_conch.permute(0, 2, 1, 3)
