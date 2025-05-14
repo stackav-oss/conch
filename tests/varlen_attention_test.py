@@ -14,24 +14,13 @@ from conch.third_party.vllm.utils import create_tensors, seed_everything
 
 _ENABLE_VLLM: Final = envs.CONCH_ENABLE_VLLM and current_platform.has_cuda()
 _HEAD_SIZES: Final = [64, 96, 128, 256]
-# _HEAD_SIZES: Final = [64]
-# _HEAD_SIZES: Final = [32]
-_NUM_SEQS_ABRIDGED: Final = [1]
-# _NUM_SEQS_ABRIDGED: Final = [4, 10]
-#_NUM_SEQS_ABRIDGED: Final = [4]
+_NUM_SEQS_ABRIDGED: Final = [4, 10]
 # # MHA, MQA, and GQA
 # # - MHA: num_query_heads == num_kv_heads
 # # - MQA: num_kv_heads == 1
 # # - GQA: num_query_heads != num_kv_heads && num_kv_heads != 1
 _NUM_HEADS_ABRIDGED: Final = [(8, 8), (4, 1), (16, 4)]
-# _NUM_HEADS_ABRIDGED: Final = [(4, 1)]
-# _NUM_HEADS_ABRIDGED: Final = [(1, 1)]
-# _SEQUENCE_LENGTHS: Final = [240, 343, 1024]
-#_SEQUENCE_LENGTHS: Final = [257, 240, 343, 1024]
-# _SEQUENCE_LENGTHS: Final = [257]
-_SEQUENCE_LENGTHS: Final = [256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 343, 344, 1024, 1025]
-# _SEQUENCE_LENGTHS: Final = [257]
-# _SEQUENCE_LENGTHS: Final = [256]
+_SEQUENCE_LENGTHS: Final = [256, 257, 343, 1024, 1025]
 
 
 def _get_tolerance_for_dtype(dtype: torch.dtype) -> float:
@@ -228,11 +217,9 @@ def _varlen_attention_pytorch(
 @pytest.mark.parametrize("num_seqs", _NUM_SEQS_ABRIDGED)
 @pytest.mark.parametrize("head_size", _HEAD_SIZES)
 @pytest.mark.parametrize(("num_query_heads", "num_kv_heads"), _NUM_HEADS_ABRIDGED)
-# @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize("dtype", [torch.float16])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize("sequence_length", _SEQUENCE_LENGTHS)
 @pytest.mark.parametrize("causal", [True, False])
-# @pytest.mark.parametrize("causal", [True])
 def test_varlen_attention_vs_pytorch(
     num_seqs: int,
     head_size: int,
@@ -283,8 +270,6 @@ def test_varlen_attention_vs_pytorch(
     total_num_q = int(cu_seqlens_q[-1].item())
     total_num_k = int(cu_seqlens_k[-1].item())
 
-    # print(f"{seq_lens = }")
-
     key_contiguous, value_contiguous = _convert_paged_to_contiguous(
         key_cache_conch,
         value_cache_conch,
@@ -325,40 +310,6 @@ def test_varlen_attention_vs_pytorch(
         scale=scale,
         softcap=softcap,
     )
-
-    for i in range(total_num_q):
-        pytorch_i = pytorch_output[i, :, :]
-        conch_i = conch_output[i, :, :]
-
-        if not torch.allclose(pytorch_i, conch_i, atol=tolerance, rtol=tolerance):
-            print(f"{i = }")
-            print(f"{pytorch_i = }")
-            print(f"{conch_i = }")
-
-    # print(f"{pytorch_output = }")
-    # print(f"{conch_output = }")
-    # print(f"{pytorch_output[150, :, :] = }")
-    # print(f"{conch_output[150, :, :] = }")
-    # torch.testing.assert_close(pytorch_output[150, :, :], conch_output[150, :, :], atol=tolerance, rtol=tolerance)
-    # print(f"{pytorch_output[151, :, :] = }")
-    # print(f"{conch_output[151, :, :] = }")
-    # torch.testing.assert_close(pytorch_output[151, :, :], conch_output[151, :, :], atol=tolerance, rtol=tolerance)
-    # print(f"{pytorch_output[152, :, :] = }")
-    # print(f"{conch_output[152, :, :] = }")
-    # print(f"{pytorch_output[153, :, :] = }")
-    # print(f"{conch_output[153, :, :] = }")
-    # print(f"{pytorch_output[154, :, :] = }")
-    # print(f"{conch_output[154, :, :] = }")
-    # print(f"{pytorch_output[155, :, :] = }")
-    # print(f"{conch_output[155, :, :] = }")
-    # print(f"{pytorch_output[156, :, :] = }")
-    # print(f"{conch_output[156, :, :] = }")
-    # print(f"{pytorch_output[157, :, :] = }")
-    # print(f"{conch_output[157, :, :] = }")
-    # print(f"{pytorch_output[158, :, :] = }")
-    # print(f"{conch_output[158, :, :] = }")
-    # print(f"{pytorch_output[159, :, :] = }")
-    # print(f"{conch_output[159, :, :] = }")
 
     torch.testing.assert_close(pytorch_output, conch_output, atol=tolerance, rtol=tolerance)
 
@@ -432,8 +383,6 @@ def test_varlen_attention_vs_flash_attn(
 
         max_seqlen_q = int(torch.max(seq_lens).item())
         max_seqlen_k = int(max_seqlen_q)
-
-    # print(f"{seq_lens = }")
 
     key_cache_fa = key_cache_conch.permute(0, 2, 1, 3)
     value_cache_fa = value_cache_conch.permute(0, 2, 1, 3)
