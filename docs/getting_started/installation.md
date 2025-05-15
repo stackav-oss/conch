@@ -17,25 +17,28 @@ pip install -e .
 
 ## As wheel
 
-### Nvidia/CUDA
-
-For Nvidia/CUDA platforms you can install `conch` from PyPi via:
+You can install `conch` from PyPi via:
 
 ```bash
 pip install conch-triton-kernels
 ```
 
-### AMD/ROCm
+**Note**: by default, without any extras specified, **this will not install `torch` or `triton`**.
+This allows usage of Conch as long as Torch and Triton are already installed in your environment.
 
-For AMD/ROCm, we do not currently have a wheel on PyPi, but you can easily build one.
-After cloning the Conch repo, run this command from the repository root:
+### Nvidia/CUDA
+
+For Nvidia/CUDA platforms, you can specify the `[cuda]` extra to install `torch` and `triton` for Nvidia/CUDA platforms.
 
 ```bash
-./scripts/wheel/build.sh rocm
+pip install "conch-triton-kernels[cuda]"
 ```
 
-The resulting wheel file will be generated under `dist/rocm/`.
+### AMD/ROCm
+
+For AMD/ROCm platforms, you can specify the `[rocm]` extra to install `torch` and `triton` for AMD/ROCm platforms.
+You must also specify the appropriate `--extra-index-url`.
 
 ```bash
-pip install dist/rocm/conch_triton_kernels-{version}-py3-none-any.whl
+pip install "conch-triton-kernels[rocm]" --extra-index-url https://download.pytorch.org/whl/rocm6.3
 ```
