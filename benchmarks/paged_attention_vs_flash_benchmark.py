@@ -15,9 +15,11 @@ from conch.third_party.vllm.utils import create_tensors
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.is_nvidia():
-    from vllm.vllm_flash_attn import flash_attn_with_kvcache  # type: ignore[attr-defined, unused-ignore]
+    from vllm.vllm_flash_attn import (  # type: ignore[attr-defined, import-not-found, import-untyped, unused-ignore]  # isort:skip
+        flash_attn_with_kvcache,
+    )
 else:
-    flash_attn_with_kvcache = None  # type: ignore[assignment]
+    flash_attn_with_kvcache = None  # type: ignore[assignment, unused-ignore]
 
 
 @click.command()
