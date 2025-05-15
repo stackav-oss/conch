@@ -11,6 +11,7 @@ import torch
 from conch import envs
 from conch.ops.attention.varlen_attention import varlen_attention
 from conch.platforms import current_platform
+from conch.third_party.vllm.unified_attention import unified_attention
 from conch.third_party.vllm.utils import create_tensors, seed_everything
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
@@ -22,7 +23,6 @@ else:
 
 @click.command()
 @click.option(
-    "-h",
     "--head-dim",
     required=True,
     type=int,
@@ -30,7 +30,6 @@ else:
     help="Head dimension",
 )
 @click.option(
-    "-s",
     "--seq-len",
     required=True,
     type=int,
@@ -38,7 +37,6 @@ else:
     help="Sequence length (for k/v)",
 )
 @click.option(
-    "-c",
     "--cache-block-size",
     required=True,
     type=int,
@@ -46,7 +44,6 @@ else:
     help="Number of KV vectors in each cache block",
 )
 @click.option(
-    "-b",
     "--batch-size",
     required=False,
     type=int,
@@ -54,7 +51,6 @@ else:
     help="Batch size",
 )
 @click.option(
-    "-h",
     "--num-query-heads",
     required=False,
     type=int,
@@ -62,7 +58,6 @@ else:
     help="Number of query heads",
 )
 @click.option(
-    "-k",
     "--num-kv-heads",
     required=False,
     type=int,
@@ -71,22 +66,17 @@ else:
 )
 @click.option(
     "--causal",
-    required=False,
-    type=bool,
     is_flag=True,
     default=False,
     help="Flag to toggle causal/non-causal attention",
 )
 @click.option(
     "--pure-decode",
-    required=False,
-    type=bool,
     is_flag=True,
     default=False,
     help="Flag for making all q_seqlens == 1",
 )
 @click.option(
-    "-i",
     "--num-iterations",
     required=False,
     type=int,
@@ -94,7 +84,6 @@ else:
     help="Number of iterations",
 )
 @click.option(
-    "-w",
     "--num-warmup-iterations",
     required=False,
     type=int,
@@ -102,7 +91,6 @@ else:
     help="Number of warmup iterations",
 )
 @click.option(
-    "-a",
     "--absolute-tolerance",
     required=False,
     type=float,
@@ -110,16 +98,12 @@ else:
     help="Absolute tolerance to match with",
 )
 @click.option(
-    "-v",
     "--verbose",
-    required=False,
-    type=bool,
     is_flag=True,
     default=False,
     help="Flag for printing verbose output",
 )
 @click.option(
-    "-g",
     "--gpu",
     required=False,
     type=str,
@@ -128,8 +112,6 @@ else:
 )
 @click.option(
     "--csv",
-    required=False,
-    type=bool,
     is_flag=True,
     default=False,
     help="Flag for printing results in CSV format",
@@ -246,10 +228,10 @@ def main(
         causal=causal,
     )
 
-    if flash_attn_varlen_func is not None:
-        key_cache_fa = key_cache_conch.permute(0, 2, 1, 3)
-        value_cache_fa = value_cache_conch.permute(0, 2, 1, 3)
+    key_cache_fa = key_cache_conch.permute(0, 2, 1, 3)
+    value_cache_fa = value_cache_conch.permute(0, 2, 1, 3)
 
+    if flash_attn_varlen_func is not None:
         output_vllm = flash_attn_varlen_func(
             q=query,
             k=key_cache_fa,
@@ -296,6 +278,37 @@ def main(
         print("Skipping checking vs. reference vLLM implementation...", file=sys.stderr)
         baseline_result = None
 
+    if causal and flash_attn_varlen_func is None:
+        out = torch.zeros_like(query)
+
+        vllm_triton_result = benchmark_it(
+            lambda: unified_attention(
+                q=query,
+                k=key_cache_fa,
+                v=value_cache_fa,
+                out=out,
+                cu_seqlens_q=cu_seqlens_q,
+                max_seqlen_q=max_seqlen_q,
+                seqused_k=seq_lens,
+                max_seqlen_k=max_seqlen_k,
+                softmax_scale=scale,
+                causal=causal,
+                window_size=(-1, -1),
+                block_table=block_tables,
+                softcap=0.0,
+                q_descale=None,
+                k_descale=None,
+                v_descale=None,
+            ),
+            tag="vLLM Triton",
+            metadata=metadata,
+            num_iterations=num_iterations,
+            num_warmup_iterations=num_warmup_iterations,
+            device=query.device,
+        )
+    else:
+        vllm_triton_result = None
+
     triton_result = benchmark_it(
         lambda: varlen_attention(
             query=query,
@@ -322,6 +335,8 @@ def main(
     triton_result.print_results(csv=csv)
     if baseline_result is not None:
         baseline_result.print_results(csv=csv)
+    if vllm_triton_result is not None:
+        vllm_triton_result.print_results(csv=csv)
 
 
 if __name__ == "__main__":

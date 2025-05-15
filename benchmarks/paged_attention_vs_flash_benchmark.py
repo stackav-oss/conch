@@ -9,7 +9,8 @@ import click
 import torch
 
 from conch import envs
-from conch.kernels.attention.paged_attention import MAX_NUM_SPLITS, paged_attention_launcher
+# from conch.kernels.attention.paged_attention import MAX_NUM_SPLITS, paged_attention_launcher
+from conch.ops.attention.paged_attention import paged_attention
 from conch.platforms import current_platform
 from conch.third_party.vllm.utils import create_tensors
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
@@ -173,12 +174,12 @@ def main(
     scale: Final = float(1.0 / (head_dim**0.5))
 
     # Allocate additional memory for intermediate result (of shape (head_dim,)) for each batch/split/query head
-    output_scratchpad = torch.zeros(
-        (batch_size, MAX_NUM_SPLITS, num_query_heads, head_dim), dtype=query.dtype, device=query.device
-    )
+    # output_scratchpad = torch.zeros(
+    #     (batch_size, MAX_NUM_SPLITS, num_query_heads, head_dim), dtype=query.dtype, device=query.device
+    # )
 
-    # # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/split/query head
-    lse_scratchpad = torch.zeros((batch_size, MAX_NUM_SPLITS, num_query_heads), dtype=query.dtype, device=query.device)
+    # # # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/split/query head
+    # lse_scratchpad = torch.zeros((batch_size, MAX_NUM_SPLITS, num_query_heads), dtype=query.dtype, device=query.device)
 
     alibi_slopes = None
 
@@ -209,16 +210,17 @@ def main(
 
     output_vllm = output_vllm.squeeze(1)
 
-    paged_attention_launcher(
+    # paged_attention_launcher(
+    paged_attention(
         output_conch,
         query,
         key_cache_conch,
         value_cache_conch,
-        output_scratchpad,
-        lse_scratchpad,
+        # output_scratchpad,
+        # lse_scratchpad,
         block_tables,
         seq_lens,
-        scale,
+        scale=scale,
         softcap=softcap,
         kv_cache_dtype=kv_cache_dtype,
         k_scale=k_scale,
@@ -254,21 +256,36 @@ def main(
     )
 
     triton_result = benchmark_it(
-        lambda: paged_attention_launcher(
+        lambda: paged_attention(
             output_conch,
             query,
             key_cache_conch,
             value_cache_conch,
-            output_scratchpad,
-            lse_scratchpad,
+            # output_scratchpad,
+            # lse_scratchpad,
             block_tables,
             seq_lens,
-            scale,
-            softcap,
-            kv_cache_dtype,
-            k_scale,
-            v_scale,
+            scale=scale,
+            softcap=softcap,
+            kv_cache_dtype=kv_cache_dtype,
+            k_scale=k_scale,
+            v_scale=v_scale,
         ),
+        # lambda: paged_attention_launcher(
+        #     output_conch,
+        #     query,
+        #     key_cache_conch,
+        #     value_cache_conch,
+        #     output_scratchpad,
+        #     lse_scratchpad,
+        #     block_tables,
+        #     seq_lens,
+        #     scale,
+        #     softcap,
+        #     kv_cache_dtype,
+        #     k_scale,
+        #     v_scale,
+        # ),
         tag="Triton",
         metadata=metadata,
         num_iterations=num_iterations,

@@ -12,8 +12,9 @@ def _static_scaled_int8_quant_kernel(
     # Pointers to tensors
     output_ptr: tl.tensor,  # (num_tokens, hidden_size)
     input_ptr: tl.tensor,  # (num_tokens, hidden_size)
+    scale_ptr: tl.tensor,  # (1,)
     # Scalar arguments
-    inverted_scale: float,
+    # inverted_scale: float,
     hidden_size: int,
     int8_min: int,
     int8_max: int,
@@ -26,7 +27,7 @@ def _static_scaled_int8_quant_kernel(
     Args:
         output_ptr: Pointer to tensor for output, shape: (num_tokens, hidden_size).
         input_ptr: Pointer to tensor for fp input, shape: (num_tokens, hidden_size).
-        inverted_scale: Static scale factor (inverted, to avoid division).
+        scale_ptr: Pointer to tensor with static scaling factor, shape: (1,).
         hidden_size: Second dimension of input/output tensors.
         int8_min: Minimum value of int8 for clamping.
         int8_max: Maximum value of int8 for clamping.
@@ -37,6 +38,9 @@ def _static_scaled_int8_quant_kernel(
     token_idx = tl.program_id(0)
     # Calculate offset to this token from the start of the input/output tensors
     token_offset = token_idx * hidden_size
+
+    # Invert scale so we can multiply instead of divide
+    inverted_scale = 1.0 / tl.load(scale_ptr)
 
     # Common offsets that can be shared for each block
     block_offsets = tl.arange(0, cxpr_block_size)
@@ -84,7 +88,8 @@ def static_scaled_int8_quant_launcher(
     _static_scaled_int8_quant_kernel[grid](
         output_ptr=output_tensor,
         input_ptr=input_tensor,
-        inverted_scale=1.0 / scale.item(),
+        scale_ptr=scale,
+        # inverted_scale=1.0 / scale.item(),
         hidden_size=hidden_size,
         int8_min=int8_traits.min,
         int8_max=int8_traits.max,
