@@ -14,6 +14,8 @@ from conch.platforms import current_platform
 from conch.third_party.vllm.utils import create_tensors, seed_everything
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
+from conch.reference.attention.vllm_unified_attention import unified_attention
+
 if envs.CONCH_ENABLE_VLLM and current_platform.is_nvidia():
     from vllm.vllm_flash_attn import flash_attn_varlen_func  # type: ignore[attr-defined, unused-ignore]
 else:
@@ -292,9 +294,38 @@ def main(
             num_warmup_iterations=num_warmup_iterations,
             device=query.device,
         )
+
+        out = torch.zeros_like(query)
+
+        vllm_triton_result = benchmark_it(
+            lambda: unified_attention(
+                q=query,
+                k=key_cache_fa,
+                v=value_cache_fa,
+                out=out,
+                cu_seqlens_q=cu_seqlens_q,
+                max_seqlen_q=max_seqlen_q,
+                seqused_k=seq_lens,
+                max_seqlen_k=max_seqlen_k,
+                softmax_scale=scale,
+                causal=causal,
+                window_size=(-1, -1),
+                block_table=block_tables,
+                softcap=0.0,
+                q_descale=None,
+                k_descale=None,
+                v_descale=None,
+            ),
+            tag="vLLM Triton",
+            metadata=metadata,
+            num_iterations=num_iterations,
+            num_warmup_iterations=num_warmup_iterations,
+            device=query.device,
+        )
     else:
         print("Skipping checking vs. reference vLLM implementation...", file=sys.stderr)
         baseline_result = None
+        vllm_triton_result = None
 
     triton_result = benchmark_it(
         lambda: varlen_attention(
@@ -322,6 +353,8 @@ def main(
     triton_result.print_results(csv=csv)
     if baseline_result is not None:
         baseline_result.print_results(csv=csv)
+    if vllm_triton_result is not None:
+        vllm_triton_result.print_results(csv=csv)
 
 
 if __name__ == "__main__":
