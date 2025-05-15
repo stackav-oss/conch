@@ -37,12 +37,12 @@ def _gemma_rms_norm_vllm_ref(
     residual: torch.Tensor | None,
 ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
     """vLLM reference gemma_rms_norm impl."""
-    from vllm.model_executor.layers.layernorm import GemmaRMSNorm
+    from vllm.model_executor.layers.layernorm import GemmaRMSNorm  # type: ignore[import-not-found, unused-ignore]
 
     layer = GemmaRMSNorm(hidden_size=weight.size(0), eps=variance_epsilon)
     layer.weight = torch.nn.Parameter(weight)
 
-    return layer.forward_cuda(x, residual)
+    return layer.forward_cuda(x, residual)  # type: ignore[no-any-return, unused-ignore]
 
 
 def gemma_rms_norm(

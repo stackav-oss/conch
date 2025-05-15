@@ -18,9 +18,9 @@ from conch.third_party.vllm.utils import seed_everything
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.has_cuda():
-    from vllm import _custom_ops as vllm_custom_ops
+    from vllm import _custom_ops as vllm_custom_ops  # type: ignore[import-not-found, unused-ignore]
 else:
-    vllm_custom_ops = None  # type: ignore[assignment]
+    vllm_custom_ops = None  # type: ignore[assignment, unused-ignore]
 
 
 def _to_torch_dtype(dtype_str: str) -> torch.dtype:

@@ -34,9 +34,9 @@ def _scaled_gemm_vllm_ref(
     out_dtype: torch.dtype,
     bias: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    from vllm._custom_ops import cutlass_scaled_mm
+    from vllm._custom_ops import cutlass_scaled_mm  # type: ignore[import-not-found, unused-ignore]
 
-    return cutlass_scaled_mm(a, b, scale_a, scale_b, out_dtype, bias)
+    return cutlass_scaled_mm(a, b, scale_a, scale_b, out_dtype, bias)  # type: ignore[no-any-return, unused-ignore]
 
 
 def scaled_gemm(

@@ -332,7 +332,9 @@ def _triton_vs_vllm_cuda(
     device: Final = torch.device(current_platform.device)
     torch.set_default_device(device)
 
-    from vllm._custom_ops import paged_attention_v2 as vllm_paged_attention_v2
+    from vllm._custom_ops import (  # type: ignore[attr-defined, import-not-found, import-untyped, unused-ignore]  # isort:skip
+        paged_attention_v2 as vllm_paged_attention_v2,
+    )
 
     query, key_cache_vllm, value_cache_vllm, key_cache_conch, value_cache_conch, block_tables, seq_lens = (
         create_tensors(
@@ -444,7 +446,9 @@ def _triton_vs_flash_attn(
 
     kv_cache_dtype = "auto"
 
-    from vllm.vllm_flash_attn import flash_attn_with_kvcache  # type: ignore[attr-defined, unused-ignore]
+    from vllm.vllm_flash_attn import (  # type: ignore[attr-defined, import-not-found, import-untyped, unused-ignore]  # isort:skip
+        flash_attn_with_kvcache,
+    )
 
     query, _, _, key_cache_conch, value_cache_conch, block_tables, seq_lens = create_tensors(
         head_size,
