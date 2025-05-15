@@ -41,12 +41,12 @@ class WeightGroupMode(Enum):
     ASYMMETRIC = 4
 
 
-# Triton can only access global values annotated as tl.constexpr
-_WEIGHT_GROUP_MODE_NONE: tl.constexpr = WeightGroupMode.NONE.value
-_WEIGHT_GROUP_MODE_SHIFT: tl.constexpr = WeightGroupMode.SHIFT.value
-_WEIGHT_GROUP_MODE_SYMMETRIC_NO_SHIFT: tl.constexpr = WeightGroupMode.SYMMETRIC_NO_SHIFT.value
-_WEIGHT_GROUP_MODE_SYMMETRIC_WITH_SHIFT: tl.constexpr = WeightGroupMode.SYMMETRIC_WITH_SHIFT.value
-_WEIGHT_GROUP_MODE_ASYMMETRIC: tl.constexpr = WeightGroupMode.ASYMMETRIC.value
+# Triton can only access global values instantiated as tl.constexpr
+_WEIGHT_GROUP_MODE_NONE: tl.constexpr = tl.constexpr(WeightGroupMode.NONE.value)
+_WEIGHT_GROUP_MODE_SHIFT: tl.constexpr = tl.constexpr(WeightGroupMode.SHIFT.value)
+_WEIGHT_GROUP_MODE_SYMMETRIC_NO_SHIFT: tl.constexpr = tl.constexpr(WeightGroupMode.SYMMETRIC_NO_SHIFT.value)
+_WEIGHT_GROUP_MODE_SYMMETRIC_WITH_SHIFT: tl.constexpr = tl.constexpr(WeightGroupMode.SYMMETRIC_WITH_SHIFT.value)
+_WEIGHT_GROUP_MODE_ASYMMETRIC: tl.constexpr = tl.constexpr(WeightGroupMode.ASYMMETRIC.value)
 
 
 class LoadOrder(Enum):
@@ -58,11 +58,11 @@ class LoadOrder(Enum):
     LATE = 3
 
 
-# Triton can only access global values annotated as tl.constexpr
-_LOAD_ORDER_VERY_EARLY: tl.constexpr = LoadOrder.VERY_EARLY.value
-_LOAD_ORDER_EARLY: tl.constexpr = LoadOrder.EARLY.value
-_LOAD_ORDER_MID: tl.constexpr = LoadOrder.MID.value
-_LOAD_ORDER_LATE: tl.constexpr = LoadOrder.LATE.value
+# Triton can only access global values instantiated as tl.constexpr
+_LOAD_ORDER_VERY_EARLY: tl.constexpr = tl.constexpr(LoadOrder.VERY_EARLY.value)
+_LOAD_ORDER_EARLY: tl.constexpr = tl.constexpr(LoadOrder.EARLY.value)
+_LOAD_ORDER_MID: tl.constexpr = tl.constexpr(LoadOrder.MID.value)
+_LOAD_ORDER_LATE: tl.constexpr = tl.constexpr(LoadOrder.LATE.value)
 
 
 class ChannelScaleMode(Enum):
@@ -74,11 +74,11 @@ class ChannelScaleMode(Enum):
     WEIGHT_AND_ACTIVATION = 3
 
 
-# Triton can only access global values annotated as tl.constexpr
-_CHANNEL_SCALE_MODE_NONE: tl.constexpr = ChannelScaleMode.NONE.value
-_CHANNEL_SCALE_MODE_WEIGHT_ONLY: tl.constexpr = ChannelScaleMode.WEIGHT_ONLY.value
-_CHANNEL_SCALE_MODE_ACTIVATION_ONLY: tl.constexpr = ChannelScaleMode.ACTIVATION_ONLY.value
-_CHANNEL_SCALE_MODE_WEIGHT_AND_ACTIVATION: tl.constexpr = ChannelScaleMode.WEIGHT_AND_ACTIVATION.value
+# Triton can only access global values instantiated as tl.constexpr
+_CHANNEL_SCALE_MODE_NONE: tl.constexpr = tl.constexpr(ChannelScaleMode.NONE.value)
+_CHANNEL_SCALE_MODE_WEIGHT_ONLY: tl.constexpr = tl.constexpr(ChannelScaleMode.WEIGHT_ONLY.value)
+_CHANNEL_SCALE_MODE_ACTIVATION_ONLY: tl.constexpr = tl.constexpr(ChannelScaleMode.ACTIVATION_ONLY.value)
+_CHANNEL_SCALE_MODE_WEIGHT_AND_ACTIVATION: tl.constexpr = tl.constexpr(ChannelScaleMode.WEIGHT_AND_ACTIVATION.value)
 
 
 DTYPE_TO_TORCH = {
@@ -154,7 +154,7 @@ def _get_tuning_parameters() -> dict[str, int]:
             "cxpr_block_size_k": 128,
             "cxpr_group_size_m": 16,
             "num_warps": 8,
-            "num_stages": 4,
+            "num_stages": 2,
         }
 
     return {

@@ -17,10 +17,10 @@ class QuantizedDType(Enum):
     FP4 = 2
 
 
-# Triton can only access global values annotated as tl.constexpr
-_QUANTIZED_DTYPE_GENERAL_8BIT: tl.constexpr = QuantizedDType.GENERAL_8BIT.value
-_QUANTIZED_DTYPE_NF4: tl.constexpr = QuantizedDType.NF4.value
-_QUANTIZED_DTYPE_FP4: tl.constexpr = QuantizedDType.FP4.value
+# Triton can only access global values instantiated as tl.constexpr
+_QUANTIZED_DTYPE_GENERAL_8BIT: tl.constexpr = tl.constexpr(QuantizedDType.GENERAL_8BIT.value)
+_QUANTIZED_DTYPE_NF4: tl.constexpr = tl.constexpr(QuantizedDType.NF4.value)
+_QUANTIZED_DTYPE_FP4: tl.constexpr = tl.constexpr(QuantizedDType.FP4.value)
 
 
 def _get_quantized_dtype(quant_type: str) -> QuantizedDType:
