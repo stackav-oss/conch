@@ -181,19 +181,20 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     """
     # What batch is this program processing?
     # batch_index = tl.program_id(0)
-    # query_chunk_index = tl.program_id(0)
+    query_chunk_index = tl.program_id(0)
     # kv_head_index = tl.program_id(0)
-    query_split_index = tl.program_id(0)
+    # query_split_index = tl.program_id(0)
 
     # What "split" of the overall data (between 1 and M for query chunks and between 1 and N for KV cache blocks) is this program processing?
     kv_split_index = tl.program_id(1)
+    # split_index = tl.program_id(1)
     # total_num_splits = tl.num_programs(1)
 
-    batches_and_heads_index = tl.program_id(2)
-    total_num_batches_and_heads = tl.num_programs(2)
+    # batches_and_heads_index = tl.program_id(2)
+    # total_num_batches_and_heads = tl.num_programs(2)
 
-    batch_index = batches_and_heads_index // tl.cdiv(total_num_batches_and_heads, batch_size)
-    kv_head_index = batches_and_heads_index % tl.cdiv(total_num_batches_and_heads, batch_size)
+    # batch_index = batches_and_heads_index // tl.cdiv(total_num_batches_and_heads, batch_size)
+    # kv_head_index = batches_and_heads_index % tl.cdiv(total_num_batches_and_heads, batch_size)
 
     # query_split_index = split_index // tl.cdiv(total_num_splits, num_query_splits)
     # kv_split_index = split_index % tl.cdiv(total_num_splits, num_query_splits)
@@ -201,32 +202,38 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # kv_split_index = split_index % tl.cdiv(total_num_splits, num_query_splits)
 
     # What KV head is this program processing?
-    # kv_head_index = tl.program_id(2)
+    kv_head_index = tl.program_id(2)
     # query_chunk_index = tl.program_id(2)
 
-    # batch_index = query_chunk_index
+    batch_index = query_chunk_index
+    query_split_index = 0
 
-    # if tl.num_programs(0) != batch_size:
-    #     left = 0
-    #     right = batch_size
-    #     while left < right:
-    #         mid = (left + right) // 2
-    #         mid_val = tl.load(cu_seqlens_q_ptr + mid) // cxpr_query_chunk_size + mid
-    #         # mid_val = tl.load(cu_seqlens_q_ptr + mid) // (cxpr_query_chunk_size * cxpr_query_group_size_padded) + mid
-    #         # mid_val = tl.load(cu_seqlens_q_ptr + mid) // (cxpr_query_chunk_size * cxpr_query_group_size_padded) + mid
-    #         if mid_val <= query_chunk_index:
-    #             left = mid + 1
-    #         else:
-    #             right = mid
-    #     # seq_idx = left - 1
-    #     batch_index = left - 1
+    # Iterate, multiplying the query_chunk_size by cu_seqlens_q[i]
 
-    # if kv_split_index == 0 and kv_head_index == 0:
-    #     print("batch index = ", batch_index)
+    # Note: this only works if _every_ seq in the batch is a pure decode
+    if tl.num_programs(0) != batch_size:
+        left = 0
+        right = batch_size
+        while left < right:
+            mid = (left + right) // 2
+            mid_val = tl.load(cu_seqlens_q_ptr + mid) // cxpr_query_chunk_size + mid
+            # mid_val = tl.load(cu_seqlens_q_ptr + mid) // cxpr_query_chunk_size
+            # mid_val = tl.cdiv(tl.load(cu_seqlens_q_ptr + mid), cxpr_query_chunk_size)
+            # mid_val = tl.load(cu_seqlens_q_ptr + mid) // (cxpr_query_chunk_size * cxpr_query_group_size_padded) + mid
+            if mid_val <= query_chunk_index:
+                left = mid + 1
+            else:
+                right = mid
+        # seq_idx = left - 1
+        batch_index = left - 1
 
-    # q_block_start_index = tl.load(cu_seqlens_q_ptr + batch_index) // cxpr_query_chunk_size + batch_index
+        # if kv_split_index == 0 and kv_head_index == 0:
+        #     print("batch index = ", batch_index)
 
-    # query_split_index = query_chunk_index - q_block_start_index
+        q_block_start_index = tl.load(cu_seqlens_q_ptr + batch_index) // cxpr_query_chunk_size + batch_index
+        # q_block_start_index = tl.cdiv(tl.load(cu_seqlens_q_ptr + batch_index), cxpr_query_chunk_size) + batch_index
+
+        query_split_index = query_chunk_index - q_block_start_index
 
     # Get type that we should be using for accumulating results/intermediate calculations
     dtype = output_scratchpad_ptr.dtype.element_ty
@@ -617,32 +624,34 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
         cxpr_head_size_padded: The head size of the attention layer padded to the next power of two.
     """
     # What batch is this program processing?
-    batch_index = tl.program_id(0)
-    # query_chunk_index = tl.program_id(0)
+    # batch_index = tl.program_id(0)
+    query_chunk_index = tl.program_id(0)
     # What split of the overall query (between 1 and M query chunks) is this program processing?
-    query_split_index = tl.program_id(1)
+    # query_split_index = tl.program_id(1)
     # What query head is this program processing?
-    query_head_index = tl.program_id(2)
-    # query_head_index = tl.program_id(1)
+    # query_head_index = tl.program_id(2)
+    query_head_index = tl.program_id(1)
 
-    # batch_index = query_chunk_index
-    # if tl.num_programs(0) != batch_size:
-    #     left = 0
-    #     right = batch_size
-    #     while left < right:
-    #         mid = (left + right) // 2
-    #         mid_val = tl.load(cu_seqlens_q_ptr + mid) // cxpr_query_chunk_size + mid
-    #         if mid_val <= query_chunk_index:
-    #             left = mid + 1
-    #         else:
-    #             right = mid
+    batch_index = query_chunk_index
+    query_split_index = 0
 
-    #     # seq_idx = left - 1
-    #     batch_index = left - 1
+    if tl.num_programs(0) != batch_size:
+        left = 0
+        right = batch_size
+        while left < right:
+            mid = (left + right) // 2
+            mid_val = tl.load(cu_seqlens_q_ptr + mid) // cxpr_query_chunk_size + mid
+            if mid_val <= query_chunk_index:
+                left = mid + 1
+            else:
+                right = mid
 
-    # q_block_start_index = tl.load(cu_seqlens_q_ptr + batch_index) // cxpr_query_chunk_size + batch_index
+        # seq_idx = left - 1
+        batch_index = left - 1
 
-    # query_split_index = query_chunk_index - q_block_start_index
+        q_block_start_index = tl.load(cu_seqlens_q_ptr + batch_index) // cxpr_query_chunk_size + batch_index
+
+        query_split_index = query_chunk_index - q_block_start_index
 
     # Get type that we should be using for accumulating results/intermediate calculations
     dtype = output_ptr.dtype.element_ty
@@ -936,10 +945,10 @@ def varlen_attention_launcher(  # noqa: PLR0913
     query_chunk_size_stage1 = max(1, block_size // query_group_size_padded)
     # query_chunk_size_stage1 = max(1, block_size // query_group_size)
     query_chunk_size_stage2 = block_size
-    num_query_splits_stage1 = triton.cdiv(max_seqlen_q, query_chunk_size_stage1)
-    num_query_splits_stage2 = triton.cdiv(max_seqlen_q, query_chunk_size_stage2)
-    # num_query_splits_stage1 = total_num_q // query_chunk_size_stage1 + batch_size
-    # num_query_splits_stage2 = total_num_q // query_chunk_size_stage2 + batch_size
+    # num_query_splits_stage1 = triton.cdiv(max_seqlen_q, query_chunk_size_stage1)
+    # num_query_splits_stage2 = triton.cdiv(max_seqlen_q, query_chunk_size_stage2)
+    num_query_splits_stage1 = total_num_q // query_chunk_size_stage1 + batch_size
+    num_query_splits_stage2 = total_num_q // query_chunk_size_stage2 + batch_size
     # This kernel is slower for pure decode than it should be... maybe we need to add masking for query_group_size and ensure that
     # we're not processing >1 query vec at a time if its pure decode?
 
@@ -950,8 +959,10 @@ def varlen_attention_launcher(  # noqa: PLR0913
         # TODO: need to add a mask here
         query_chunk_size_stage1 = 1
         query_chunk_size_stage2 = 1
-        num_query_splits_stage1 = 1
-        num_query_splits_stage2 = 1
+        # num_query_splits_stage1 = 1
+        # num_query_splits_stage2 = 1
+        num_query_splits_stage1 = batch_size
+        num_query_splits_stage2 = batch_size
         query_group_size_padded = max(16, query_group_size_padded)
 
     # The "query chunk size" represents the number of queries that each kernel will process at a time.
@@ -980,8 +991,9 @@ def varlen_attention_launcher(  # noqa: PLR0913
 
     # For computing attention for split block (stage 1): parallelize over batches, query splits, KV splits, and KV heads.
     # stage1_grid = (batch_size, num_query_splits_stage1 * num_kv_splits, num_kv_heads)
-    # stage1_grid = (num_query_splits_stage1, num_kv_splits, num_kv_heads)
-    stage1_grid = (num_query_splits_stage1, num_kv_splits, batch_size * num_kv_heads)
+    stage1_grid = (num_query_splits_stage1, num_kv_splits, num_kv_heads)
+    # stage1_grid = (num_query_splits_stage1, num_kv_splits, batch_size * num_kv_heads)
+    # stage1_grid = (batch_size, num_query_splits_stage1 * num_kv_splits, num_kv_heads)
     # stage1_grid = (num_kv_heads, num_kv_splits, num_query_splits_stage1)
 
     # print(f"{batch_size = }")
@@ -1047,8 +1059,8 @@ def varlen_attention_launcher(  # noqa: PLR0913
     # num_query_splits_stage2 = total_num_q // query_chunk_size_stage2 + batch_size
 
     # num_query_splits_stage2 = total_num_q // query_chunk_size_stage2 + batch_size
-    stage2_grid = (batch_size, num_query_splits_stage2, num_query_heads)
-    # stage2_grid = (num_query_splits_stage2, num_query_heads)
+    # stage2_grid = (batch_size, num_query_splits_stage2, num_query_heads)
+    stage2_grid = (num_query_splits_stage2, num_query_heads)
 
     # print(f"{stage2_grid = }")
     # print(f"{query_chunk_size_stage2 = }")
