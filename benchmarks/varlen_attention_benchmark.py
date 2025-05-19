@@ -295,33 +295,37 @@ def main(
             device=query.device,
         )
 
-        out = torch.zeros_like(query)
 
-        vllm_triton_result = benchmark_it(
-            lambda: unified_attention(
-                q=query,
-                k=key_cache_fa,
-                v=value_cache_fa,
-                out=out,
-                cu_seqlens_q=cu_seqlens_q,
-                max_seqlen_q=max_seqlen_q,
-                seqused_k=seq_lens,
-                max_seqlen_k=max_seqlen_k,
-                softmax_scale=scale,
-                causal=causal,
-                window_size=(-1, -1),
-                block_table=block_tables,
-                softcap=0.0,
-                q_descale=None,
-                k_descale=None,
-                v_descale=None,
-            ),
-            tag="vLLM Triton",
-            metadata=metadata,
-            num_iterations=num_iterations,
-            num_warmup_iterations=num_warmup_iterations,
-            device=query.device,
-        )
+        if causal:
+            out = torch.zeros_like(query)
+
+            vllm_triton_result = benchmark_it(
+                lambda: unified_attention(
+                    q=query,
+                    k=key_cache_fa,
+                    v=value_cache_fa,
+                    out=out,
+                    cu_seqlens_q=cu_seqlens_q,
+                    max_seqlen_q=max_seqlen_q,
+                    seqused_k=seq_lens,
+                    max_seqlen_k=max_seqlen_k,
+                    softmax_scale=scale,
+                    causal=causal,
+                    window_size=(-1, -1),
+                    block_table=block_tables,
+                    softcap=0.0,
+                    q_descale=None,
+                    k_descale=None,
+                    v_descale=None,
+                ),
+                tag="vLLM Triton",
+                metadata=metadata,
+                num_iterations=num_iterations,
+                num_warmup_iterations=num_warmup_iterations,
+                device=query.device,
+            )
+        else:
+            vllm_triton_result = None
     else:
         print("Skipping checking vs. reference vLLM implementation...", file=sys.stderr)
         baseline_result = None

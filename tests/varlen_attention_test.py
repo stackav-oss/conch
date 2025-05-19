@@ -349,6 +349,7 @@ def test_varlen_attention_vs_pytorch(
 @pytest.mark.parametrize("sequence_length", _SEQUENCE_LENGTHS)
 @pytest.mark.parametrize("causal", [True, False])
 @pytest.mark.parametrize("is_pure_decode", [True, False])
+# @pytest.mark.parametrize("is_pure_decode", [False])
 def test_varlen_attention_vs_flash_attn(
     num_seqs: int,
     head_size: int,
