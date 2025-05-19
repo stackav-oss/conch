@@ -20,7 +20,7 @@ class VarlenAttentionMetadata:
     num_kv_heads: int
     head_size: int
     total_num_q: int
-    total_num_k: int
+    # total_num_k: int
     max_num_blocks_per_sequence: int
     num_kv_splits: int
 
@@ -221,7 +221,7 @@ def _create_varlen_metadata(
 
     _check_cumulative_sequence_length_size_compatibility(cu_seqlens_q, cu_seqlens_k)
     batch_size = cu_seqlens_q.shape[0] - 1
-    total_num_k = int(cu_seqlens_k[-1].item())
+    # total_num_k = int(cu_seqlens_k[-1].item())
 
     _check_block_table_size_compatibility(block_tables, batch_size)
     _, max_num_blocks_per_sequence = block_tables.shape
@@ -234,7 +234,7 @@ def _create_varlen_metadata(
         num_kv_heads=num_kv_heads,
         head_size=head_size,
         total_num_q=total_num_q,
-        total_num_k=total_num_k,
+        # total_num_k=total_num_k,
         max_num_blocks_per_sequence=max_num_blocks_per_sequence,
         num_kv_splits=_determine_max_num_kv_splits(max_seqlen_q, max_seqlen_k)
     )
