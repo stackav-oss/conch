@@ -179,6 +179,10 @@ def _determine_max_num_kv_splits(max_seqlen_q: int, max_seqlen_k: int) -> int:
             return 16
         if max_seqlen_k <= 16384:
             return 32
+
+    # if max_seqlen_k <= 2048:
+    #     return 32
+
     return 64
 
 
