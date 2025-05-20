@@ -167,18 +167,19 @@ def _check_seqlen_size_compatibility(seq_lens: torch.Tensor, batch_size: int) ->
 
 def _determine_max_num_kv_splits(max_seqlen_q: int, max_seqlen_k: int) -> int:
     if max_seqlen_q > 1:
-        if max_seqlen_k <= 512:
-            return 1
-        if max_seqlen_k <= 1024:
-            return 2
-        if max_seqlen_k <= 2048:
-            return 4
-        if max_seqlen_k <= 4096:
-            return 8
-        if max_seqlen_k <= 8192:
-            return 16
-        if max_seqlen_k <= 16384:
-            return 32
+        return 1
+        # if max_seqlen_k <= 512:
+        #     return 1
+        # if max_seqlen_k <= 1024:
+        #     return 2
+        # if max_seqlen_k <= 2048:
+        #     return 4
+        # if max_seqlen_k <= 4096:
+        #     return 8
+        # if max_seqlen_k <= 8192:
+        #     return 16
+        # if max_seqlen_k <= 16384:
+        #     return 32
 
     # if max_seqlen_k <= 2048:
     #     return 32
