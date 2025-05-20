@@ -1284,7 +1284,11 @@ def _get_tuning_parameters() -> dict[str, int]:
         }
 
     return {
-        "block_size": 32,
+        # "block_size": 32,
+        # "block_size": 64,
+        # "block_size": 128,
+        # "block_size": 256,
+        "block_size": 128,
         # "query_chunk_size_stage1": 32,
         # "query_chunk_size_stage1": 64,
         # "query_chunk_size_stage2": 32,
