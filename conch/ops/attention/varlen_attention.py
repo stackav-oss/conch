@@ -318,6 +318,7 @@ def varlen_attention(
     lse_scratchpad = None
 
     if metadata.num_kv_splits > 0:
+        # print("ALLOCATING EXTRA MEM")
         # Allocate additional memory for intermediate result (of shape (head_size,)) for each batch/kv split/query head
         output_scratchpad = torch.zeros(
             # (total_num_q, MAX_NUM_KV_SPLITS, num_query_heads, head_size),
