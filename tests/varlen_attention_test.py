@@ -14,24 +14,13 @@ from conch.third_party.vllm.utils import create_tensors, seed_everything
 
 _ENABLE_VLLM: Final = envs.CONCH_ENABLE_VLLM and current_platform.has_cuda()
 _HEAD_SIZES: Final = [64, 96, 128, 256]
-# _HEAD_SIZES: Final = [64]
-# _HEAD_SIZES: Final = [128]
-_NUM_SEQS_ABRIDGED: Final = [4, 10]
-# _NUM_SEQS_ABRIDGED: Final = [1]
-# _NUM_SEQS_ABRIDGED: Final = [4]
+_NUM_SEQS_ABRIDGED: Final = [4, 5]
 # MHA, MQA, and GQA
 # - MHA: num_query_heads == num_kv_heads
 # - MQA: num_kv_heads == 1
 # - GQA: num_query_heads != num_kv_heads && num_kv_heads != 1
 _NUM_HEADS_ABRIDGED: Final = [(8, 8), (4, 1), (16, 4)]
-# _NUM_HEADS_ABRIDGED: Final = [(1, 1)]
-# _NUM_HEADS_ABRIDGED: Final = [(4, 1)]
-# _NUM_HEADS_ABRIDGED: Final = [(4, 2)]
-# _NUM_HEADS_ABRIDGED: Final = [(4, 2)]
-# _NUM_HEADS_ABRIDGED: Final = [(2, 1)]
 _SEQUENCE_LENGTHS: Final = [256, 257, 343, 1024, 1025]
-# _SEQUENCE_LENGTHS: Final = [256, 257]
-# _SEQUENCE_LENGTHS: Final = [257]
 
 
 def _get_tolerance_for_dtype(dtype: torch.dtype) -> float:
@@ -229,11 +218,8 @@ def _varlen_attention_pytorch(
 @pytest.mark.parametrize("head_size", _HEAD_SIZES)
 @pytest.mark.parametrize(("num_query_heads", "num_kv_heads"), _NUM_HEADS_ABRIDGED)
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
-# @pytest.mark.parametrize("dtype", [torch.float16])
 @pytest.mark.parametrize("sequence_length", _SEQUENCE_LENGTHS)
 @pytest.mark.parametrize("causal", [True, False])
-# @pytest.mark.parametrize("causal", [True])
-# @pytest.mark.parametrize("causal", [False])
 def test_varlen_attention_vs_pytorch(
     num_seqs: int,
     head_size: int,
@@ -325,19 +311,6 @@ def test_varlen_attention_vs_pytorch(
         softcap=softcap,
     )
 
-    # num_mismatched = 0
-
-    # for i in range(total_num_q):
-    #     pytorch_i = pytorch_output[i]
-    #     conch_i = conch_output[i]
-    #     if not torch.allclose(pytorch_i, conch_i, atol=tolerance, rtol=tolerance):
-    #         num_mismatched += 1
-    #         # print(f"{i = }")
-    #         # print(f"{pytorch_i = }")
-    #         # print(f"{conch_i = }")
-
-    # print(f"{num_mismatched = }")
-
     torch.testing.assert_close(pytorch_output, conch_output, atol=tolerance, rtol=tolerance)
 
 
@@ -349,7 +322,6 @@ def test_varlen_attention_vs_pytorch(
 @pytest.mark.parametrize("sequence_length", _SEQUENCE_LENGTHS)
 @pytest.mark.parametrize("causal", [True, False])
 @pytest.mark.parametrize("is_pure_decode", [True, False])
-# @pytest.mark.parametrize("is_pure_decode", [False])
 def test_varlen_attention_vs_flash_attn(
     num_seqs: int,
     head_size: int,
