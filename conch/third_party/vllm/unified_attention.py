@@ -9,10 +9,6 @@
 import triton
 import triton.language as tl
 
-# from vllm.logger import init_logger
-# 
-# logger = init_logger(__name__)
-
 
 @triton.jit
 def cdiv_fn(x, y):
