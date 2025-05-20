@@ -167,21 +167,37 @@ def _check_seqlen_size_compatibility(seq_lens: torch.Tensor, batch_size: int) ->
 
 def _determine_max_num_kv_splits(max_seqlen_q: int, max_seqlen_k: int) -> int:
     if max_seqlen_q > 1:
-        if max_seqlen_k <= 512:
-            return 1
-        if max_seqlen_k <= 1024:
-            return 2
-        if max_seqlen_k <= 2048:
-            return 4
-        if max_seqlen_k <= 4096:
-            return 8
-        if max_seqlen_k <= 8192:
-            return 16
-        if max_seqlen_k <= 16384:
-            return 32
+        return 0
+        # if max_seqlen_k <= 512:
+        # if max_seqlen_k <= 1024:
+        #     return 1
+        # # if max_seqlen_k <= 1024:
+        # if max_seqlen_k <= 2048:
+        #     # return 2
+        #     return 1
+        # # if max_seqlen_k <= 2048:
+        # if max_seqlen_k <= 4096:
+        #     # return 4
+        #     return 1
+        # # if max_seqlen_k <= 4096:
+        # if max_seqlen_k <= 8192:
+        #     # return 8
+        #     # return 4
+        #     # return 2
+        #     return 1
+        # # if max_seqlen_k <= 8192:
+        # if max_seqlen_k <= 16384:
+        #     # return 16
+        #     return 8
+        # # if max_seqlen_k <= 16384:
+        # if max_seqlen_k <= 32768:
+        #     # return 32
+        #     return 16
 
     # if max_seqlen_k <= 2048:
     #     return 32
+    # if max_seqlen_k <= 2048:
+    #     return 8
 
     return 64
 
@@ -298,25 +314,29 @@ def varlen_attention(
     # TODO(jmanning): Check if num_kv_splits > 1 and dispatch either Flash-Decoding or regular flash attention
     # This way we can skip allocation of the extra buffers if all of the sequences are short
 
-    # Allocate additional memory for intermediate result (of shape (head_size,)) for each batch/kv split/query head
-    output_scratchpad = torch.zeros(
-        # (total_num_q, MAX_NUM_KV_SPLITS, num_query_heads, head_size),
-        # (metadata.total_num_q, MAX_NUM_KV_SPLITS, metadata.num_query_heads, metadata.head_size),
-        # (metadata.total_num_q, MAX_NUM_KV_SPLITS, metadata.num_query_heads, metadata.head_size),
-        (metadata.total_num_q, metadata.num_kv_splits, metadata.num_query_heads, metadata.head_size),
-        # (metadata.total_num_q, MAX_NUM_KV_SPLITS, query_group_size, metadata.head_size),
-        dtype=output.dtype,
-        device=output.device,
-    )
+    output_scratchpad = None
+    lse_scratchpad = None
 
-    # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/kv split/query head
-    lse_scratchpad = torch.zeros(
-        (metadata.total_num_q, metadata.num_kv_splits, metadata.num_query_heads),
-        # (total_num_q, MAX_NUM_KV_SPLITS, num_query_heads),
-        # (metadata.total_num_q, MAX_NUM_KV_SPLITS, query_group_size),
-        dtype=output.dtype,
-        device=output.device,
-    )
+    if metadata.num_kv_splits > 0:
+        # Allocate additional memory for intermediate result (of shape (head_size,)) for each batch/kv split/query head
+        output_scratchpad = torch.zeros(
+            # (total_num_q, MAX_NUM_KV_SPLITS, num_query_heads, head_size),
+            # (metadata.total_num_q, MAX_NUM_KV_SPLITS, metadata.num_query_heads, metadata.head_size),
+            # (metadata.total_num_q, MAX_NUM_KV_SPLITS, metadata.num_query_heads, metadata.head_size),
+            (metadata.total_num_q, metadata.num_kv_splits, metadata.num_query_heads, metadata.head_size),
+            # (metadata.total_num_q, MAX_NUM_KV_SPLITS, query_group_size, metadata.head_size),
+            dtype=output.dtype,
+            device=output.device,
+        )
+
+        # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/kv split/query head
+        lse_scratchpad = torch.zeros(
+            (metadata.total_num_q, metadata.num_kv_splits, metadata.num_query_heads),
+            # (total_num_q, MAX_NUM_KV_SPLITS, num_query_heads),
+            # (metadata.total_num_q, MAX_NUM_KV_SPLITS, query_group_size),
+            dtype=output.dtype,
+            device=output.device,
+        )
 
     varlen_attention_launcher(
         output=output,

@@ -291,6 +291,8 @@ def unified_attention(
     #    = floor(q.shape[0] / BLOCK_Q) + num_seqs
     total_num_q_blocks = q.shape[0] // BLOCK_Q + num_seqs
 
+    # print(f"vLLM grid: ({total_num_q_blocks}, {num_kv_heads})")
+
     kernel_unified_attention_2d[(
         total_num_q_blocks,
         num_kv_heads,

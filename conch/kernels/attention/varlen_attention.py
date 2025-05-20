@@ -879,16 +879,22 @@ def varlen_attention_launcher(  # noqa: PLR0913
     allowed_in_out_dtypes = [torch.float32, torch.float16, torch.bfloat16]
     assert query.dtype in allowed_in_out_dtypes  # noqa: S101
     assert output.dtype == query.dtype  # noqa: S101
-    assert output_scratchpad.dtype == query.dtype  # noqa: S101
-    assert lse_scratchpad.dtype == query.dtype  # noqa: S101
-    assert output_scratchpad.size(1) == lse_scratchpad.size(1)  # noqa: S101
+
+    max_num_kv_splits = 0
+
+    if output_scratchpad is not None or lse_scratchpad is not None:
+        assert output_scratchpad is not None
+        assert lse_scratchpad is not None
+        assert output_scratchpad.dtype == query.dtype  # noqa: S101
+        assert lse_scratchpad.dtype == query.dtype  # noqa: S101
+        assert output_scratchpad.size(1) == lse_scratchpad.size(1)  # noqa: S101
+        _, max_num_kv_splits, _, _ = output_scratchpad.shape
 
     # Perform unchecked size accesses, assume has already been checked
     total_num_q, num_query_heads, head_size = output.shape
     num_cache_blocks, num_kv_heads, cache_block_size, _ = key_cache.shape
     batch_size, max_num_blocks_per_sequence = block_tables.shape
     # batch_size, _ = block_tables.shape
-    _, max_num_kv_splits, _, _ = output_scratchpad.shape
 
     assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"  # noqa: S101
 
@@ -933,9 +939,10 @@ def varlen_attention_launcher(  # noqa: PLR0913
     # ************
     # TODO(jmanning): WHAT ABOUT IF THIS ISNT A POWER OF TWO???
     # ************
-    query_chunk_size_stage1 = max(1, block_size // query_group_size_padded)
+    query_group_size_padded = query_group_size_padded if max_seqlen_q > 1 else max(16, query_group_size_padded)
+    query_chunk_size_stage1 = max(1, block_size // query_group_size_padded) if max_seqlen_q > 1 else 1
     # query_chunk_size_stage1 = max(1, block_size // query_group_size)
-    query_chunk_size_stage2 = block_size
+    query_chunk_size_stage2 = block_size if max_seqlen_q > 1 else 1
     num_query_splits_stage1 = triton.cdiv(max_seqlen_q, query_chunk_size_stage1)
     num_query_splits_stage2 = triton.cdiv(max_seqlen_q, query_chunk_size_stage2)
     # num_query_splits_stage1 = total_num_q // query_chunk_size_stage1 + batch_size
@@ -946,13 +953,13 @@ def varlen_attention_launcher(  # noqa: PLR0913
     # print(f"{max_seqlen_q = }")
     # print(f"{query_chunk_size_stage1 = }")
 
-    if max_seqlen_q == 1:
-        # TODO: need to add a mask here
-        query_chunk_size_stage1 = 1
-        query_chunk_size_stage2 = 1
-        num_query_splits_stage1 = 1
-        num_query_splits_stage2 = 1
-        query_group_size_padded = max(16, query_group_size_padded)
+    # if max_seqlen_q == 1:
+    #     # TODO: need to add a mask here
+    #     query_chunk_size_stage1 = 1
+    #     query_chunk_size_stage2 = 1
+    #     num_query_splits_stage1 = 1
+    #     num_query_splits_stage2 = 1
+    #     query_group_size_padded = max(16, query_group_size_padded)
 
     # The "query chunk size" represents the number of queries that each kernel will process at a time.
     # num_query_splits_stage1 = triton.cdiv(max_seqlen_q, query_chunk_size_stage1)
