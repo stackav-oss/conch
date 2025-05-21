@@ -5,6 +5,8 @@
 Compatible with A10, H100, AMD MI300X.
 """
 
+from typing import Final
+
 import torch
 import triton
 import triton.language as tl
@@ -652,18 +654,34 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     )
 
 
-def _get_tuning_parameters() -> dict[str, int]:
-    """Get block sizes/tuning parameters for current device."""
+def _get_block_size(device_name: str) -> int:
+    """Get block size for tuning purposes."""
+    if "MI300X" in device_name:
+        return 256
+
+    return 128
+
+
+def _get_tuned_sizes(head_size_padded: int, query_group_size_padded: int, max_seqlen_q: int) -> tuple[int, int, int]:
+    """Get tuned sizes for current device."""
     device_name = torch.cuda.get_device_name() if torch.cuda.is_available() else ""
 
-    if "H100" in device_name:
-        return {
-            "block_size": 128,
-        }
+    block_size = _get_block_size(device_name)
 
-    return {
-        "block_size": 128,
-    }
+    # If the head size grows too large then we want to limit how many queries we're chunking together
+    small_head_size_limit: Final = 128
+    if head_size_padded > small_head_size_limit:
+        block_size = block_size // 2
+
+    # The "query chunk size" represents the number of queries that each kernel will process at a time.
+    query_chunk_size_stage1 = max(1, block_size // query_group_size_padded) if max_seqlen_q > 1 else 1
+    # Decrease block size for stage2 so that we just launch more kernels
+    query_chunk_size_stage2 = block_size // 4 if max_seqlen_q > 1 else 1
+
+    # If we have all decodes, we need to make sure that we have at least a block size of 16 for tl.dot
+    query_group_size_padded = query_group_size_padded if max_seqlen_q > 1 else max(16, query_group_size_padded)
+
+    return query_chunk_size_stage1, query_chunk_size_stage2, query_group_size_padded
 
 
 def varlen_attention_launcher(  # noqa: PLR0913
@@ -750,18 +768,14 @@ def varlen_attention_launcher(  # noqa: PLR0913
     # Note: we may need to tune this value for a given HW platform.
     num_kv_splits = min(max_num_blocks_per_sequence, max_num_kv_splits)
 
-    # Different platforms may require different block sizes
-    tuning_parameters = _get_tuning_parameters()
-    block_size = tuning_parameters["block_size"]
+    # Different platforms may require different sizes.
+    query_chunk_size_stage1, query_chunk_size_stage2, query_group_size_padded = _get_tuned_sizes(
+        cxpr_head_size_padded, query_group_size_padded, max_seqlen_q
+    )
 
-    # The "query chunk size" represents the number of queries that each kernel will process at a time.
-    query_chunk_size_stage1 = max(1, block_size // query_group_size_padded) if max_seqlen_q > 1 else 1
-    query_chunk_size_stage2 = block_size // 4 if max_seqlen_q > 1 else 1
     # Use the maximum Q sequence length to determine what is the max number of query splits any sequence will need
     num_query_splits_stage1 = triton.cdiv(max_seqlen_q, query_chunk_size_stage1)
     num_query_splits_stage2 = triton.cdiv(max_seqlen_q, query_chunk_size_stage2)
-    # If we have all decodes, we need to make sure that we have at least a block size of 16 for tl.dot
-    query_group_size_padded = query_group_size_padded if max_seqlen_q > 1 else max(16, query_group_size_padded)
 
     # How many cache blocks will each kernel process?
     num_cache_blocks_per_split = triton.cdiv(max_num_blocks_per_sequence, num_kv_splits)
