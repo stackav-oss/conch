@@ -14,7 +14,7 @@ from conch.third_party.vllm.utils import create_tensors, seed_everything
 
 _ENABLE_VLLM: Final = envs.CONCH_ENABLE_VLLM and current_platform.has_cuda()
 _HEAD_SIZES: Final = [64, 96, 128, 256]
-_NUM_SEQS_ABRIDGED: Final = [4, 10]
+_NUM_SEQS_ABRIDGED: Final = [4, 9]
 # MHA, MQA, and GQA
 # - MHA: num_query_heads == num_kv_heads
 # - MQA: num_kv_heads == 1

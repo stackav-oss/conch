@@ -9,9 +9,9 @@ import click
 import torch
 
 from conch import envs
-from conch.kernels.attention.paged_attention import MAX_NUM_SPLITS, paged_attention_launcher
+from conch.ops.attention.paged_attention import paged_attention
 from conch.platforms import current_platform
-from conch.third_party.vllm.utils import create_tensors
+from conch.third_party.vllm.utils import create_tensors, seed_everything
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.has_cuda():
@@ -146,6 +146,14 @@ def main(
         error_msg = f"kv_cache_type '{kv_cache_dtype}' not supported on this GPU!"
         raise NotImplementedError(error_msg)
 
+    seed: Final = 0
+    seed_everything(seed)
+
+    device: Final = torch.device(gpu)
+    torch.set_default_device(device)
+
+    dtype: Final = torch.float16
+
     metadata = BenchmarkMetadata(
         platform=current_platform.name(),
         params={
@@ -167,39 +175,27 @@ def main(
             num_query_heads,
             num_kv_heads,
             kv_cache_dtype,
-            gpu,
-            torch.float16,
+            device,
+            dtype,
         )
     )
-
-    _, max_num_blocks_per_seq = block_tables.shape
 
     scale: Final = float(1.0 / (head_dim**0.5))
     max_seq_len: Final = int(seq_lens.max().item())
 
-    # Allocate additional memory for intermediate result (of shape (head_dim,)) for each batch/split/query head
-    output_scratchpad = torch.zeros(
-        (batch_size, MAX_NUM_SPLITS, num_query_heads, head_dim), dtype=query.dtype, device=query.device
-    )
-
-    # # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/split/query head
-    lse_scratchpad = torch.zeros((batch_size, MAX_NUM_SPLITS, num_query_heads), dtype=query.dtype, device=query.device)
-
-    k_scale = torch.full((1,), 0.5)
-    v_scale = torch.full((1,), 0.5)
+    k_scale = torch.full((1,), 0.5, dtype=dtype, device=device)
+    v_scale = torch.full((1,), 0.5, dtype=dtype, device=device)
 
     output_conch = torch.empty_like(query)
 
-    paged_attention_launcher(
-        output_conch,
+    paged_attention(
         query,
         key_cache_conch,
         value_cache_conch,
-        output_scratchpad,
-        lse_scratchpad,
         block_tables,
         seq_lens,
-        scale,
+        output=output_conch,
+        scale=scale,
         softcap=0.0,
         kv_cache_dtype=kv_cache_dtype,
         k_scale=k_scale,
@@ -288,16 +284,14 @@ def main(
         baseline_result = None
 
     triton_result = benchmark_it(
-        lambda: paged_attention_launcher(
-            output_conch,
+        lambda: paged_attention(
             query,
             key_cache_conch,
             value_cache_conch,
-            output_scratchpad,
-            lse_scratchpad,
             block_tables,
             seq_lens,
-            scale,
+            output=output_conch,
+            scale=scale,
             softcap=0.0,
             kv_cache_dtype=kv_cache_dtype,
             k_scale=k_scale,

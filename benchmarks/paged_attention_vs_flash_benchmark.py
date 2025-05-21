@@ -9,9 +9,9 @@ import click
 import torch
 
 from conch import envs
-from conch.kernels.attention.paged_attention import MAX_NUM_SPLITS, paged_attention_launcher
+from conch.ops.attention.paged_attention import paged_attention
 from conch.platforms import current_platform
-from conch.third_party.vllm.utils import create_tensors
+from conch.third_party.vllm.utils import create_tensors, seed_everything
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.is_nvidia():
@@ -137,6 +137,14 @@ def main(
         error_msg = "Platform must be Nvidia and vLLM must be installed & enabled via CONCH_ENABLE_VLLM=1"
         raise NotImplementedError(error_msg)
 
+    seed: Final = 0
+    seed_everything(seed)
+
+    device: Final = torch.device(gpu)
+    torch.set_default_device(device)
+
+    dtype: Final = torch.float16
+
     metadata = BenchmarkMetadata(
         platform=current_platform.name(),
         params={
@@ -149,21 +157,15 @@ def main(
         },
     )
 
+    kv_cache_dtype = "auto"
+
     query, _, _, key_cache_conch, value_cache_conch, block_tables, seq_lens = create_tensors(
-        head_dim, seq_len, cache_block_size, batch_size, num_query_heads, num_kv_heads, "auto", gpu, torch.float16
+        head_dim, seq_len, cache_block_size, batch_size, num_query_heads, num_kv_heads, kv_cache_dtype, device, dtype
     )
 
     _, max_num_blocks_per_seq = block_tables.shape
 
     scale: Final = float(1.0 / (head_dim**0.5))
-
-    # Allocate additional memory for intermediate result (of shape (head_dim,)) for each batch/split/query head
-    output_scratchpad = torch.zeros(
-        (batch_size, MAX_NUM_SPLITS, num_query_heads, head_dim), dtype=query.dtype, device=query.device
-    )
-
-    # # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/split/query head
-    lse_scratchpad = torch.zeros((batch_size, MAX_NUM_SPLITS, num_query_heads), dtype=query.dtype, device=query.device)
 
     alibi_slopes = None
 
@@ -175,9 +177,8 @@ def main(
     value_cache_vllm = value_cache_conch.permute(0, 2, 1, 3)
 
     softcap = 30.0
-    kv_cache_dtype = "auto"
-    k_scale = torch.full((1,), 1.0)
-    v_scale = torch.full((1,), 1.0)
+    k_scale = torch.full((1,), 1.0, dtype=dtype, device=device)
+    v_scale = torch.full((1,), 1.0, dtype=dtype, device=device)
 
     # Check accuracy match
     output_vllm = flash_attn_with_kvcache(
@@ -194,16 +195,14 @@ def main(
 
     output_vllm = output_vllm.squeeze(1)
 
-    paged_attention_launcher(
-        output_conch,
+    paged_attention(
         query,
         key_cache_conch,
         value_cache_conch,
-        output_scratchpad,
-        lse_scratchpad,
         block_tables,
         seq_lens,
-        scale,
+        output=output_conch,
+        scale=scale,
         softcap=softcap,
         kv_cache_dtype=kv_cache_dtype,
         k_scale=k_scale,
@@ -239,20 +238,18 @@ def main(
     )
 
     triton_result = benchmark_it(
-        lambda: paged_attention_launcher(
-            output_conch,
+        lambda: paged_attention(
             query,
             key_cache_conch,
             value_cache_conch,
-            output_scratchpad,
-            lse_scratchpad,
             block_tables,
             seq_lens,
-            scale,
-            softcap,
-            kv_cache_dtype,
-            k_scale,
-            v_scale,
+            output=output_conch,
+            scale=scale,
+            softcap=softcap,
+            kv_cache_dtype=kv_cache_dtype,
+            k_scale=k_scale,
+            v_scale=v_scale,
         ),
         tag="Triton",
         metadata=metadata,
