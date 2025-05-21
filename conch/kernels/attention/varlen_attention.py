@@ -728,6 +728,9 @@ def varlen_attention_launcher(  # noqa: PLR0913
 
     assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"  # noqa: S101
 
+    # Currently unused
+    _ = cu_seqlens_k
+
     # Need sizes to be constexpr in order to reshape tensors in kernel
     cxpr_cache_block_size: tl.constexpr = cache_block_size
     cxpr_head_size_padded: tl.constexpr = triton.next_power_of_2(head_size)

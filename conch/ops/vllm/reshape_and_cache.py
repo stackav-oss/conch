@@ -37,7 +37,7 @@ def _validate_sizes(
         msg = f"Number of dimensions in key ({key_dims}) did not match expected ({expected_kv_dims})"
         raise ValueError(msg)
 
-    num_tokens_kv, num_kv_heads_kv, head_size_kv = key.shape
+    _, num_kv_heads_kv, head_size_kv = key.shape
 
     if key_cache.shape != value_cache.shape:
         msg = f"key_cache.shape ({key_cache.shape}) does not match value_cache.shape ({value_cache.shape})"
@@ -62,12 +62,6 @@ def _validate_sizes(
     if (slot_mapping_dims := len(slot_mapping.shape)) != expected_slot_mapping_dims:
         msg = f"Number of dimensions in slot mapping ({slot_mapping_dims}) did not match expected ({expected_slot_mapping_dims})"
         raise ValueError(msg)
-
-    # num_tokens_sm = slot_mapping.size(0)
-
-    # if num_tokens_kv != num_tokens_sm:
-    #     msg = f"Number of tokens in key/value tensors ({num_tokens_kv}) does not match number of tokens in slot mapping tensor ({num_tokens_sm})"
-    #     raise ValueError(msg)
 
 
 def _validate_kv_cache_dtype(kv_cache_dtype: str) -> bool:

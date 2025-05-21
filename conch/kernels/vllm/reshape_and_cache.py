@@ -140,9 +140,6 @@ def reshape_and_cache_launcher(
     num_tokens, num_kv_heads, head_size = key.shape
     num_cache_blocks, _, cache_block_size, _ = key_cache.shape
 
-    # assert key.stride(0) == value.stride(0)  # noqa: S101
-    # assert key.stride(1) == value.stride(1)  # noqa: S101
-    # assert key.stride(2) == value.stride(2)  # noqa: S101
     assert key.stride(2) == 1  # noqa: S101
     assert value.stride(2) == 1  # noqa: S101
 
