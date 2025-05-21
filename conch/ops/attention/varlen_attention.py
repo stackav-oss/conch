@@ -7,7 +7,7 @@ from typing import Final
 
 import torch
 
-from conch.kernels.attention.varlen_attention import MAX_NUM_KV_SPLITS, varlen_attention_launcher
+from conch.kernels.attention.varlen_attention import varlen_attention_launcher
 
 
 @dataclass
@@ -19,8 +19,8 @@ class VarlenAttentionMetadata:
     num_kv_heads: int
     head_size: int
     total_num_q: int
-    total_num_k: int
     max_num_blocks_per_sequence: int
+    num_kv_splits: int
 
 
 def _check_output_query_size_compatibility(output: torch.Tensor, query: torch.Tensor) -> None:
@@ -164,7 +164,16 @@ def _check_seqlen_size_compatibility(seq_lens: torch.Tensor, batch_size: int) ->
         raise ValueError(msg)
 
 
-def _check_size_compatibility(
+def _determine_max_num_kv_splits(max_seqlen_q: int, max_seqlen_k: int) -> int:
+    _ = max_seqlen_k
+
+    if max_seqlen_q > 1:
+        return 1
+
+    return 64
+
+
+def _create_varlen_metadata(
     out: torch.Tensor,
     query: torch.Tensor,
     key_cache: torch.Tensor,
@@ -173,6 +182,8 @@ def _check_size_compatibility(
     cu_seqlens_k: torch.Tensor,
     block_tables: torch.Tensor,
     seq_lens: torch.Tensor,
+    max_seqlen_q: int,
+    max_seqlen_k: int,
 ) -> VarlenAttentionMetadata:
     """Check size compatibility of tensors for variable-length attention and return metadata if successful.
 
@@ -200,7 +211,6 @@ def _check_size_compatibility(
 
     _check_cumulative_sequence_length_size_compatibility(cu_seqlens_q, cu_seqlens_k)
     batch_size = cu_seqlens_q.shape[0] - 1
-    total_num_k = int(cu_seqlens_k[-1].item())
 
     _check_block_table_size_compatibility(block_tables, batch_size)
     _, max_num_blocks_per_sequence = block_tables.shape
@@ -213,8 +223,8 @@ def _check_size_compatibility(
         num_kv_heads=num_kv_heads,
         head_size=head_size,
         total_num_q=total_num_q,
-        total_num_k=total_num_k,
         max_num_blocks_per_sequence=max_num_blocks_per_sequence,
+        num_kv_splits=_determine_max_num_kv_splits(max_seqlen_q, max_seqlen_k),
     )
 
 
@@ -261,20 +271,29 @@ def varlen_attention(
         output = torch.zeros_like(query, device=query.device, dtype=query.dtype)
 
     # Check sizes of input tensors
-    metadata = _check_size_compatibility(
-        output, query, key_cache, value_cache, cu_seqlens_q, cu_seqlens_k, block_tables, seq_lens
+    metadata = _create_varlen_metadata(
+        output,
+        query,
+        key_cache,
+        value_cache,
+        cu_seqlens_q,
+        cu_seqlens_k,
+        block_tables,
+        seq_lens,
+        max_seqlen_q,
+        max_seqlen_k,
     )
 
     # Allocate additional memory for intermediate result (of shape (head_size,)) for each batch/kv split/query head
     output_scratchpad = torch.zeros(
-        (metadata.total_num_q, MAX_NUM_KV_SPLITS, metadata.num_query_heads, metadata.head_size),
+        (metadata.total_num_q, metadata.num_kv_splits, metadata.num_query_heads, metadata.head_size),
         dtype=output.dtype,
         device=output.device,
     )
 
     # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/kv split/query head
     lse_scratchpad = torch.zeros(
-        (metadata.total_num_q, MAX_NUM_KV_SPLITS, metadata.num_query_heads),
+        (metadata.total_num_q, metadata.num_kv_splits, metadata.num_query_heads),
         dtype=output.dtype,
         device=output.device,
     )
