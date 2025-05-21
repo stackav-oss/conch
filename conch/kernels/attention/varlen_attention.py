@@ -76,8 +76,8 @@ def _store(  # type: ignore[no-untyped-def]
 @triton.jit  # type: ignore[misc]
 def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Pointers to tensors
-    output_scratchpad_ptr: tl.tensor,  # (total_num_q, MAX_NUM_KV_SPLITS, num_query_heads, head_size)
-    lse_scratchpad_ptr: tl.tensor,  # (total_num_q, MAX_NUM_KV_SPLITS, num_query_heads)
+    output_scratchpad_ptr: tl.tensor,  # (total_num_q, num_kv_splits, num_query_heads, head_size)
+    lse_scratchpad_ptr: tl.tensor,  # (total_num_q, num_kv_splits, num_query_heads)
     query_ptr: tl.tensor,  # (total_num_q, num_query_heads, head_size)
     key_cache_ptr: tl.tensor,  # (num_cache_blocks, num_kv_heads, cache_block_size, head_size)
     value_cache_ptr: tl.tensor,  # (num_cache_blocks, num_kv_heads, cache_block_size, head_size)
@@ -88,7 +88,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     v_scale_ptr: tl.tensor,  # (1,)
     # Scalar arguments
     scale: float,
-    num_query_splits: int,
     num_cache_blocks_per_split: int,
     softcap: float,
     # Sizes of tensors above
@@ -132,10 +131,11 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         k_scale_ptr: Pointer to scalar fp8 scaling factor for k.
         v_scale_ptr: Pointer to scalar fp8 scaling factor for v.
         scale: Scaling factor, 1/sqrt(head_size).
-        num_query_splits: The number of "splits" we split each query into.
         num_cache_blocks_per_split: The maximum number of cache blocks in each split (max num each kernel will process).
         softcap: Logits softcap to apply.
         head_size: Actual head dim, not padded to power-of-two.
+        query_group_size: Number of query heads in each group.
+        batch_size: Number of sequences in the batch.
         output_scratchpad_batch_stride: Stride of the output scratchpad tensor in the 0th dimension.
         output_scratchpad_kv_split_stride: Stride of the output scratchpad tensor in the 1st dimension.
         output_scratchpad_head_stride: Stride of the output scratchpad tensor in the 2nd dimension.
@@ -481,6 +481,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
         cu_seqlens_q_ptr: Pointer to tensor holding the cumulative sequence lengths for each query in the batch, shape: (batch_size + 1, ).
         num_cache_blocks_per_split: The maximum number of cache blocks each split will process.
         head_size: Actual head dim, not padded to power-of-two.
+        batch_size: Number of sequences in the batch.
         output_batch_stride: Stride of the output tensor in the 0th dimension.
         output_head_stride: Stride of the output tensor in the 1st dimension.
         output_scratchpad_batch_stride: Stride of the output scratchpad tensor in the 0th dimension.
@@ -755,7 +756,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
 
     # The "query chunk size" represents the number of queries that each kernel will process at a time.
     query_chunk_size_stage1 = max(1, block_size // query_group_size_padded) if max_seqlen_q > 1 else 1
-    query_chunk_size_stage2 = block_size if max_seqlen_q > 1 else 1
+    query_chunk_size_stage2 = block_size // 4 if max_seqlen_q > 1 else 1
     # Use the maximum Q sequence length to determine what is the max number of query splits any sequence will need
     num_query_splits_stage1 = triton.cdiv(max_seqlen_q, query_chunk_size_stage1)
     num_query_splits_stage2 = triton.cdiv(max_seqlen_q, query_chunk_size_stage2)
@@ -791,7 +792,6 @@ def varlen_attention_launcher(  # noqa: PLR0913
         v_scale_ptr=v_scale,
         # Scalars
         scale=scale,
-        num_query_splits=num_query_splits_stage1,
         num_cache_blocks_per_split=num_cache_blocks_per_split,
         softcap=softcap,
         head_size=head_size,
