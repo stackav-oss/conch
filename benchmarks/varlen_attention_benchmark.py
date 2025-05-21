@@ -214,25 +214,25 @@ def main(
     query = torch.empty((total_num_q, num_query_heads, head_dim), dtype=dtype, device=device)
     query.uniform_(-scale, scale)
 
-    # output_conch = varlen_attention(
-    #     query=query,
-    #     key_cache=key_cache_conch,
-    #     value_cache=value_cache_conch,
-    #     block_tables=block_tables,
-    #     seq_lens=seq_lens,
-    #     cu_seqlens_q=cu_seqlens_q,
-    #     cu_seqlens_k=cu_seqlens_k,
-    #     max_seqlen_q=max_seqlen_q,
-    #     max_seqlen_k=max_seqlen_k,
-    #     scale=scale,
-    #     causal=causal,
-    # )
+    output_conch = varlen_attention(
+        query=query,
+        key_cache=key_cache_conch,
+        value_cache=value_cache_conch,
+        block_tables=block_tables,
+        seq_lens=seq_lens,
+        cu_seqlens_q=cu_seqlens_q,
+        cu_seqlens_k=cu_seqlens_k,
+        max_seqlen_q=max_seqlen_q,
+        max_seqlen_k=max_seqlen_k,
+        scale=scale,
+        causal=causal,
+    )
 
     key_cache_fa = key_cache_conch.permute(0, 2, 1, 3)
     value_cache_fa = value_cache_conch.permute(0, 2, 1, 3)
 
-    del key_cache_conch
-    del value_cache_conch
+    key_cache_conch
+    value_cache_conch
 
     if flash_attn_varlen_func is not None:
         output_vllm = flash_attn_varlen_func(
@@ -281,7 +281,8 @@ def main(
         print("Skipping checking vs. reference vLLM implementation...", file=sys.stderr)
         baseline_result = None
 
-    if causal and flash_attn_varlen_func is None:
+    # if causal and flash_attn_varlen_func is None:
+    if causal:
         out = torch.zeros_like(query)
 
         vllm_triton_result = benchmark_it(
@@ -312,34 +313,30 @@ def main(
     else:
         vllm_triton_result = None
 
-    if False:
-        triton_result = benchmark_it(
-            lambda: varlen_attention(
-                query=query,
-                key_cache=key_cache_conch,
-                value_cache=value_cache_conch,
-                block_tables=block_tables,
-                seq_lens=seq_lens,
-                cu_seqlens_q=cu_seqlens_q,
-                cu_seqlens_k=cu_seqlens_k,
-                max_seqlen_q=max_seqlen_q,
-                max_seqlen_k=max_seqlen_k,
-                scale=scale,
-                causal=causal,
-            ),
-            tag="Triton",
-            metadata=metadata,
-            num_iterations=num_iterations,
-            num_warmup_iterations=num_warmup_iterations,
-            device=query.device,
-        )
-    else:
-        triton_result = None
+    triton_result = benchmark_it(
+        lambda: varlen_attention(
+            query=query,
+            key_cache=key_cache_conch,
+            value_cache=value_cache_conch,
+            block_tables=block_tables,
+            seq_lens=seq_lens,
+            cu_seqlens_q=cu_seqlens_q,
+            cu_seqlens_k=cu_seqlens_k,
+            max_seqlen_q=max_seqlen_q,
+            max_seqlen_k=max_seqlen_k,
+            scale=scale,
+            causal=causal,
+        ),
+        tag="Triton",
+        metadata=metadata,
+        num_iterations=num_iterations,
+        num_warmup_iterations=num_warmup_iterations,
+        device=query.device,
+    )
 
     # Print results
-    if triton_result is not None:
-        triton_result.print_parameters(csv=csv)
-        triton_result.print_results(csv=csv)
+    triton_result.print_parameters(csv=csv)
+    triton_result.print_results(csv=csv)
     if baseline_result is not None:
         baseline_result.print_results(csv=csv)
     if vllm_triton_result is not None:
