@@ -17,7 +17,7 @@ def _gelu_tanh_and_mul_pytorch_ref(x: torch.Tensor) -> torch.Tensor:
 
 def _gelu_tanh_and_mul_vllm_ref(x: torch.Tensor) -> torch.Tensor:
     """vLLM reference gelu_tanh_and_mul impl."""
-    from vllm.model_executor.layers.activation import GeluAndMul  # type: ignore[import-not-found, unused-ignore]
+    from vllm.model_executor.layers.activation import GeluAndMul
 
     gelu_layer = GeluAndMul("tanh")
     return gelu_layer.forward_cuda(x)  # type: ignore[no-any-return, unused-ignore]

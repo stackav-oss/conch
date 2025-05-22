@@ -56,9 +56,7 @@ def _reshape_and_cache_vllm_ref(
     v_scale: torch.Tensor,
 ) -> None:
     """Reference vLLM implementation of reshape_and_cache."""
-    from vllm._custom_ops import (
-        reshape_and_cache as reshape_and_cache_vllm,  # type: ignore[import-not-found, unused-ignore]
-    )
+    from vllm._custom_ops import reshape_and_cache as reshape_and_cache_vllm
 
     reshape_and_cache_vllm(key, value, key_cache, value_cache, slot_mapping, kv_cache_dtype, k_scale, v_scale)
 

@@ -333,9 +333,7 @@ def test_varlen_attention_vs_flash_attn(
     is_pure_decode: bool,
 ) -> None:
     """Test Varlen Attention Triton kernel with various configurations vs. vLLM FlashAttnVarlen."""
-    from vllm.vllm_flash_attn import (  # type: ignore[attr-defined, import-not-found, import-untyped, unused-ignore]  # isort:skip
-        flash_attn_varlen_func,
-    )
+    from vllm.vllm_flash_attn import flash_attn_varlen_func  # type: ignore[attr-defined, unused-ignore]
 
     seed: Final = 0
     seed_everything(seed)
