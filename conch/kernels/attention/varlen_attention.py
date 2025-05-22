@@ -664,7 +664,7 @@ def _get_block_size(device_name: str) -> int:
 
 def _get_tuned_sizes(head_size_padded: int, query_group_size_padded: int, max_seqlen_q: int) -> tuple[int, int, int]:
     """Get tuned sizes for current device."""
-    device_name = torch.cuda.get_device_name() if torch.cuda.is_available() else ""
+    device_name = current_platform.get_device_name()
 
     block_size = _get_block_size(device_name)
 

@@ -8,13 +8,9 @@
   - This directory contains distribution files (wheels, source archives, etc.)
 - `docs/`
   - This directory contains documentation in markdown format
-- `env/`
-  - This directory contains utilities for `direnv` for dev environment management
 - `results/`
   - This directory contains benchmarking CSV result files and plots
-- `scripts/`
-  - This directory contains shell scripts for easing the developer experience
 - `tests/`
   - This directory contains unit tests for each kernel/op in Conch
 - `tools/`
-  - This directory contains misc tools (e.g. plotting benchmark results)
+  - This directory contains misc tools (e.g. plotting benchmark results) and scripts for easing the developer experience

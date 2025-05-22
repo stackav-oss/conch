@@ -25,7 +25,7 @@ If you cannot (or do not want to) install direnv, you'll just need to manually a
 
 ### Optional: User environment
 
-Extra environment variables can be placed in `env/user.sh` (not tracked by git).
+Extra environment variables can be placed in `tools/env/user.sh` (not tracked by git).
 For example:
 
 ```bash
@@ -77,7 +77,7 @@ python -m pytest
 To benchmark all Triton kernels, execute this script:
 
 ```bash
-./scripts/benchmarks/run_all.sh
+./tools/benchmarks/run_all.sh
 ```
 
 You can also run benchmarks individually, for example:
