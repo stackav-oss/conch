@@ -64,10 +64,12 @@ disable_error_code = "attr-defined"
 include = ["conch*"]
 exclude = [
   "benchmarks*",
-  "env*",
+  "build*",
+  "dist*",
   "docs*",
-  "scripts*",
+  "results*",
   "tests*",
+  "tools*",
 ]
 
 [tool.setuptools.dynamic]

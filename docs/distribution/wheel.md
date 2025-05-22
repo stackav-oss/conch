@@ -9,5 +9,5 @@ pip install build wheel twine
 1. Build the wheel file
 
 ```bash
-./scripts/wheel/build.sh
+./tools/wheel/build.sh
 ```

@@ -135,7 +135,7 @@ def _get_metadata_eviction_policy() -> str:
 
 def _get_tuning_parameters() -> dict[str, int]:
     """Get block sizes/tuning parameters for current device."""
-    device_name = torch.cuda.get_device_name() if torch.cuda.is_available() else ""
+    device_name = current_platform.get_device_name()
 
     if "H100" in device_name:
         return {
