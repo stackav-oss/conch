@@ -99,18 +99,18 @@ def _rotary_embedding_vllm_ref(
     offsets: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """vLLM reference rotary_embedding impl."""
-    from vllm import _custom_ops as ops  # type: ignore[import-not-found, unused-ignore]
+    from vllm import _custom_ops as vllm_custom_ops
 
     cos_sin_cache = cos_sin_cache.to(query.device, dtype=query.dtype)
 
-    # ops.rotary_embedding()/batched_rotary_embedding()
+    # vllm_custom_ops.rotary_embedding()/batched_rotary_embedding()
     # are in-place operations that update the query and key tensors.
     if offsets is not None:
-        ops.batched_rotary_embedding(
+        vllm_custom_ops.batched_rotary_embedding(
             positions, query, key, head_size, cos_sin_cache, is_neox_style, rotary_dim, offsets
         )
     else:
-        ops.rotary_embedding(positions, query, key, head_size, cos_sin_cache, is_neox_style)
+        vllm_custom_ops.rotary_embedding(positions, query, key, head_size, cos_sin_cache, is_neox_style)
 
     return query, key
 

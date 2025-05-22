@@ -187,9 +187,7 @@ def main(  # noqa: PLR0913
             error_msg = "bitsandbytes must be installed and enabled via CONCH_ENABLE_BNB=1"
             raise NotImplementedError(error_msg)
 
-        from bitsandbytes.functional import (  # type: ignore[import-not-found, import-untyped, unused-ignore]  # isort:skip
-            dequantize_4bit as bnb_dequantize_4bit,
-        )
+        from bitsandbytes.functional import dequantize_4bit as bnb_dequantize_4bit
         from bitsandbytes.functional import quantize_4bit as bnb_quantize_4bit
 
         bnb_quantized, bnb_state = bnb_quantize_4bit(
