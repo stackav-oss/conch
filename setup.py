@@ -4,6 +4,8 @@ from typing import Final
 
 from setuptools import setup
 
+_TORCH_VERSION: Final = "2.6.0"
+
 _REQUIREMENTS: Final = [
     "numpy>=1.26.4",
 ]
@@ -11,28 +13,32 @@ _REQUIREMENTS: Final = [
 # For CPU:
 # --extra-index-url https://download.pytorch.org/whl/cpu
 _DEFAULT_PLATFORM_REQUIREMENTS: Final = [
-    "torch>=2.7.0",
+    f"torch=={_TORCH_VERSION}",
     "triton>=3.1.0",
 ]
 
 # For ROCm:
-# --extra-index-url https://download.pytorch.org/whl/rocm6.3
+# --extra-index-url https://download.pytorch.org/whl/rocm6.2.4
 _ROCM_PLATFORM_REQUIREMENTS: Final = [
-    "torch==2.7.0+rocm6.3",
+    f"torch=={_TORCH_VERSION}+rocm6.2.4",
     "pytorch-triton-rocm>=3.1.0",
 ]
 
 # For XPU:
 # --extra-index-url https://download.pytorch.org/whl/xpu
 _XPU_PLATFORM_REQUIREMENTS: Final = [
-    "torch>=2.7.0",
+    f"torch=={_TORCH_VERSION}+xpu",
     "pytorch-triton-xpu>=3.2.0",
 ]
 
 _PLATFORM_REQUIREMENTS: Final = {
+    # --extra-index-url https://download.pytorch.org/whl/cpu
     "cpu": _DEFAULT_PLATFORM_REQUIREMENTS,
+    # No extra index URL needed!
     "cuda": _DEFAULT_PLATFORM_REQUIREMENTS,
+    # --extra-index-url https://download.pytorch.org/whl/rocm6.2.4
     "rocm": _ROCM_PLATFORM_REQUIREMENTS,
+    # --extra-index-url https://download.pytorch.org/whl/xpu
     "xpu": _XPU_PLATFORM_REQUIREMENTS,
 }
 

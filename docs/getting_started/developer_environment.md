@@ -42,14 +42,14 @@ pip install -e ".[dev]"
 
 By default this does not install `torch` or `triton`.
 You can specify an extra for your platform (either `cuda` or `rocm`) to install the appropriate versions of those packages for your accelerator.
-For ROCm/AMD support, you'll need to add `--extra-index-url https://download.pytorch.org/whl/rocm6.3`.
+For ROCm/AMD support, you'll need to add `--extra-index-url https://download.pytorch.org/whl/rocm6.2.4`.
 
 ```bash
 pip install -e ".[dev, cuda]"
 ```
 
 ```bash
-pip install -e ".[dev, rocm]" --extra-index-url https://download.pytorch.org/whl/rocm6.3
+pip install -e ".[dev, rocm]" --extra-index-url https://download.pytorch.org/whl/rocm6.2.4
 ```
 
 ## Testing

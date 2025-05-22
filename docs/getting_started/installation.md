@@ -15,6 +15,20 @@ then install:
 pip install -e .
 ```
 
+### Torch/Triton installation
+
+To install `torch`/`triton`, specify either the `cuda` or `rocm` extra (depending on your platform).
+
+```bash
+# For Nvidia/CUDA
+pip install -e ".[cuda]"
+```
+
+```bash
+# For AMD/ROCm
+pip install -e ".[rocm]" --extra-index-url https://download.pytorch.org/whl/rocm6.2.4
+```
+
 ## As wheel
 
 You can install `conch` from PyPi via:
@@ -40,5 +54,5 @@ For AMD/ROCm platforms, you can specify the `[rocm]` extra to install `torch` an
 You must also specify the appropriate `--extra-index-url`.
 
 ```bash
-pip install "conch-triton-kernels[rocm]" --extra-index-url https://download.pytorch.org/whl/rocm6.3
+pip install "conch-triton-kernels[rocm]" --extra-index-url https://download.pytorch.org/whl/rocm6.2.4
 ```
