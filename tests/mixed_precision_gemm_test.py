@@ -1,4 +1,5 @@
-# Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
 
 """Test cases for mixed precision GEMM."""
 

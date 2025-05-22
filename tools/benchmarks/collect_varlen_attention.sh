@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
 
 # Need to enable vLLM to compare against FlashAttnWithKVCache
 export CONCH_ENABLE_VLLM=1
