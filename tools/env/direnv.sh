@@ -1,3 +1,6 @@
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
+
 # Reload direnv if these files change
 watch_file $PWD/tools/env/direnv.sh
 watch_file $PWD/tools/env/user.sh

@@ -1,4 +1,5 @@
-# Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
 
 """GEMM kernel supporting mixed-precision (e.g. w{1|2|4|8|16}, a{16|32}) and scaled matrix multiplications (fp8/int8 with scaling factors to different output dtype)."""
 
