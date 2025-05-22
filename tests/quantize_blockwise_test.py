@@ -155,6 +155,14 @@ def test_quantize_blockwise(blocksize: int, size_multiplier: float, dtype: torch
     """Test blockwise quantization method."""
     assert blocksize in SUPPORTED_BLOCKSIZES
 
+    # TODO(jmanning):
+    # Seeing odd AMD compiler error for this kernel for FP8 cases
+    # E       RuntimeError: PassManager::run failed
+    # .direnv/python-3.10.12/lib/python3.10/site-packages/triton/backends/amd/compiler.py:243: RuntimeError
+    # loc("/home/$USER/conch/conch/kernels/quantization/bitsandbytes/quantize_blockwise.py":114:21): error: operand #1 does not dominate this use
+    if current_platform.is_amd() and quant_type == "fp8":
+        pytest.skip()
+
     # There are some small rounding discrepancies between Triton and PyTorch, and its tough to adjust tolerances
     # to account for it because we compre bitpacked results (so if there's a rounding discrepancy in what become
     # the higher-bits of the result, the tolerance would need to be much higher to account for it). Consider changing
