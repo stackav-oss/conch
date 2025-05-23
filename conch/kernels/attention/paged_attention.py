@@ -28,12 +28,12 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     value_cache_ptr: tl.tensor,  # (num_cache_blocks, num_kv_heads, cache_block_size, head_size)
     block_tables_ptr: tl.tensor,  # (batch_size, max_num_blocks_per_sequence)
     seq_lens_ptr: tl.tensor,  # (batch_size, )
+    k_scale_ptr: tl.tensor,  # (1,)
+    v_scale_ptr: tl.tensor,  # (1,)
     # Scalar arguments
     scale: float,
     num_cache_blocks_per_split: int,
     softcap: float,
-    k_scale: float,
-    v_scale: float,
     # Sizes of tensors above
     head_size: int,  # output.shape[3]
     query_group_size: int,  # num_query_heads // num_kv_heads
@@ -68,11 +68,11 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         value_cache_ptr: Tensor with cached V values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
         block_tables_ptr: Pointer to tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
         seq_lens_ptr: Pointer to tensor holding the current sequence length for each sequence in the batch, shape: (batch_size, ).
+        k_scale_ptr: Pointer to tensor holding fp8 scaling factor for k.
+        v_scale_ptr: Pointer to tensor holding fp8 scaling factor for v.
         scale: Scaling factor, 1/sqrt(head_size).
         num_cache_blocks_per_split: The maximum number of cache blocks in each split (max num each kernel will process).
         softcap: Logits softcap to apply.
-        k_scale: Fp8 scaling factor for k.
-        v_scale: Fp8 scaling factor for v.
         head_size: Actual head dim, not padded to power-of-two.
         query_group_size: The number of query heads to group together, not padded to power-of-two.
         output_scratchpad_batch_stride: Stride of the output scratchpad tensor in the 0th dimension.
@@ -193,6 +193,7 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             if cxpr_apply_fp8_scaling:
                 # Dequantize (multiply by scale factor)
                 fp8_dtype = tl.float8e4b8 if cxpr_is_rocm else tl.float8e4nv
+                k_scale = tl.load(k_scale_ptr)
                 key_block = (key_block.to(fp8_dtype, bitcast=True) * k_scale).to(dtype)
 
             # Multiply query vector by key matrix for this cache block (and apply scaling factor)
@@ -244,6 +245,7 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             if cxpr_apply_fp8_scaling:
                 # Dequantize (multiply by scale factor)
                 fp8_dtype = tl.float8e4b8 if cxpr_is_rocm else tl.float8e4nv
+                v_scale = tl.load(v_scale_ptr)
                 value_block = (value_block.to(fp8_dtype, bitcast=True) * v_scale).to(dtype)
 
             # Multiply softmax probabilities by value matrix for this cache block
@@ -497,14 +499,11 @@ def paged_attention_launcher(  # noqa: PLR0913
     if scale is None:
         scale = float(1.0 / (head_size**0.5))
 
-    k_scale_scalar = 1.0
-    v_scale_scalar = 1.0
-
     if cxpr_apply_fp8_scaling:
         assert k_scale is not None  # noqa: S101
         assert v_scale is not None  # noqa: S101
-        k_scale_scalar = k_scale.item()
-        k_scale_scalar = v_scale.item()
+        assert k_scale.numel() == 1  # noqa: S101
+        assert v_scale.numel() == 1  # noqa: S101
 
     # For computing attention for split block (stage 1): parallelize over batches, cache blocks, and KV heads.
     # Note: if the number of cache blocks in a sequence is very large, it is more efficient to handle multiple blocks
@@ -521,12 +520,12 @@ def paged_attention_launcher(  # noqa: PLR0913
         value_cache,
         block_tables,
         seq_lens,
+        k_scale,
+        v_scale,
         # Scalars
         scale,
         num_cache_blocks_per_split,
         softcap,
-        k_scale_scalar,
-        v_scale_scalar,
         # Sizes of relevant tensors
         head_size,
         query_group_size,

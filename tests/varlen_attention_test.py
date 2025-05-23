@@ -14,7 +14,7 @@ from conch.third_party.vllm.utils import create_tensors, seed_everything
 
 _ENABLE_VLLM: Final = envs.CONCH_ENABLE_VLLM and current_platform.has_cuda()
 _HEAD_SIZES: Final = [64, 96, 128, 256]
-_NUM_SEQS_ABRIDGED: Final = [4, 10]
+_NUM_SEQS_ABRIDGED: Final = [4, 9]
 # MHA, MQA, and GQA
 # - MHA: num_query_heads == num_kv_heads
 # - MQA: num_kv_heads == 1
@@ -333,7 +333,9 @@ def test_varlen_attention_vs_flash_attn(
     is_pure_decode: bool,
 ) -> None:
     """Test Varlen Attention Triton kernel with various configurations vs. vLLM FlashAttnVarlen."""
-    from vllm.vllm_flash_attn import flash_attn_varlen_func  # type: ignore[attr-defined, unused-ignore]
+    from vllm.vllm_flash_attn import (  # type: ignore[attr-defined, import-not-found, import-untyped, unused-ignore]  # isort:skip
+        flash_attn_varlen_func,
+    )
 
     seed: Final = 0
     seed_everything(seed)

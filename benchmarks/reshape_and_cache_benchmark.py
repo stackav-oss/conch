@@ -18,7 +18,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 @click.command()
 @click.option(
-    "-h",
     "--head-dim",
     required=True,
     type=int,
@@ -26,7 +25,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Head dimension",
 )
 @click.option(
-    "-t",
     "--num-tokens",
     required=True,
     type=int,
@@ -34,7 +32,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of tokens",
 )
 @click.option(
-    "-c",
     "--cache-block-size",
     required=True,
     type=int,
@@ -42,7 +39,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of KV vectors in each cache block",
 )
 @click.option(
-    "-k",
     "--num-kv-heads",
     required=False,
     type=int,
@@ -50,7 +46,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of kv heads",
 )
 @click.option(
-    "-b",
     "--num-blocks",
     required=False,
     type=int,
@@ -58,7 +53,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of blocks in cache",
 )
 @click.option(
-    "-d",
     "--kv-cache-dtype",
     required=False,
     type=click.Choice(["auto", "fp8", "fp8_e4m3"]),
@@ -66,7 +60,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Dtype of KV cache",
 )
 @click.option(
-    "-i",
     "--num-iterations",
     required=False,
     type=int,
@@ -74,7 +67,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of iterations",
 )
 @click.option(
-    "-w",
     "--num-warmup-iterations",
     required=False,
     type=int,
@@ -82,7 +74,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of warmup iterations",
 )
 @click.option(
-    "-a",
     "--absolute-tolerance",
     required=False,
     type=float,
@@ -90,16 +81,11 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Absolute tolerance to match with",
 )
 @click.option(
-    "-v",
     "--verbose",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing verbose output",
 )
 @click.option(
-    "-g",
     "--gpu",
     required=False,
     type=str,
@@ -108,10 +94,7 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 )
 @click.option(
     "--csv",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing results in CSV format",
 )
 def main(
@@ -176,8 +159,8 @@ def main(
     kv = torch.randn(num_tokens, 2, num_kv_heads, head_dim, dtype=dtype)
     key, value = kv.unbind(dim=1)
 
-    k_scale = torch.full((1,), 2.0)
-    v_scale = torch.full((1,), 2.0)
+    k_scale = torch.full((1,), 2.0, dtype=torch.float32, device=device)
+    v_scale = torch.full((1,), 3.0, dtype=torch.float32, device=device)
 
     # Create the KV caches.
     key_caches_vllm, value_caches_vllm = create_kv_caches_with_random(

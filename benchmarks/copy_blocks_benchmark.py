@@ -18,7 +18,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 @click.command()
 @click.option(
-    "-h",
     "--head-dim",
     required=True,
     type=int,
@@ -26,7 +25,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Head dimension",
 )
 @click.option(
-    "-l",
     "--num-layers",
     required=True,
     type=int,
@@ -34,7 +32,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of layers",
 )
 @click.option(
-    "-c",
     "--cache-block-size",
     required=True,
     type=int,
@@ -42,7 +39,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of KV vectors in each cache block",
 )
 @click.option(
-    "-k",
     "--num-kv-heads",
     required=False,
     type=int,
@@ -50,7 +46,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of kv heads",
 )
 @click.option(
-    "-b",
     "--num-blocks",
     required=False,
     type=int,
@@ -58,7 +53,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of blocks in cache",
 )
 @click.option(
-    "-m",
     "--num-mappings",
     required=False,
     type=int,
@@ -66,7 +60,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of mappings to copy",
 )
 @click.option(
-    "-i",
     "--num-iterations",
     required=False,
     type=int,
@@ -74,7 +67,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of iterations",
 )
 @click.option(
-    "-w",
     "--num-warmup-iterations",
     required=False,
     type=int,
@@ -82,7 +74,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of warmup iterations",
 )
 @click.option(
-    "-a",
     "--absolute-tolerance",
     required=False,
     type=float,
@@ -90,16 +81,11 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Absolute tolerance to match with",
 )
 @click.option(
-    "-v",
     "--verbose",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing verbose output",
 )
 @click.option(
-    "-g",
     "--gpu",
     required=False,
     type=str,
@@ -108,10 +94,7 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 )
 @click.option(
     "--csv",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing results in CSV format",
 )
 def main(

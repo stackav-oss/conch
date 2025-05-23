@@ -68,22 +68,16 @@ def _to_torch_dtype(dtype_str: str) -> torch.dtype:
 )
 @click.option(
     "--compress-statistics",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for double-quantization",
 )
 @click.option(
     "--enable-bnb",
-    required=False,
-    type=bool,
     is_flag=True,
     default=envs.CONCH_BENCH_ENABLE_ALL_REF,
     help="Flag to enable BNB reference impl",
 )
 @click.option(
-    "-i",
     "--num-iterations",
     required=False,
     type=int,
@@ -91,7 +85,6 @@ def _to_torch_dtype(dtype_str: str) -> torch.dtype:
     help="Number of iterations",
 )
 @click.option(
-    "-w",
     "--num-warmup-iterations",
     required=False,
     type=int,
@@ -99,16 +92,11 @@ def _to_torch_dtype(dtype_str: str) -> torch.dtype:
     help="Number of warmup iterations",
 )
 @click.option(
-    "-v",
     "--verbose",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing verbose output",
 )
 @click.option(
-    "-g",
     "--gpu",
     required=False,
     type=str,
@@ -117,10 +105,7 @@ def _to_torch_dtype(dtype_str: str) -> torch.dtype:
 )
 @click.option(
     "--csv",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing results in CSV format",
 )
 def main(  # noqa: PLR0913
@@ -192,7 +177,9 @@ def main(  # noqa: PLR0913
             error_msg = "bitsandbytes must be installed and enabled via CONCH_ENABLE_BNB=1"
             raise NotImplementedError(error_msg)
 
-        from bitsandbytes.functional import quantize_4bit as bnb_quantize_4bit  # type: ignore[import-untyped]
+        from bitsandbytes.functional import (  # type: ignore[import-not-found, import-untyped, unused-ignore]  # isort:skip
+            quantize_4bit as bnb_quantize_4bit,
+        )
 
         bnb_output, bnb_state = bnb_quantize_4bit(
             x,

@@ -16,9 +16,11 @@ from conch.third_party.vllm.utils import create_tensors, seed_everything
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.is_nvidia():
-    from vllm.vllm_flash_attn import flash_attn_varlen_func  # type: ignore[attr-defined, unused-ignore]
+    from vllm.vllm_flash_attn import (  # type: ignore[attr-defined, import-not-found, unused-ignore]  # isort:skip
+        flash_attn_varlen_func,
+    )
 else:
-    flash_attn_varlen_func = None  # type: ignore[assignment]
+    flash_attn_varlen_func = None  # type: ignore[assignment, unused-ignore]
 
 
 @click.command()
@@ -67,13 +69,11 @@ else:
 @click.option(
     "--causal",
     is_flag=True,
-    default=False,
     help="Flag to toggle causal/non-causal attention",
 )
 @click.option(
     "--pure-decode",
     is_flag=True,
-    default=False,
     help="Flag for making all q_seqlens == 1",
 )
 @click.option(
@@ -100,7 +100,6 @@ else:
 @click.option(
     "--verbose",
     is_flag=True,
-    default=False,
     help="Flag for printing verbose output",
 )
 @click.option(
@@ -113,7 +112,6 @@ else:
 @click.option(
     "--csv",
     is_flag=True,
-    default=False,
     help="Flag for printing results in CSV format",
 )
 def main(

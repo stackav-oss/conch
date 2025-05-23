@@ -13,7 +13,7 @@ from conch.platforms import current_platform
 from conch.reference.vllm.reshape_and_cache import reshape_and_cache as reshape_and_cache_reference
 from conch.third_party.vllm.utils import create_kv_caches_with_random, reshape_vllm_kvcache, seed_everything
 
-_DTYPES: Final = [torch.half, torch.bfloat16, torch.float]
+_DTYPES: Final = [torch.float16, torch.bfloat16, torch.float32]
 _NUM_TOKENS: Final = [20, 40, 60]
 _NUM_HEADS: Final = [1, 4]
 _HEAD_SIZES: Final = [128]
@@ -57,8 +57,8 @@ def test_reshape_and_cache(
     kv = torch.randn((num_tokens, 2, num_heads, head_size), dtype=dtype)
     key, value = kv.unbind(dim=1)
 
-    k_scale = torch.full((1,), 2.0)
-    v_scale = torch.full((1,), 2.0)
+    k_scale = torch.full((1,), 2.0, dtype=torch.float32, device=device)
+    v_scale = torch.full((1,), 3.0, dtype=torch.float32, device=device)
 
     # Create the KV caches.
     key_caches_vllm, value_caches_vllm = create_kv_caches_with_random(

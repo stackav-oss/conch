@@ -17,7 +17,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 @click.command()
 @click.option(
-    "-d",
     "--dim",
     required=True,
     type=int,
@@ -25,7 +24,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Dimension",
 )
 @click.option(
-    "-b",
     "--batch-size",
     required=True,
     type=int,
@@ -33,7 +31,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of tokens",
 )
 @click.option(
-    "-t",
     "--num-tokens",
     required=True,
     type=int,
@@ -41,7 +38,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of tokens",
 )
 @click.option(
-    "-i",
     "--num-iterations",
     required=False,
     type=int,
@@ -49,7 +45,6 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of iterations",
 )
 @click.option(
-    "-w",
     "--num-warmup-iterations",
     required=False,
     type=int,
@@ -57,16 +52,11 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of warmup iterations",
 )
 @click.option(
-    "-v",
     "--verbose",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing verbose output",
 )
 @click.option(
-    "-g",
     "--gpu",
     required=False,
     type=str,
@@ -75,10 +65,7 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 )
 @click.option(
     "--csv",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing results in CSV format",
 )
 def main(  # noqa: PLR0913

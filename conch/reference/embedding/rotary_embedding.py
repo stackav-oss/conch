@@ -99,7 +99,7 @@ def _rotary_embedding_vllm_ref(
     offsets: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """vLLM reference rotary_embedding impl."""
-    from vllm import _custom_ops as ops
+    from vllm import _custom_ops as ops  # type: ignore[import-not-found, unused-ignore]
 
     cos_sin_cache = cos_sin_cache.to(query.device, dtype=query.dtype)
 

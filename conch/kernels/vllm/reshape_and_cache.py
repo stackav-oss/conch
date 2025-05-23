@@ -17,15 +17,19 @@ def _reshape_and_cache_kernel(
     key_cache_ptr: tl.tensor,
     value_cache_ptr: tl.tensor,
     slot_mapping_ptr: tl.tensor,
+    k_scale_ptr: tl.tensor,
+    v_scale_ptr: tl.tensor,
     # Strides of relevant tensors
-    kv_token_stride: int,
-    kv_head_stride: int,
+    k_token_stride: int,
+    k_head_stride: int,
+    k_head_element_stride: int,
+    v_token_stride: int,
+    v_head_stride: int,
+    v_head_element_stride: int,
     kv_cache_block_stride: int,
     kv_cache_head_stride: int,
     # Scalars
     cache_block_size: int,
-    k_scale: float,
-    v_scale: float,
     # Constexprs
     cxpr_head_size: tl.constexpr,
     cxpr_apply_fp8_scaling: tl.constexpr,
@@ -39,13 +43,17 @@ def _reshape_and_cache_kernel(
         key_cache_ptr: Pointer to tensor of key cache, shape: (num_cache_blocks, num_kv_heads, cache_block_size, head_size).
         value_cache_ptr: Pointer to tensor of value cache, shape: (num_cache_blocks, num_kv_heads, cache_block_size, head_size).
         slot_mapping_ptr: Pointer to slot mapping tensor, shape: (num_tokens,).
-        kv_token_stride: Stride of key/value tensors in 0th dimension.
-        kv_head_stride: Stride of key/value tensors in 1st dimension.
+        k_scale_ptr: Pointer to Fp8 scaling factor for k.
+        v_scale_ptr: Pointer to Fp8 scaling factor for v.
+        k_token_stride: Stride of key tensor in 0th dimension.
+        k_head_stride: Stride of key tensor in 1st dimension.
+        k_head_element_stride: Stride of key tensor in 2nd dimension.
+        v_token_stride: Stride of value tensor in 0th dimension.
+        v_head_stride: Stride of value tensor in 1st dimension.
+        v_head_element_stride: Stride of value tensor in 2nd dimension.
         kv_cache_block_stride: Stride of key/value cache tensors in 0th dimension.
         kv_cache_head_stride: Stride of key/value cache tensors in 1st dimension.
         cache_block_size: Size of each cache block / page in the KV cache.
-        k_scale: Fp8 scaling factor for k.
-        v_scale: Fp8 scaling factor for v.
         cxpr_head_size: Head size / dimension for the attention head (must be power of two!).
         cxpr_apply_fp8_scaling: Whether or not to apply FP8 scaling.
         cxpr_is_rocm: Whether or not we're on AMD.
@@ -68,20 +76,28 @@ def _reshape_and_cache_kernel(
     entry_index = slot_index % cache_block_size
 
     # Calculate offset into key/value tensors to get to the token for this program
-    kv_token_offset = token_index * kv_token_stride
+    k_token_offset = token_index * k_token_stride
+    v_token_offset = token_index * v_token_stride
     # Calculate offset into key/value tensors to get to the head for this program
-    kv_head_offset = head_index * kv_head_stride
+    k_head_offset = head_index * k_head_stride
+    v_head_offset = head_index * v_head_stride
     # Offsets for each element of the head
     kv_head_offsets = tl.arange(0, cxpr_head_size)
+    k_head_offsets = tl.arange(0, cxpr_head_size) * k_head_element_stride
+    v_head_offsets = tl.arange(0, cxpr_head_size) * v_head_element_stride
 
     # Load key/value vectors for this token/head
-    key = tl.load(key_ptr + kv_token_offset + kv_head_offset + kv_head_offsets)
-    value = tl.load(value_ptr + kv_token_offset + kv_head_offset + kv_head_offsets)
+    key = tl.load(key_ptr + k_token_offset + k_head_offset + k_head_offsets)
+    value = tl.load(value_ptr + v_token_offset + v_head_offset + v_head_offsets)
 
     # Apply FP8 scaling if necessary
     if cxpr_apply_fp8_scaling:
-        # We are quantizing these values, so multiply by the inverted scaling factor (inverted in launcher)
+        k_scale = tl.load(k_scale_ptr)
+        k_scale = 1.0 / k_scale
         key *= k_scale
+
+        v_scale = tl.load(v_scale_ptr)
+        v_scale = 1.0 / v_scale
         value *= v_scale
 
         fp8_dtype = tl.float8e4b8 if cxpr_is_rocm else tl.float8e4nv
@@ -113,10 +129,9 @@ def reshape_and_cache_launcher(
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
     slot_mapping: torch.Tensor,
-    k_scale: torch.Tensor,
-    v_scale: torch.Tensor,
-    *,
-    apply_fp8_scaling: bool = False,
+    kv_cache_dtype: str = "auto",
+    k_scale: torch.Tensor | None = None,
+    v_scale: torch.Tensor | None = None,
 ) -> None:
     """Launch reshape_and_cache kernel.
 
@@ -126,18 +141,16 @@ def reshape_and_cache_launcher(
         key_cache: Key cache, shape: (num_cache_blocks, num_kv_heads, cache_block_size, head_size).
         value_cache: Value cache, shape: (num_cache_blocks, num_kv_heads, cache_block_size, head_size).
         slot_mapping: Tensor listing what slots in the cache each key/value vector should be placed in, shape: (num_tokens,).
+        kv_cache_dtype: String datatype of kv cache elements.
         k_scale: Fp8 scaling factor for k.
         v_scale: Fp8 scaling factor for v.
-        apply_fp8_scaling: Whether or not to apply fp8 scaling factors in kernel.
     """
     # Assume sizes already checked if calling launcher. For interface with strict size checking, call `reshape_and_cache()`.
     num_tokens, num_kv_heads, head_size = key.shape
     num_cache_blocks, _, cache_block_size, _ = key_cache.shape
 
-    assert key.stride(0) == value.stride(0)  # noqa: S101
-    assert key.stride(1) == value.stride(1)  # noqa: S101
-    assert key.stride(2) == value.stride(2)  # noqa: S101
-    assert key.stride(2) == 1  # noqa: S101
+    assert key.shape == value.shape  # noqa: S101
+    assert key_cache.shape == value_cache.shape  # noqa: S101
 
     assert key_cache.stride(0) == value_cache.stride(0)  # noqa: S101
     assert key_cache.stride(1) == value_cache.stride(1)  # noqa: S101
@@ -148,14 +161,14 @@ def reshape_and_cache_launcher(
     assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"  # noqa: S101
     assert head_size == triton.next_power_of_2(head_size), "Head size must be a power of two!"  # noqa: S101
 
-    assert k_scale.numel() == 1  # noqa: S101
-    assert k_scale.numel() == v_scale.numel()  # noqa: S101
-
     is_rocm: tl.constexpr = current_platform.is_amd()
+    apply_fp8_scaling: tl.constexpr = kv_cache_dtype == "fp8" or kv_cache_dtype == "fp8_e4m3"
 
-    # Invert scale factors
-    k_scale_scalar = 1.0 / k_scale.item()
-    v_scale_scalar = 1.0 / v_scale.item()
+    if apply_fp8_scaling:
+        assert k_scale is not None  # noqa: S101
+        assert v_scale is not None  # noqa: S101
+        assert k_scale.numel() == 1  # noqa: S101
+        assert v_scale.numel() == 1  # noqa: S101
 
     # Parallelize over the number of tokens and number of kv heads
     grid = (num_tokens, num_kv_heads)
@@ -168,15 +181,19 @@ def reshape_and_cache_launcher(
         key_cache,
         value_cache,
         slot_mapping,
+        k_scale,
+        v_scale,
         # Strides of relevant tensors
         key.stride(0),
         key.stride(1),
+        key.stride(2),
+        value.stride(0),
+        value.stride(1),
+        value.stride(2),
         key_cache.stride(0),
         key_cache.stride(1),
         # Scalars
         cache_block_size,
-        k_scale_scalar,
-        v_scale_scalar,
         # Constexprs
         head_size,
         apply_fp8_scaling,

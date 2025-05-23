@@ -2,6 +2,7 @@
 
 # Need to enable vLLM to compare against FlashAttnWithKVCache
 export CONCH_ENABLE_VLLM=1
+export VLLM_CONFIGURE_LOGGING=0
 
 # Create output directory
 benchmark_name="paged_attention_vs_flash"
