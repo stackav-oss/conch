@@ -60,8 +60,8 @@ def _check_key_value_cache_size_compatibility(
     """Check size compatibility of Key and Value tensors.
 
     Args:
-        key_cache: Tensor with cached K values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
-        value_cache: Tensor with cached V values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
+        key_cache: Tensor with cached K values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
+        value_cache: Tensor with cached V values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
         head_size: Size of attention head, deduced from query tensor size.
         num_query_heads: Number of query heads, deduced from query tensor size.
 
@@ -87,7 +87,7 @@ def _check_key_value_cache_size_compatibility(
         )
         raise ValueError(msg)
 
-    num_blocks, num_kv_heads, cache_block_size, head_size_kv = key_cache.shape
+    num_blocks, cache_block_size, num_kv_heads, head_size_kv = key_cache.shape
 
     if head_size_kv != head_size:
         msg = f"Head size of key/value cache tensors does not match head size of query/output tensors ({head_size_kv = }, {head_size = })"
@@ -191,8 +191,8 @@ def _create_varlen_metadata(
     Args:
         output: Tensor to write the output of the attention calculation, shape: (total_num_q, num_query_heads, head_size).
         query: Query tensor, shape: (total_num_q, num_query_heads, head_size).
-        key_cache: Tensor with cached K values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
-        value_cache: Tensor with cached V values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
+        key_cache: Tensor with cached K values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
+        value_cache: Tensor with cached V values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
         cu_seqlens_q: Cumulative sequence length for query/output tensors, shape: (batch_size + 1).
         cu_seqlens_k: Cumulative sequence length for key/value tensors, shape: (batch_size + 1).
         block_tables: Block tables tensor, shape: (batch_size, max_num_blocks_per_sequence).
@@ -208,7 +208,7 @@ def _create_varlen_metadata(
     total_num_q, num_query_heads, head_size = out.shape
 
     _check_key_value_cache_size_compatibility(key_cache, value_cache, head_size, num_query_heads)
-    _, num_kv_heads, _, _ = key_cache.shape
+    _, _, num_kv_heads, _ = key_cache.shape
 
     _check_cumulative_sequence_length_size_compatibility(cu_seqlens_q, cu_seqlens_k)
     batch_size = cu_seqlens_q.shape[0] - 1
@@ -251,8 +251,8 @@ def varlen_attention(
 
     Args:
         query: Query tensor, shape: (total_num_q, num_query_heads, head_size).
-        key_cache: Tensor with cached K values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
-        value_cache: Tensor with cached V values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
+        key_cache: Tensor with cached K values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
+        value_cache: Tensor with cached V values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
         block_tables: Block tables tensor, shape: (batch_size, max_num_blocks_per_sequence).
         seq_lens: Sequence lengths tensor, shape: (batch_size,).
         cu_seqlens_q: Cumulative sequence length for query/output tensors, shape: (batch_size + 1).

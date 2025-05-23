@@ -95,11 +95,8 @@ def _convert_paged_to_contiguous(
 
             this_length = relative_end - relative_begin
 
-            this_k_block = current_k_block.permute(1, 0, 2)
-            this_v_block = current_v_block.permute(1, 0, 2)
-
-            this_k[relative_begin:relative_end, :, :] = this_k_block[:this_length, :, :]
-            this_v[relative_begin:relative_end, :, :] = this_v_block[:this_length, :, :]
+            this_k[relative_begin:relative_end, :, :] = current_k_block[:this_length, :, :]
+            this_v[relative_begin:relative_end, :, :] = current_v_block[:this_length, :, :]
 
             relative_begin += cache_block_size
 
@@ -246,7 +243,7 @@ def test_varlen_attention_vs_pytorch(
 
     cache_block_size = 16
 
-    _, _, _, key_cache_conch, value_cache_conch, block_tables, seq_lens = create_tensors(
+    _, _, _, key_cache, value_cache, block_tables, seq_lens = create_tensors(
         head_size,
         sequence_length,
         cache_block_size,
@@ -272,8 +269,8 @@ def test_varlen_attention_vs_pytorch(
     total_num_k = int(cu_seqlens_k[-1].item())
 
     key_contiguous, value_contiguous = _convert_paged_to_contiguous(
-        key_cache_conch,
-        value_cache_conch,
+        key_cache,
+        value_cache,
         block_tables,
         cu_seqlens_k,
         total_num_k,
@@ -299,8 +296,8 @@ def test_varlen_attention_vs_pytorch(
 
     conch_output = varlen_attention(
         query=q,
-        key_cache=key_cache_conch,
-        value_cache=value_cache_conch,
+        key_cache=key_cache,
+        value_cache=value_cache,
         block_tables=block_tables,
         seq_lens=seq_lens,
         cu_seqlens_q=cu_seqlens_q,
@@ -351,7 +348,7 @@ def test_varlen_attention_vs_flash_attn(
 
     cache_block_size = 16
 
-    _, _, _, key_cache_conch, value_cache_conch, block_tables, seq_lens = create_tensors(
+    _, _, _, key_cache, value_cache, block_tables, seq_lens = create_tensors(
         head_size,
         sequence_length,
         cache_block_size,
@@ -385,9 +382,6 @@ def test_varlen_attention_vs_flash_attn(
         max_seqlen_q = int(torch.max(seq_lens).item())
         max_seqlen_k = int(max_seqlen_q)
 
-    key_cache_fa = key_cache_conch.permute(0, 2, 1, 3)
-    value_cache_fa = value_cache_conch.permute(0, 2, 1, 3)
-
     total_num_q = int(cu_seqlens_q[-1].item())
 
     q = torch.empty(total_num_q, num_query_heads, head_size, dtype=dtype, device=device)
@@ -395,8 +389,8 @@ def test_varlen_attention_vs_flash_attn(
 
     vllm_output = flash_attn_varlen_func(
         q=q,
-        k=key_cache_fa,
-        v=value_cache_fa,
+        k=key_cache,
+        v=value_cache,
         cu_seqlens_q=cu_seqlens_q,
         max_seqlen_q=max_seqlen_q,
         max_seqlen_k=max_seqlen_k,
@@ -408,12 +402,113 @@ def test_varlen_attention_vs_flash_attn(
 
     conch_output = varlen_attention(
         query=q,
-        key_cache=key_cache_conch,
-        value_cache=value_cache_conch,
+        key_cache=key_cache,
+        value_cache=value_cache,
         block_tables=block_tables,
         seq_lens=seq_lens,
         cu_seqlens_q=cu_seqlens_q,
         cu_seqlens_k=cu_seqlens_k,
+        max_seqlen_q=max_seqlen_q,
+        max_seqlen_k=max_seqlen_k,
+        causal=causal,
+        scale=scale,
+        softcap=softcap,
+    )
+
+    torch.testing.assert_close(vllm_output, conch_output, atol=tolerance, rtol=tolerance)
+
+
+@pytest.mark.skipif(not _ENABLE_VLLM, reason="This test case requires vLLM")
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_vllm_crash(dtype: torch.dtype) -> None:
+    """Test Varlen Attention Triton kernel with various configurations vs. vLLM FlashAttnVarlen."""
+    from vllm.vllm_flash_attn import flash_attn_varlen_func  # type: ignore[attr-defined, unused-ignore]
+
+    head_size: Final = 128
+    num_query_heads: Final = 32
+    num_kv_heads: Final = 8
+    cache_block_size: Final = 128
+
+    seed: Final = 0
+    seed_everything(seed)
+
+    device: Final = torch.device(current_platform.device)
+    torch.set_default_device(device)
+
+    scale: Final = float(1.0 / (head_size**0.5))
+    softcap: Final = 0.0
+
+    tolerance = 1e-2 if dtype == torch.bfloat16 else 1e-3
+
+    block_tables = torch.tensor(
+        [
+            [1, 2, 3, 4, 10, 6, 7, 8, 9, 0, 0, 0, 0, 0, 0, 0],
+            [11, 12, 13, 14, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [16, 17, 18, 19, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [21, 22, 23, 24, 25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [26, 27, 28, 29, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [31, 32, 33, 34, 35, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [36, 37, 38, 39, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [41, 42, 43, 44, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [46, 47, 48, 49, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [51, 52, 53, 54, 55, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [56, 57, 58, 59, 60, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [61, 62, 63, 64, 65, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [66, 67, 68, 69, 70, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [71, 72, 73, 74, 75, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [76, 77, 78, 79, 80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [81, 82, 83, 84, 85, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [86, 87, 88, 89, 90, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [91, 92, 93, 94, 95, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [96, 97, 98, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        ],
+        device=device,
+        dtype=torch.int32,
+    )
+
+    cu_seqlens_q = torch.tensor(
+        [0, 1, 2, 3, 534, 1054, 1580, 2095, 2619, 3144, 3681, 4211, 4743, 5261, 5794, 6327, 6842, 7365, 7890, 8192],
+        device=device,
+        dtype=torch.int32,
+    )
+    seq_lens = torch.tensor(
+        [536, 530, 520, 531, 520, 526, 515, 524, 525, 537, 530, 532, 518, 533, 533, 515, 523, 525, 302],
+        device=device,
+        dtype=torch.int32,
+    )
+
+    key_cache = torch.randn(3236, cache_block_size, num_kv_heads, head_size, dtype=dtype, device=device)
+    value_cache = torch.randn(3236, cache_block_size, num_kv_heads, head_size, dtype=dtype, device=device)
+
+    q = torch.empty(8192, num_query_heads, head_size, dtype=dtype, device=device)
+    q.uniform_(-scale, scale)
+
+    max_seqlen_q = int(torch.max(seq_lens).item())
+    max_seqlen_k = max_seqlen_q
+
+    causal = True
+
+    vllm_output = flash_attn_varlen_func(
+        q=q,
+        k=key_cache,
+        v=value_cache,
+        cu_seqlens_q=cu_seqlens_q,
+        max_seqlen_q=max_seqlen_q,
+        max_seqlen_k=max_seqlen_k,
+        block_table=block_tables,
+        seqused_k=seq_lens,
+        softmax_scale=scale,
+        causal=causal,
+    )
+
+    conch_output = varlen_attention(
+        query=q,
+        key_cache=key_cache,
+        value_cache=value_cache,
+        block_tables=block_tables,
+        seq_lens=seq_lens,
+        cu_seqlens_q=cu_seqlens_q,
+        cu_seqlens_k=cu_seqlens_q,
         max_seqlen_q=max_seqlen_q,
         max_seqlen_k=max_seqlen_k,
         causal=causal,

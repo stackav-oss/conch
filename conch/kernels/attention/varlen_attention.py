@@ -82,8 +82,8 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     output_scratchpad_ptr: tl.tensor,  # (total_num_q, num_kv_splits, num_query_heads, head_size)
     lse_scratchpad_ptr: tl.tensor,  # (total_num_q, num_kv_splits, num_query_heads)
     query_ptr: tl.tensor,  # (total_num_q, num_query_heads, head_size)
-    key_cache_ptr: tl.tensor,  # (num_cache_blocks, num_kv_heads, cache_block_size, head_size)
-    value_cache_ptr: tl.tensor,  # (num_cache_blocks, num_kv_heads, cache_block_size, head_size)
+    key_cache_ptr: tl.tensor,  # (num_cache_blocks, cache_block_size, num_kv_heads, head_size)
+    value_cache_ptr: tl.tensor,  # (num_cache_blocks, cache_block_size, num_kv_heads, head_size)
     block_tables_ptr: tl.tensor,  # (batch_size, max_num_blocks_per_sequence)
     seq_lens_ptr: tl.tensor,  # (batch_size, )
     cu_seqlens_q_ptr: tl.tensor,  # (batch_size + 1, )
@@ -106,8 +106,8 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     query_batch_stride: int,  # query.stride(0)
     query_head_stride: int,  # query.stride(1)
     kv_page_stride: int,  # key_cache.stride(0), same for key and value
-    kv_head_stride: int,  # key_cache.stride(1), same for key and value
-    kv_cache_block_stride: int,  # key_cache.stride(2), same for key and value
+    kv_cache_block_stride: int,  # key_cache.stride(1), same for key and value
+    kv_head_stride: int,  # key_cache.stride(2), same for key and value
     kv_head_element_stride: int,  # key_cache.stride(3), same for key and value
     block_tables_batch_stride: int,  # block_tables.stride(0)
     # Constexprs
@@ -126,8 +126,8 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         output_scratchpad_ptr: Pointer to tensor as scratchpad for output of each cache block, shape: (total_num_q, num_kv_splits, num_query_heads, head_size).
         lse_scratchpad_ptr: Pointer to tensor as scratchpad for log-sum-exp of each cache block, shape: (total_num_q, num_kv_splits, num_query_heads).
         query_ptr: Pointer to tensor storing the query, shape: (total_num_q, num_query_heads, head_size).
-        key_cache_ptr: Tensor with cached K values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
-        value_cache_ptr: Tensor with cached V values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
+        key_cache_ptr: Tensor with cached K values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
+        value_cache_ptr: Tensor with cached V values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
         block_tables_ptr: Pointer to tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
         seq_lens_ptr: Pointer to tensor holding the current sequence length for each sequence in the batch, shape: (batch_size, ).
         cu_seqlens_q_ptr: Pointer to tensor holding the cumulative sequence lengths for each sequence in the batch, shape: (batch_size, ).
@@ -147,8 +147,8 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         query_batch_stride: Stride of the query tensor in the 0th dimension.
         query_head_stride: Stride of the query tensor in the 1st dimension.
         kv_page_stride: Stride of the k/v tensors in the 0th dimension.
-        kv_head_stride: Stride of the k/v tensors in the 1st dimension.
-        kv_cache_block_stride: Stride of the k/v tensors in the 2nd dimension.
+        kv_cache_block_stride: Stride of the k/v tensors in the 1st dimension.
+        kv_head_stride: Stride of the k/v tensors in the 2nd dimension.
         kv_head_element_stride: Stride of the k/v tensors in the 3rd dimension.
         block_tables_batch_stride: Stride of the block table tensor in the 0th dimension.
         cxpr_query_group_size_padded: The number of query heads to group together (must be power-of-two!).
@@ -204,7 +204,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
     # Similar to above, we launch the same number of splits for all sequences in the batch, so different kernel launches will have different
     # numbers of query tokens to process. If we've already processed all of the query tokens for this sequence, we can skip this kernel.
-    if this_query_split_offset >= this_query_length:
+    if this_query_split_offset > this_query_length:
         return
 
     # What is the last Q token in this block?
@@ -216,7 +216,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     num_cache_blocks_to_process = num_cache_blocks_per_split
 
     if cxpr_is_causal and not is_pure_decode:
-        if end_seqlen_q < beginning_seqlen_k:
+        if end_seqlen_q <= beginning_seqlen_k:
             return
 
         # How many cache blocks do we need to process until seqlen_k > end_seqlen_q
@@ -240,9 +240,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     query_split_group_seq_mask = query_split_group_seq_offsets < this_query_length
     query_split_group_head_mask = query_split_group_head_offsets < (kv_head_index * query_group_size) + query_group_size
 
-    # How many previous sequences are there before this one?
-    num_previous_sequences = tl.load(cu_seqlens_q_ptr + batch_index)
-
     # Offsets to each element of the padded-to-next-power-of-two head size
     head_offsets = tl.arange(0, cxpr_head_size_padded)
     # Mask to only read valid indices of the actual head size
@@ -250,7 +247,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
     # Offsets for the queries in this block
     query_offsets = (
-        num_previous_sequences * query_batch_stride
+        this_query_start * query_batch_stride
         + query_split_group_seq_offsets[:, None] * query_batch_stride
         + query_split_group_head_offsets[:, None] * query_head_stride
         + head_offsets[None, :]
@@ -260,7 +257,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     query_mask = query_split_group_seq_mask[:, None] & query_split_group_head_mask[:, None] & head_mask[None, :]
 
     # Determine whether or not we need masking for different dimensions
-    needs_query_split_mask = (this_query_split_offset + cxpr_query_chunk_size) > this_query_length
+    needs_query_split_mask = end_seqlen_q > this_query_length
     needs_query_group_mask = query_group_size != cxpr_query_group_size_padded
     needs_head_mask = head_size != cxpr_head_size_padded
     needs_query_mask = (needs_query_split_mask or needs_query_group_mask) or needs_head_mask
@@ -283,6 +280,8 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Keep running denominator of softmax
     l_i = tl.full([cxpr_query_chunk_size * cxpr_query_group_size_padded], 0.0, dtype=dtype)
 
+    cache_block_offsets = tl.arange(0, cxpr_cache_block_size)
+
     # Iterate through the cache blocks that this kernel is assigned to
     for cache_block_index in range(
         starting_cache_block_index, starting_cache_block_index + num_cache_blocks_to_process
@@ -291,6 +290,8 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         num_entries_in_cache_block = min(
             current_sequence_length - (cache_block_index * cxpr_cache_block_size), cxpr_cache_block_size
         )
+
+        cache_block_mask = cache_block_offsets < num_entries_in_cache_block
 
         needs_cache_block_mask = num_entries_in_cache_block != cxpr_cache_block_size
         needs_qk_mask = (needs_query_split_mask or needs_query_group_mask) or needs_cache_block_mask
@@ -304,20 +305,17 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
         # Load the key block as (cxpr_head_size_padded, cache_block_size)
         # Note: we're loading it transposed here
-        key_block_ptr = tl.make_block_ptr(
-            key_cache_ptr + kv_cache_block_index_offset + kv_head_index_offset,
-            shape=(head_size, num_entries_in_cache_block),
-            strides=(kv_head_element_stride, kv_cache_block_stride),
-            offsets=(0, 0),
-            block_shape=(cxpr_head_size_padded, cxpr_cache_block_size),
-            order=(1, 0),
+        key_block_offsets = (
+            head_offsets[:, None] + kv_head_index_offset + cache_block_offsets[None, :] * kv_cache_block_stride
         )
 
-        key_block = _load_2d_block_ptr(
-            key_block_ptr,
-            mask_first_dim=needs_head_mask,
-            mask_second_dim=needs_cache_block_mask,
-            padding_option="zero",
+        key_block_mask = head_mask[:, None] & cache_block_mask[None, :]
+
+        key_block = _load(
+            key_cache_ptr + kv_cache_block_index_offset + key_block_offsets,
+            use_mask=(needs_cache_block_mask or needs_head_mask),
+            mask=key_block_mask,
+            other=0.0,
         )
 
         if cxpr_apply_fp8_scaling:
@@ -333,8 +331,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         qk = (scale * tl.dot(query, key_block)).to(dtype)
 
         # Need to mask out any elements that represent unused cache block entries or padding elements
-        cache_block_offsets = tl.arange(0, cxpr_cache_block_size)
-        cache_block_mask = cache_block_offsets < num_entries_in_cache_block
         qk_mask = query_split_group_seq_mask[:, None] & query_split_group_head_mask[:, None] & cache_block_mask[None, :]
 
         if needs_causal_mask:
@@ -369,20 +365,17 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         output *= alpha[:, None]
 
         # Load the value block as (cache_block_size, cxpr_head_size_padded)
-        value_block_ptr = tl.make_block_ptr(
-            value_cache_ptr + kv_cache_block_index_offset + kv_head_index_offset,
-            shape=(num_entries_in_cache_block, head_size),
-            strides=(kv_cache_block_stride, kv_head_element_stride),
-            offsets=(0, 0),
-            block_shape=(cxpr_cache_block_size, cxpr_head_size_padded),
-            order=(0, 1),
+        value_block_offsets = (
+            cache_block_offsets[:, None] * kv_cache_block_stride + kv_head_index_offset + head_offsets[None, :]
         )
 
-        value_block = _load_2d_block_ptr(
-            value_block_ptr,
-            mask_first_dim=needs_cache_block_mask,
-            mask_second_dim=needs_head_mask,
-            padding_option="zero",
+        value_block_mask = cache_block_mask[:, None] & head_mask[None, :]
+
+        value_block = _load(
+            value_cache_ptr + kv_cache_block_index_offset + value_block_offsets,
+            use_mask=(needs_cache_block_mask or needs_head_mask),
+            mask=value_block_mask,
+            other=0.0,
         )
 
         if cxpr_apply_fp8_scaling:
@@ -408,7 +401,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Calculate offsets to store the output for this query split/query group
     # 2D block of shape (query_chunk_size * query_group_size, head_size_padded)
     output_scratch_offsets = (
-        num_previous_sequences * output_scratchpad_batch_stride
+        this_query_start * output_scratchpad_batch_stride
         + query_split_group_seq_offsets[:, None] * output_scratchpad_batch_stride
         + kv_split_index * output_scratchpad_kv_split_stride
         + query_split_group_head_offsets[:, None] * output_scratchpad_head_stride
@@ -430,7 +423,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Calculate offsets to store log-sum-exp for this query split/query group
     # 1D block of shape (query_chunk_size * query_group_size,)
     lse_scratch_offsets = (
-        num_previous_sequences * lse_scratchpad_batch_stride
+        this_query_start * lse_scratchpad_batch_stride
         + query_split_group_seq_offsets * lse_scratchpad_batch_stride
         + kv_split_index * lse_scratchpad_kv_split_stride
         + query_split_group_head_offsets
@@ -442,7 +435,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     _store(
         lse_scratchpad_ptr + lse_scratch_offsets,
         lse,
-        use_mask=needs_query_split_mask or needs_query_group_mask,
+        use_mask=(needs_query_split_mask or needs_query_group_mask),
         mask=lse_mask,
     )
 
@@ -514,6 +507,9 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
 
     is_pure_decode = this_query_length == 1
 
+    if is_pure_decode and query_split_index > 0:
+        return
+
     # Offset for how many tokens in query correspond to previous splits for this sequence
     this_query_split_offset = query_split_index * cxpr_query_chunk_size
 
@@ -522,12 +518,17 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     if this_query_split_offset >= this_query_length:
         return
 
+    needs_causal_mask = cxpr_is_causal and not is_pure_decode
+
     # Accumulator for the output of this batch/head
     output = tl.zeros([cxpr_query_chunk_size, cxpr_head_size_padded], dtype=dtype)
     # Running max of block lse
     m_i = tl.full([cxpr_query_chunk_size], -float("inf"), dtype=dtype)
     # Running final scale factor
     l_i = tl.full([cxpr_query_chunk_size], 0.0, dtype=dtype)
+
+    # What is the last Q token in this block?
+    end_seqlen_q = this_query_split_offset + cxpr_query_chunk_size
 
     # Load scalar current_sequence_length for the current batch
     current_sequence_length = tl.load(seq_lens_ptr + batch_index)
@@ -537,9 +538,6 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
 
     # How many KV splits do we need to process
     num_kv_splits_this_seq = tl.cdiv(current_seq_num_cache_blocks, num_cache_blocks_per_split)
-
-    # Offset for how many tokens in query correspond to other sequences
-    num_previous_sequences = tl.load(cu_seqlens_q_ptr + batch_index)
 
     # Offsets for each query vector in the group
     query_split_offsets = this_query_split_offset + tl.arange(0, cxpr_query_chunk_size)
@@ -551,96 +549,87 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     # Mask to only read valid indices of the actual head size
     head_mask = head_offsets < head_size
 
-    query_mask = query_split_mask[:, None] & head_mask[None, :]
+    output_mask = query_split_mask[:, None] & head_mask
 
-    needs_query_split_mask = (this_query_split_offset + cxpr_query_chunk_size) > this_query_length
+    needs_query_split_mask = end_seqlen_q > this_query_length
     needs_head_mask = head_size != cxpr_head_size_padded
-    needs_query_mask = needs_query_split_mask or needs_head_mask
-    needs_causal_mask = cxpr_is_causal and not is_pure_decode
+    needs_output_mask = needs_query_split_mask or needs_head_mask
 
     # Iterate through every cache block for the current sequence
     for kv_split_index in range(num_kv_splits_this_seq):
-        consider_split = not cxpr_is_causal or is_pure_decode
+        # Calculate offsets to load the scratch for this head/batch/split
+        # 2D block of shape (cxpr_query_chunk_size, cxpr_head_size_padded)
+        output_scratchpad_offsets = (
+            this_query_start * output_scratchpad_batch_stride
+            + query_split_offsets[:, None] * output_scratchpad_batch_stride
+            + kv_split_index * output_scratchpad_kv_split_stride
+            + query_head_index * output_scratchpad_head_stride
+            + head_offsets[None, :]
+        )
 
-        beginning_seqlen_k = 0
+        this_query_split_mask = query_split_mask
 
         if needs_causal_mask:
             beginning_seqlen_k = kv_split_index * num_cache_blocks_per_split * cxpr_cache_block_size
-            consider_split = this_query_split_offset + cxpr_query_chunk_size >= beginning_seqlen_k
+            this_query_split_mask = this_query_split_mask & (query_split_offsets >= beginning_seqlen_k)
 
-        if consider_split:
-            # Calculate offsets to load the scratch for this head/batch/split
-            # 2D block of shape (cxpr_query_chunk_size, cxpr_head_size_padded)
-            output_scratchpad_offsets = (
-                num_previous_sequences * output_scratchpad_batch_stride
-                + query_split_offsets[:, None] * output_scratchpad_batch_stride
-                + kv_split_index * output_scratchpad_kv_split_stride
-                + query_head_index * output_scratchpad_head_stride
-                + head_offsets[None, :]
-            )
+        this_query_mask = this_query_split_mask[:, None] & head_mask
 
-            this_query_split_mask = query_split_offsets >= beginning_seqlen_k
-            this_query_mask = this_query_split_mask[:, None] & head_mask[None, :]
+        needs_this_query_split_mask = needs_causal_mask or needs_query_split_mask
+        needs_this_query_mask = needs_head_mask or needs_this_query_split_mask
 
-            needs_this_query_split_mask = False
-            needs_this_query_mask = needs_head_mask
+        # Load output for this cache block, shape -> (cxpr_query_chunk_size, cxpr_head_size_padded)
+        block_output = _load(
+            output_scratchpad_ptr + output_scratchpad_offsets,
+            use_mask=needs_this_query_mask,
+            mask=this_query_mask,
+            other=0.0,
+        )
 
-            if needs_causal_mask:
-                needs_this_query_split_mask = (this_query_split_offset + cxpr_query_chunk_size) >= beginning_seqlen_k
-                needs_this_query_mask = needs_this_query_mask or needs_this_query_split_mask
+        # Calculate offsets to load log-sum-exp for this head/batch/cache block
+        lse_scratchpad_offsets = (
+            this_query_start * lse_scratchpad_batch_stride
+            + query_split_offsets * lse_scratchpad_batch_stride
+            + kv_split_index * lse_scratchpad_kv_split_stride
+            + query_head_index
+        )
 
-            # Load output for this cache block, shape -> (cxpr_query_chunk_size, cxpr_head_size_padded)
-            block_output = _load(
-                output_scratchpad_ptr + output_scratchpad_offsets,
-                use_mask=needs_this_query_mask,
-                mask=this_query_mask,
-                other=0.0,
-            )
+        # Load log-sum-exp for this cache block, shape -> (cxpr_query_chunk_size,)
+        block_lse = _load(
+            lse_scratchpad_ptr + lse_scratchpad_offsets,
+            use_mask=needs_this_query_split_mask,
+            mask=this_query_split_mask,
+            other=float("-inf"),
+        )
 
-            # Calculate offsets to load log-sum-exp for this head/batch/cache block
-            lse_scratchpad_offsets = (
-                num_previous_sequences * lse_scratchpad_batch_stride
-                + query_split_offsets * lse_scratchpad_batch_stride
-                + kv_split_index * lse_scratchpad_kv_split_stride
-                + query_head_index
-            )
+        # Reduce running max lse
+        m_ij = tl.maximum(m_i, block_lse).to(dtype)
 
-            # Load log-sum-exp for this cache block, shape -> (cxpr_query_chunk_size,)
-            block_lse = _load(
-                lse_scratchpad_ptr + lse_scratchpad_offsets,
-                use_mask=needs_this_query_split_mask,
-                mask=this_query_split_mask,
-                other=float("-inf"),
-            )
+        # Calculate correction factor from previous cache blocks
+        # Note: exp() only accepts fp32/fp64 arguments
+        alpha = tl.exp((m_i - m_ij).to(tl.float32)).to(dtype)
 
-            # Reduce running max lse
-            m_ij = tl.maximum(m_i, block_lse).to(dtype)
+        # Apply correction factor
+        output *= alpha[:, None]
 
-            # Calculate correction factor from previous cache blocks
-            # Note: exp() only accepts fp32/fp64 arguments
-            alpha = tl.exp((m_i - m_ij).to(tl.float32)).to(dtype)
+        # Calculate correction factor from this cache block
+        # Note: exp() only accepts fp32/fp64 arguments
+        beta = tl.exp((block_lse - m_ij).to(tl.float32)).to(dtype)
 
-            # Apply correction factor
-            output *= alpha[:, None]
+        # Apply second correction factor and accumulate running output
+        output += (beta[:, None] * block_output).to(dtype)
 
-            # Calculate correction factor from this cache block
-            # Note: exp() only accepts fp32/fp64 arguments
-            beta = tl.exp((block_lse - m_ij).to(tl.float32)).to(dtype)
-
-            # Apply second correction factor and accumulate running output
-            output += (beta[:, None] * block_output).to(dtype)
-
-            # Update running max
-            m_i = m_ij
-            # Update running final scale factor
-            l_i = l_i * alpha + beta
+        # Update running max
+        m_i = m_ij
+        # Update running final scale factor
+        l_i = l_i * alpha + beta
 
     # Apply final correction to output
     output /= l_i[:, None]
 
     # Calculate offsets to store the output for this head/batch
     output_offsets = (
-        num_previous_sequences * output_batch_stride
+        this_query_start * output_batch_stride
         + query_split_offsets[:, None] * output_batch_stride
         + query_head_index * output_head_stride
         + head_offsets[None, :]
@@ -650,8 +639,8 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     _store(
         output_ptr + output_offsets,
         output,
-        use_mask=needs_query_mask,
-        mask=query_mask,
+        use_mask=needs_output_mask,
+        mask=output_mask,
     )
 
 
@@ -710,8 +699,8 @@ def varlen_attention_launcher(  # noqa: PLR0913
     Args:
         output: Tensor to write the output of the attention calculation, shape: (total_num_q, num_heads, head_size).
         query: Query tensor, shape: (total_num_q, num_heads, head_size).
-        key_cache: Tensor with cached K values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
-        value_cache: Tensor with cached V values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
+        key_cache: Tensor with cached K values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
+        value_cache: Tensor with cached V values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
         output_scratchpad: Tensor used as scratchpad to share cache block outputs between two stages, shape: (total_num_q, num_kv_splits, num_query_heads, head_size)
         lse_scratchpad: Tensor used as scratchpad to share cache block log-sum-exp between two stages, shape: (total_num_q, num_kv_splits, num_query_heads)
         block_tables: Tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
@@ -731,6 +720,9 @@ def varlen_attention_launcher(  # noqa: PLR0913
     assert key_cache.shape == value_cache.shape  # noqa: S101
     assert key_cache.stride(0) == value_cache.stride(0)  # noqa: S101
     assert key_cache.stride(1) == value_cache.stride(1)  # noqa: S101
+    assert key_cache.stride(2) == value_cache.stride(2)  # noqa: S101
+    assert key_cache.stride(3) == value_cache.stride(3)  # noqa: S101
+    assert key_cache.stride(3) == 1  # noqa: S101
     assert softcap >= 0.0  # noqa: S101
 
     allowed_in_out_dtypes = [torch.float32, torch.float16, torch.bfloat16]
@@ -742,7 +734,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
 
     # Perform unchecked size accesses, assume has already been checked
     total_num_q, num_query_heads, head_size = output.shape
-    num_cache_blocks, num_kv_heads, cache_block_size, _ = key_cache.shape
+    num_cache_blocks, cache_block_size, num_kv_heads, _ = key_cache.shape
     batch_size, max_num_blocks_per_sequence = block_tables.shape
     _, max_num_kv_splits, _, _ = output_scratchpad.shape
 
@@ -823,8 +815,8 @@ def varlen_attention_launcher(  # noqa: PLR0913
         query_batch_stride=query.stride(0),
         query_head_stride=query.stride(1),
         kv_page_stride=key_cache.stride(0),
-        kv_head_stride=key_cache.stride(1),
-        kv_cache_block_stride=key_cache.stride(2),
+        kv_cache_block_stride=key_cache.stride(1),
+        kv_head_stride=key_cache.stride(2),
         kv_head_element_stride=key_cache.stride(3),
         block_tables_batch_stride=block_tables.stride(0),
         # Constexpr sizes

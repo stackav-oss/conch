@@ -177,7 +177,6 @@ def main(
     )
 
     key_cache_vllm, value_cache_vllm = key_caches_vllm[0], value_caches_vllm[0]
-
     key_cache, value_cache = reshape_vllm_kvcache(key_cache_vllm.clone(), value_cache_vllm.clone())
 
     # Run the reference implementation.

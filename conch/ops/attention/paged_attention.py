@@ -61,7 +61,7 @@ def _check_kv_cache_size_compatibility(key_cache: torch.Tensor, value_cache: tor
     Raises:
         ValueError if sizes are mismatched.
     """
-    # Key/Value Cache tensor should be a 4-D tensor of shape (num_blocks, num_kv_heads, cache_block_size, head_size)
+    # Key/Value Cache tensor should be a 4-D tensor of shape (num_blocks, cache_block_size, num_kv_heads, head_size)
     expected_kv_cache_shape_dims: Final = 4
 
     if len(key_cache.shape) != expected_kv_cache_shape_dims:
@@ -111,8 +111,8 @@ def _check_size_compatibility(
     Args:
         out: Tensor to write the output of the attention calculation, shape: (batch_size, num_heads, head_size).
         query: Query tensor, shape: (batch_size, num_heads, head_size).
-        key_cache: Tensor holding cache for K, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
-        value_cache: Tensor holding cache for V, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
+        key_cache: Tensor holding cache for K, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
+        value_cache: Tensor holding cache for V, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
         block_tables: Tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
 
     Raises:
@@ -125,7 +125,7 @@ def _check_size_compatibility(
     batch_size, num_query_heads, head_size = out.shape
 
     _check_kv_cache_size_compatibility(key_cache, value_cache, head_size)
-    num_cache_blocks, num_kv_heads, cache_block_size, _ = key_cache.shape
+    num_cache_blocks, cache_block_size, num_kv_heads, _ = key_cache.shape
 
     _check_block_table_size_compatibility(block_tables, batch_size)
     _, max_num_blocks_per_sequence = block_tables.shape
@@ -157,8 +157,8 @@ def paged_attention(
 
     Args:
         query: Query tensor, shape: (batch_size, num_heads, head_size).
-        key_cache: Tensor holding cache for K, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
-        value_cache: Tensor holding cache for V, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
+        key_cache: Tensor holding cache for K, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
+        value_cache: Tensor holding cache for V, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
         block_tables: Tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
         seq_lens: Tensor with the sequence length of each index in the batch, shape: (batch_size, ).
         output: Tensor to write the output of the attention calculation, shape: (batch_size, num_heads, head_size).

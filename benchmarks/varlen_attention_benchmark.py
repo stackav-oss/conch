@@ -172,7 +172,7 @@ def main(
     kv_cache_dtype: Final = "auto"
     dtype: Final = torch.float16
 
-    _, _, _, key_cache_conch, value_cache_conch, block_tables, seq_lens = create_tensors(
+    _, _, _, key_cache, value_cache, block_tables, seq_lens = create_tensors(
         head_dim,
         seq_len,
         cache_block_size,
@@ -213,8 +213,8 @@ def main(
 
     output_conch = varlen_attention(
         query=query,
-        key_cache=key_cache_conch,
-        value_cache=value_cache_conch,
+        key_cache=key_cache,
+        value_cache=value_cache,
         block_tables=block_tables,
         seq_lens=seq_lens,
         cu_seqlens_q=cu_seqlens_q,
@@ -225,14 +225,11 @@ def main(
         causal=causal,
     )
 
-    key_cache_fa = key_cache_conch.permute(0, 2, 1, 3)
-    value_cache_fa = value_cache_conch.permute(0, 2, 1, 3)
-
     if flash_attn_varlen_func is not None:
         output_vllm = flash_attn_varlen_func(
             q=query,
-            k=key_cache_fa,
-            v=value_cache_fa,
+            k=key_cache,
+            v=value_cache,
             cu_seqlens_q=cu_seqlens_q,
             max_seqlen_q=max_seqlen_q,
             max_seqlen_k=max_seqlen_k,
@@ -255,8 +252,8 @@ def main(
         baseline_result = benchmark_it(
             lambda: flash_attn_varlen_func(
                 q=query,
-                k=key_cache_fa,
-                v=value_cache_fa,
+                k=key_cache,
+                v=value_cache,
                 cu_seqlens_q=cu_seqlens_q,
                 max_seqlen_q=max_seqlen_q,
                 max_seqlen_k=max_seqlen_k,
@@ -281,8 +278,8 @@ def main(
         vllm_triton_result = benchmark_it(
             lambda: unified_attention(
                 q=query,
-                k=key_cache_fa,
-                v=value_cache_fa,
+                k=key_cache,
+                v=value_cache,
                 out=out,
                 cu_seqlens_q=cu_seqlens_q,
                 max_seqlen_q=max_seqlen_q,
@@ -309,8 +306,8 @@ def main(
     triton_result = benchmark_it(
         lambda: varlen_attention(
             query=query,
-            key_cache=key_cache_conch,
-            value_cache=value_cache_conch,
+            key_cache=key_cache,
+            value_cache=value_cache,
             block_tables=block_tables,
             seq_lens=seq_lens,
             cu_seqlens_q=cu_seqlens_q,
