@@ -2,7 +2,7 @@
 **/__pycache__/
 .pytest_cache
 
-env/user.sh
+tools/env/user.sh
 .direnv/
 
 build/

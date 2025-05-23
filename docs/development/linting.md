@@ -28,7 +28,7 @@ mypy .
 or
 
 ```bash
-./scripts/mypy.sh
+./tools/mypy.sh
 ```
 
 Currently, third-party code (e.g. `conch/third_party/`) is excluded from type checking.

@@ -1,4 +1,5 @@
-# Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
 
 """Platform enum."""
 
@@ -58,6 +59,12 @@ class Platform:
 
         # Until we officially support XPU/CPU, just assume True so that we can uncover any issues
         return True
+
+    def get_device_name(self) -> str:
+        if torch.cuda.is_available():
+            return torch.cuda.get_device_name()
+
+        return "unknown"
 
 
 def detect_current_platform() -> Platform:
