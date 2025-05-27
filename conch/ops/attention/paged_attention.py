@@ -140,33 +140,37 @@ def _check_size_compatibility(
 
 
 def paged_attention(
-    output: torch.Tensor,
     query: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
     block_tables: torch.Tensor,
     seq_lens: torch.Tensor,
+    output: torch.Tensor | None = None,
     scale: float | None = None,
     softcap: float = 0.0,
     kv_cache_dtype: str = "auto",
     k_scale: torch.Tensor | None = None,
     v_scale: torch.Tensor | None = None,
-) -> None:
+) -> torch.Tensor:
     """PagedAttention interface to verify sizes and launch kernel.
 
     Args:
-        output: Tensor to write the output of the attention calculation, shape: (batch_size, num_heads, head_size).
         query: Query tensor, shape: (batch_size, num_heads, head_size).
         key_cache: Tensor holding cache for K, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
         value_cache: Tensor holding cache for V, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
         block_tables: Tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
         seq_lens: Tensor with the sequence length of each index in the batch, shape: (batch_size, ).
+        output: Tensor to write the output of the attention calculation, shape: (batch_size, num_heads, head_size).
         scale: Scaling factor, 1/sqrt(head_size).
         softcap: Logit softcap to apply (0.0 means no softcap will be applied).
         kv_cache_dtype: Data type of the KV cache.
         k_scale: FP8 scaling factor for key cache.
         v_scale: FP8 scaling factor for value cache.
     """
+    # Allocate output tensor if not provided
+    if output is None:
+        output = torch.zeros_like(query, device=query.device, dtype=query.dtype)
+
     # Check sizes of input tensors
     metadata = _check_size_compatibility(output, query, key_cache, value_cache, block_tables)
 
@@ -201,3 +205,5 @@ def paged_attention(
         k_scale,
         v_scale,
     )
+
+    return output

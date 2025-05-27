@@ -9,20 +9,21 @@ import click
 import torch
 
 from conch import envs
-from conch.kernels.attention.paged_attention import MAX_NUM_SPLITS, paged_attention_launcher
+from conch.ops.attention.paged_attention import paged_attention
 from conch.platforms import current_platform
-from conch.third_party.vllm.utils import create_tensors
+from conch.third_party.vllm.utils import create_tensors, seed_everything
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.has_cuda():
-    from vllm._custom_ops import paged_attention_v2 as vllm_paged_attention_v2
+    from vllm._custom_ops import (
+        paged_attention_v2 as vllm_paged_attention_v2,  # type: ignore[import-not-found, import-untyped, unused-ignore]
+    )
 else:
-    vllm_paged_attention_v2 = None  # type: ignore[assignment]
+    vllm_paged_attention_v2 = None  # type: ignore[assignment, unused-ignore]
 
 
 @click.command()
 @click.option(
-    "-h",
     "--head-dim",
     required=True,
     type=int,
@@ -30,7 +31,6 @@ else:
     help="Head dimension",
 )
 @click.option(
-    "-s",
     "--seq-len",
     required=True,
     type=int,
@@ -38,7 +38,6 @@ else:
     help="Sequence length (for k/v)",
 )
 @click.option(
-    "-c",
     "--cache-block-size",
     required=True,
     type=int,
@@ -46,7 +45,6 @@ else:
     help="Number of KV vectors in each cache block",
 )
 @click.option(
-    "-b",
     "--batch-size",
     required=False,
     type=int,
@@ -54,7 +52,6 @@ else:
     help="Batch size",
 )
 @click.option(
-    "-h",
     "--num-query-heads",
     required=False,
     type=int,
@@ -62,7 +59,6 @@ else:
     help="Number of query heads",
 )
 @click.option(
-    "-k",
     "--num-kv-heads",
     required=False,
     type=int,
@@ -70,7 +66,6 @@ else:
     help="Number of kv heads",
 )
 @click.option(
-    "-d",
     "--kv-cache-dtype",
     required=False,
     type=click.Choice(["auto", "fp8", "fp8_e4m3"]),
@@ -78,7 +73,6 @@ else:
     help="Dtype of KV cache",
 )
 @click.option(
-    "-i",
     "--num-iterations",
     required=False,
     type=int,
@@ -86,7 +80,6 @@ else:
     help="Number of iterations",
 )
 @click.option(
-    "-w",
     "--num-warmup-iterations",
     required=False,
     type=int,
@@ -94,7 +87,6 @@ else:
     help="Number of warmup iterations",
 )
 @click.option(
-    "-a",
     "--absolute-tolerance",
     required=False,
     type=float,
@@ -102,16 +94,11 @@ else:
     help="Absolute tolerance to match with",
 )
 @click.option(
-    "-v",
     "--verbose",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing verbose output",
 )
 @click.option(
-    "-g",
     "--gpu",
     required=False,
     type=str,
@@ -120,10 +107,7 @@ else:
 )
 @click.option(
     "--csv",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing results in CSV format",
 )
 def main(
@@ -162,6 +146,14 @@ def main(
         error_msg = f"kv_cache_type '{kv_cache_dtype}' not supported on this GPU!"
         raise NotImplementedError(error_msg)
 
+    seed: Final = 0
+    seed_everything(seed)
+
+    device: Final = torch.device(gpu)
+    torch.set_default_device(device)
+
+    dtype: Final = torch.float16
+
     metadata = BenchmarkMetadata(
         platform=current_platform.name(),
         params={
@@ -183,39 +175,27 @@ def main(
             num_query_heads,
             num_kv_heads,
             kv_cache_dtype,
-            gpu,
-            torch.float16,
+            device,
+            dtype,
         )
     )
-
-    _, max_num_blocks_per_seq = block_tables.shape
 
     scale: Final = float(1.0 / (head_dim**0.5))
     max_seq_len: Final = int(seq_lens.max().item())
 
-    # Allocate additional memory for intermediate result (of shape (head_dim,)) for each batch/split/query head
-    output_scratchpad = torch.zeros(
-        (batch_size, MAX_NUM_SPLITS, num_query_heads, head_dim), dtype=query.dtype, device=query.device
-    )
-
-    # # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/split/query head
-    lse_scratchpad = torch.zeros((batch_size, MAX_NUM_SPLITS, num_query_heads), dtype=query.dtype, device=query.device)
-
-    k_scale = torch.full((1,), 0.5)
-    v_scale = torch.full((1,), 0.5)
+    k_scale = torch.full((1,), 0.5, dtype=dtype, device=device)
+    v_scale = torch.full((1,), 0.5, dtype=dtype, device=device)
 
     output_conch = torch.empty_like(query)
 
-    paged_attention_launcher(
-        output_conch,
+    paged_attention(
         query,
         key_cache_conch,
         value_cache_conch,
-        output_scratchpad,
-        lse_scratchpad,
         block_tables,
         seq_lens,
-        scale,
+        output=output_conch,
+        scale=scale,
         softcap=0.0,
         kv_cache_dtype=kv_cache_dtype,
         k_scale=k_scale,
@@ -304,16 +284,14 @@ def main(
         baseline_result = None
 
     triton_result = benchmark_it(
-        lambda: paged_attention_launcher(
-            output_conch,
+        lambda: paged_attention(
             query,
             key_cache_conch,
             value_cache_conch,
-            output_scratchpad,
-            lse_scratchpad,
             block_tables,
             seq_lens,
-            scale,
+            output=output_conch,
+            scale=scale,
             softcap=0.0,
             kv_cache_dtype=kv_cache_dtype,
             k_scale=k_scale,

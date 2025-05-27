@@ -37,7 +37,7 @@ def _validate_sizes(
         msg = f"Number of dimensions in key ({key_dims}) did not match expected ({expected_kv_dims})"
         raise ValueError(msg)
 
-    num_tokens_kv, num_kv_heads_kv, head_size_kv = key.shape
+    _, num_kv_heads_kv, head_size_kv = key.shape
 
     if key_cache.shape != value_cache.shape:
         msg = f"key_cache.shape ({key_cache.shape}) does not match value_cache.shape ({value_cache.shape})"
@@ -63,21 +63,15 @@ def _validate_sizes(
         msg = f"Number of dimensions in slot mapping ({slot_mapping_dims}) did not match expected ({expected_slot_mapping_dims})"
         raise ValueError(msg)
 
-    num_tokens_sm = slot_mapping.size(0)
 
-    if num_tokens_kv != num_tokens_sm:
-        msg = f"Number of tokens in key/value tensors ({num_tokens_kv}) does not match number of tokens in slot mapping tensor ({num_tokens_sm})"
-        raise ValueError(msg)
-
-
-def _validate_kv_cache_dtype(kv_cache_dtype: str) -> bool:
+def _validate_kv_cache_dtype(kv_cache_dtype: str) -> None:
     """Validate that KV Cache Dtype is valid and return whether to enable FP8 scaling.
 
     Args:
         kv_cache_dtype: String representing desired datatype of KV-cache.
 
-    Returns:
-        True if requested data type is FP8 and therefore _reshape_and_cache_kernel should apply k/v_scale.
+    Raises:
+        ValueError if kv_cache_dtype is invalid.
     """
     fp8_dtypes: Final = {"fp8", "fp8_e4m3"}
     allowed_dtypes: Final = {"auto"}.union(fp8_dtypes)
@@ -86,8 +80,6 @@ def _validate_kv_cache_dtype(kv_cache_dtype: str) -> bool:
         msg = f"Unsupported kv_cache_dtype: '{kv_cache_dtype}'"
         raise ValueError(msg)
 
-    return kv_cache_dtype in fp8_dtypes
-
 
 def reshape_and_cache(
     key: torch.Tensor,
@@ -95,9 +87,9 @@ def reshape_and_cache(
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
     slot_mapping: torch.Tensor,
-    kv_cache_dtype: str,
-    k_scale: torch.Tensor,
-    v_scale: torch.Tensor,
+    kv_cache_dtype: str = "auto",
+    k_scale: torch.Tensor | None = None,
+    v_scale: torch.Tensor | None = None,
 ) -> None:
     """Reshape key/value vectors and add them to the cache.
 
@@ -114,10 +106,17 @@ def reshape_and_cache(
     # Verify input sizes/tensor shapes
     _validate_sizes(key, value, key_cache, value_cache, slot_mapping)
 
-    # Validate kv cache dtype is valid and determine if k/v scaling factors must be applied
-    apply_fp8_scaling = _validate_kv_cache_dtype(kv_cache_dtype)
+    # Validate kv cache dtype is valid
+    _validate_kv_cache_dtype(kv_cache_dtype)
 
     # Call kernel launch wrapper
     reshape_and_cache_launcher(
-        key, value, key_cache, value_cache, slot_mapping, k_scale, v_scale, apply_fp8_scaling=apply_fp8_scaling
+        key,
+        value,
+        key_cache,
+        value_cache,
+        slot_mapping,
+        kv_cache_dtype,
+        k_scale,
+        v_scale,
     )

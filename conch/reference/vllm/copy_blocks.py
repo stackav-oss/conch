@@ -23,7 +23,7 @@ def _copy_blocks_vllm_ref(
     key_caches: list[torch.Tensor], value_caches: list[torch.Tensor], block_mapping: list[tuple[int, int]]
 ) -> None:
     """Reference vLLM implementation of copy_blocks."""
-    from vllm._custom_ops import copy_blocks as copy_blocks_vllm
+    from vllm._custom_ops import copy_blocks as copy_blocks_vllm  # type: ignore[import-not-found, unused-ignore]
 
     block_mapping_tensor = torch.tensor(block_mapping, dtype=torch.int64, device=key_caches[0].device).view(-1, 2)
     copy_blocks_vllm(key_caches, value_caches, block_mapping_tensor)

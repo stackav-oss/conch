@@ -18,9 +18,9 @@ from conch.third_party.vllm.utils import seed_everything
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.has_cuda():
-    from vllm import _custom_ops as vllm_custom_ops
+    from vllm import _custom_ops as vllm_custom_ops  # type: ignore[import-not-found, unused-ignore]
 else:
-    vllm_custom_ops = None  # type: ignore[assignment]
+    vllm_custom_ops = None  # type: ignore[assignment, unused-ignore]
 
 
 def _to_torch_dtype(dtype_str: str) -> torch.dtype:
@@ -75,7 +75,6 @@ def _machete_quantize_and_pack(
 
 @click.command()
 @click.option(
-    "-m",
     "--m-dim",
     required=True,
     type=int,
@@ -83,7 +82,6 @@ def _machete_quantize_and_pack(
     help="1st dimension of A matrix (M x K)",
 )
 @click.option(
-    "-k",
     "--k-dim",
     required=True,
     type=int,
@@ -91,7 +89,6 @@ def _machete_quantize_and_pack(
     help="Common dimension of A and B matrices (M x K) * (K * N)",
 )
 @click.option(
-    "-n",
     "--n-dim",
     required=True,
     type=int,
@@ -114,14 +111,11 @@ def _machete_quantize_and_pack(
 )
 @click.option(
     "--enable-machete",
-    required=False,
-    type=bool,
     is_flag=True,
     default=envs.CONCH_BENCH_ENABLE_ALL_REF,
     help="Flag for enabling running Machete (only on H100)",
 )
 @click.option(
-    "-i",
     "--num-iterations",
     required=False,
     type=int,
@@ -129,7 +123,6 @@ def _machete_quantize_and_pack(
     help="Number of iterations",
 )
 @click.option(
-    "-w",
     "--num-warmup-iterations",
     required=False,
     type=int,
@@ -137,16 +130,11 @@ def _machete_quantize_and_pack(
     help="Number of warmup iterations",
 )
 @click.option(
-    "-v",
     "--verbose",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing verbose output",
 )
 @click.option(
-    "-g",
     "--gpu",
     required=False,
     type=str,
@@ -155,10 +143,7 @@ def _machete_quantize_and_pack(
 )
 @click.option(
     "--csv",
-    required=False,
-    type=bool,
     is_flag=True,
-    default=False,
     help="Flag for printing results in CSV format",
 )
 def main(
