@@ -51,6 +51,15 @@ module = [
 ]
 follow_untyped_imports = true
 
+[[tool.mypy.overrides]]
+module = [
+  "bitsandbytes.*",
+  "vllm.*",
+]
+allow_untyped_calls = true
+ignore_missing_imports = true
+disable_error_code = "attr-defined"
+
 [tool.setuptools.packages.find]
 include = ["conch*"]
 exclude = [

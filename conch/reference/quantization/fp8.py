@@ -19,9 +19,7 @@ def _scaled_fp8_quant_pytorch_ref(x: torch.Tensor, scale: torch.Tensor) -> torch
 
 def _scaled_fp8_quant_vllm_ref(x: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     """vLLM reference fp8 quant impl."""
-    from vllm._custom_ops import (
-        scaled_fp8_quant as scaled_fp8_quant_vllm,  # type: ignore[import-not-found, unused-ignore]
-    )
+    from vllm._custom_ops import scaled_fp8_quant as scaled_fp8_quant_vllm
 
     output, _ = scaled_fp8_quant_vllm(x, scale)
     return output  # type: ignore[no-any-return, unused-ignore]
