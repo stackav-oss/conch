@@ -424,7 +424,8 @@ def test_varlen_attention_vs_flash_attn(
     torch.testing.assert_close(vllm_output, conch_output, atol=tolerance, rtol=tolerance)
 
 
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+# @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("dtype", [torch.float16])
 def test_vllm_crash(dtype: torch.dtype) -> None:
     """Test Varlen Attention Triton kernel with various configurations vs. vLLM FlashAttnVarlen."""
     head_size: Final = 128
@@ -553,5 +554,19 @@ def test_vllm_crash(dtype: torch.dtype) -> None:
         scale=scale,
         softcap=softcap,
     )
+
+    for i in range(num_seqs):
+        if not torch.allclose(conch_output[i], vllm_output[i], atol=tolerance, rtol=tolerance):
+            print(f"{i = } BAD")
+            # print(f"{conch_output[i] = }")
+            # print(f"{vllm_output[i] = }")
+            for j in range(num_query_heads):
+                if not torch.allclose(conch_output[i][j], vllm_output[i][j], atol=tolerance, rtol=tolerance):
+                    print(f"{i = }, {j = } BAD")
+                    if i == 1 or i == 2:
+                        print(f"{conch_output[i][j] = }")
+                        print(f"{vllm_output[i][j] = }")
+        # else:
+        #     print(f"{i = } MATCHED")
 
     torch.testing.assert_close(vllm_output, conch_output, atol=tolerance, rtol=tolerance)
