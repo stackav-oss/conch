@@ -204,7 +204,8 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
     # Similar to above, we launch the same number of splits for all sequences in the batch, so different kernel launches will have different
     # numbers of query tokens to process. If we've already processed all of the query tokens for this sequence, we can skip this kernel.
-    if this_query_split_offset >= this_query_length:
+    # if this_query_split_offset >= this_query_length:
+    if this_query_split_offset > this_query_length:
         return
 
     # What is the last Q token in this block?
@@ -516,7 +517,8 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
 
     # Similar to above, we launch the same number of splits for all sequences in the batch, so different kernel launches will have different
     # numbers of query tokens to process. If we've already processed all of the query tokens for this sequence, we can skip this kernel.
-    if this_query_split_offset >= this_query_length:
+    # if this_query_split_offset >= this_query_length:
+    if this_query_split_offset > this_query_length:
         return
 
     # Accumulator for the output of this batch/head
@@ -766,6 +768,8 @@ def varlen_attention_launcher(  # noqa: PLR0913
     query_chunk_size_stage1, query_chunk_size_stage2, query_group_size_padded = _get_tuned_sizes(
         cxpr_head_size_padded, query_group_size_padded, max_seqlen_q
     )
+
+    # query_chunk_size_stage2 = 1
 
     # Use the maximum Q sequence length to determine what is the max number of query splits any sequence will need
     num_query_splits_stage1 = triton.cdiv(max_seqlen_q, query_chunk_size_stage1)
