@@ -326,4 +326,5 @@ def unified_attention(
         query_start_len_ptr=cu_seqlens_q,
         BLOCK_Q=BLOCK_Q,
         num_seqs=num_seqs,
+        num_stages=1,
     )

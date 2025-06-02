@@ -11,6 +11,7 @@ import torch
 from conch import envs
 from conch.ops.attention.varlen_attention import varlen_attention
 from conch.platforms import current_platform
+from conch.third_party.vllm.unified_attention import unified_attention
 from conch.third_party.vllm.utils import create_tensors, seed_everything
 
 _ENABLE_VLLM: Final = envs.CONCH_ENABLE_VLLM and current_platform.has_cuda()
@@ -540,6 +541,27 @@ def test_vllm_crash(dtype: torch.dtype) -> None:
         causal=causal,
     )
 
+    other_output = torch.zeros_like(vllm_output)
+
+    unified_attention(
+        q=q,
+        k=key_cache_fa,
+        v=value_cache_fa,
+        out=other_output,
+        cu_seqlens_q=cu_seqlens_q,
+        max_seqlen_q=max_seqlen_q,
+        seqused_k=seq_lens,
+        max_seqlen_k=max_seqlen_k,
+        softmax_scale=scale,
+        causal=causal,
+        window_size=(-1, -1),
+        block_table=block_tables,
+        softcap=softcap,
+        q_descale=None,
+        k_descale=None,
+        v_descale=None,
+    )
+
     conch_output = varlen_attention(
         query=q,
         key_cache=key_cache_conch,
@@ -569,4 +591,5 @@ def test_vllm_crash(dtype: torch.dtype) -> None:
         # else:
         #     print(f"{i = } MATCHED")
 
+    torch.testing.assert_close(vllm_output, other_output, atol=tolerance, rtol=tolerance)
     torch.testing.assert_close(vllm_output, conch_output, atol=tolerance, rtol=tolerance)
