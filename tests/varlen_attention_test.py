@@ -499,6 +499,7 @@ def test_vllm_crash(dtype: torch.dtype) -> None:
     max_seqlen_k = max_seqlen_q
 
     causal = True
+    # causal = False
 
     # # JACOB: ADD TEST CASE!!!
     # ```
