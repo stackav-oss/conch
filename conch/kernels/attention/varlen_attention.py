@@ -576,7 +576,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
 
     # query_mask = query_split_mask[:, None] & head_mask[None, :]
     query_mask = query_split_mask[:, None] & head_mask
-    new_split_mask = tl.arange(0, cxpr_query_chunk_size) < 1
+    # new_split_mask = tl.arange(0, cxpr_query_chunk_size) < 1
     # new_head_mask = tl.arange(0, cxpr_head_size_padded) < 1
     # query_mask = new_split_mask[:, None] & new_head_mask
     # query_mask = new_split_mask[:, None] & head_mask
@@ -595,7 +595,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     #     num_cache_blocks = tl.cdiv(end_seqlen_q, cxpr_cache_block_size)
     #     num_kv_splits_this_seq = tl.cdiv(num_cache_blocks, num_cache_blocks_per_split)
 
-    beginning_seqlen_k = 0
+    # beginning_seqlen_k = 0
 
     # return
 
@@ -603,8 +603,8 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     for kv_split_index in range(num_kv_splits_this_seq):
         # if query_split_index == 0 and query_head_index == 0:
         #     print("kv_split_index = ", kv_split_index)
-        if needs_causal_mask:
-            beginning_seqlen_k = kv_split_index * num_cache_blocks_per_split * cxpr_cache_block_size
+        # if needs_causal_mask:
+        #     beginning_seqlen_k = kv_split_index * num_cache_blocks_per_split * cxpr_cache_block_size
 
         # Calculate offsets to load the scratch for this head/batch/split
         # 2D block of shape (cxpr_query_chunk_size, cxpr_head_size_padded)
@@ -619,9 +619,11 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
         # this_query_split_mask = query_split_offsets >= beginning_seqlen_k & query_split_mask
         # this_query_split_mask = query_split_offsets >= beginning_seqlen_k
         this_query_split_mask = query_split_mask
-        if not needs_causal_mask:
-            # this_query_split_mask = this_query_split_mask & query_split_mask
-            this_query_split_mask = query_split_offsets >= beginning_seqlen_k & query_split_mask
+        if needs_causal_mask:
+            beginning_seqlen_k = kv_split_index * num_cache_blocks_per_split * cxpr_cache_block_size
+            this_query_split_mask = this_query_split_mask & (query_split_offsets >= beginning_seqlen_k)
+        #     # this_query_split_mask = this_query_split_mask & query_split_mask
+        #     this_query_split_mask = query_split_offsets >= beginning_seqlen_k & query_split_mask
         # this_query_split_mask = query_split_offsets > beginning_seqlen_k
         # this_query_mask = this_query_split_mask[:, None] & head_mask[None, :]
         this_query_mask = this_query_split_mask[:, None] & head_mask

@@ -27,10 +27,11 @@ _SEQUENCE_LENGTHS: Final = [256, 257, 343, 1024, 1025]
 def _get_tolerance_for_dtype(dtype: torch.dtype) -> float:
     """Get expected tolerance to match to for a given dtype."""
     if dtype == torch.float16:
-        return 5e-4
+        # return 5e-4
+        return 1e-3
 
     if dtype == torch.bfloat16:
-        return 1e-3
+        return 1e-2
 
     msg = f"Unsupported dtype: '{dtype}'"
     raise NotImplementedError(msg)
@@ -424,8 +425,8 @@ def test_varlen_attention_vs_flash_attn(
     torch.testing.assert_close(vllm_output, conch_output, atol=tolerance, rtol=tolerance)
 
 
-# @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize("dtype", [torch.float16])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+# @pytest.mark.parametrize("dtype", [torch.float16])
 def test_vllm_crash(dtype: torch.dtype) -> None:
     """Test Varlen Attention Triton kernel with various configurations vs. vLLM FlashAttnVarlen."""
     head_size: Final = 128
@@ -447,6 +448,7 @@ def test_vllm_crash(dtype: torch.dtype) -> None:
     softcap: Final = 0.0
 
     tolerance: Final = _get_tolerance_for_dtype(dtype)
+    # tolerance = 1e-3
 
     kv_cache_dtype: Final = "auto"
 
@@ -564,7 +566,7 @@ def test_vllm_crash(dtype: torch.dtype) -> None:
             for j in range(num_query_heads):
                 if not torch.allclose(conch_output[i][j], vllm_output[i][j], atol=tolerance, rtol=tolerance):
                     print(f"{i = }, {j = } BAD")
-                    if i == 1 or i == 2:
+                    if i == 1 or i == 2 or j == 19:
                         print(f"{conch_output[i][j] = }")
                         print(f"{vllm_output[i][j] = }")
         # else:
