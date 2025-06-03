@@ -211,10 +211,13 @@ def main(
     query = torch.empty((total_num_q, num_query_heads, head_dim), dtype=dtype, device=device)
     query.uniform_(-scale, scale)
 
+    key_cache_fa = key_cache_conch.permute(0, 2, 1, 3)
+    value_cache_fa = value_cache_conch.permute(0, 2, 1, 3)
+
     output_conch = varlen_attention(
         query=query,
-        key_cache=key_cache_conch,
-        value_cache=value_cache_conch,
+        key_cache=key_cache_fa,
+        value_cache=value_cache_fa,
         block_tables=block_tables,
         seq_lens=seq_lens,
         cu_seqlens_q=cu_seqlens_q,
@@ -224,9 +227,6 @@ def main(
         scale=scale,
         causal=causal,
     )
-
-    key_cache_fa = key_cache_conch.permute(0, 2, 1, 3)
-    value_cache_fa = value_cache_conch.permute(0, 2, 1, 3)
 
     if flash_attn_varlen_func is not None:
         output_vllm = flash_attn_varlen_func(
@@ -309,8 +309,8 @@ def main(
     triton_result = benchmark_it(
         lambda: varlen_attention(
             query=query,
-            key_cache=key_cache_conch,
-            value_cache=value_cache_conch,
+            key_cache=key_cache_fa,
+            value_cache=value_cache_fa,
             block_tables=block_tables,
             seq_lens=seq_lens,
             cu_seqlens_q=cu_seqlens_q,

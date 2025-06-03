@@ -166,12 +166,16 @@ def _convert_paged_to_contiguous(
             relative_end = actual_end - (relative_block_index * cache_block_size)
 
             this_k[:, current_seq_len_begin:actual_end, :] = current_k_block.view(
-                num_kv_heads, cache_block_size, head_size
+                num_kv_heads,
+                cache_block_size,
+                head_size,
                 # cache_block_size, num_kv_heads, head_size
             )[:, :relative_end, :]
 
             this_v[:, current_seq_len_begin:actual_end, :] = current_v_block.view(
-                num_kv_heads, cache_block_size, head_size
+                num_kv_heads,
+                cache_block_size,
+                head_size,
                 # cache_block_size, num_kv_heads, head_size
             )[:, :relative_end, :]
 

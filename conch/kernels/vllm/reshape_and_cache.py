@@ -121,12 +121,8 @@ def _reshape_and_cache_kernel(
     kv_head_offsets = tl.arange(0, cxpr_head_size) * kv_cache_head_element_stride
 
     # Store key/value vectors into cache
-    tl.store(
-        key_cache_ptr + kv_page_offset + kv_cache_entry_offset + kv_cache_head_offset + kv_head_offsets, key
-    )
-    tl.store(
-        value_cache_ptr + kv_page_offset + kv_cache_entry_offset + kv_cache_head_offset + kv_head_offsets, value
-    )
+    tl.store(key_cache_ptr + kv_page_offset + kv_cache_entry_offset + kv_cache_head_offset + kv_head_offsets, key)
+    tl.store(value_cache_ptr + kv_page_offset + kv_cache_entry_offset + kv_cache_head_offset + kv_head_offsets, value)
 
 
 def reshape_and_cache_launcher(

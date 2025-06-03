@@ -195,18 +195,21 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             # )
             # key_block = tl.load(key_block_ptr, boundary_check=(0, 1), padding_option="zero")
             key_block_offsets = (
-                head_offsets[:, None] +
+                head_offsets[:, None]
+                +
                 # kv_head_index_offset * kv_head_element_stride +
                 # kv_head_index_offset * kv_head_stride +
-                kv_head_index_offset +
-                cache_block_offsets[None, :] * kv_cache_block_stride
+                kv_head_index_offset
+                + cache_block_offsets[None, :] * kv_cache_block_stride
                 # cache_block_offsets[:, None] * kv_cache_block_stride +
                 # kv_head_index_offset * kv_head_element_stride +
                 # head_offsets[None, :]
             )
 
             key_block_mask = head_mask[:, None] & cache_block_mask[None, :]
-            key_block = tl.load(key_cache_ptr + kv_cache_block_index_offset + key_block_offsets, mask=key_block_mask, other=0.0)
+            key_block = tl.load(
+                key_cache_ptr + kv_cache_block_index_offset + key_block_offsets, mask=key_block_mask, other=0.0
+            )
 
             if cxpr_apply_fp8_scaling:
                 # Dequantize (multiply by scale factor)
@@ -250,15 +253,18 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             output *= alpha[:, None]
 
             value_block_offsets = (
-                cache_block_offsets[:, None] * kv_cache_block_stride +
+                cache_block_offsets[:, None] * kv_cache_block_stride
+                +
                 # kv_head_index_offset * kv_head_element_stride +
                 # kv_head_index_offset * kv_head_stride +
-                kv_head_index_offset +
-                head_offsets[None, :]
+                kv_head_index_offset
+                + head_offsets[None, :]
             )
 
             value_block_mask = cache_block_mask[:, None] & head_mask[None, :]
-            value_block = tl.load(value_cache_ptr + kv_cache_block_index_offset + value_block_offsets, mask=value_block_mask, other=0.0)
+            value_block = tl.load(
+                value_cache_ptr + kv_cache_block_index_offset + value_block_offsets, mask=value_block_mask, other=0.0
+            )
             # Load the value block as (cache_block_size, cxpr_head_size_padded)
             # value_block_ptr = tl.make_block_ptr(
             #     value_cache_ptr + kv_cache_block_index_offset + kv_head_index_offset,

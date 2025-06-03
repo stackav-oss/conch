@@ -313,20 +313,25 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         kv_cache_block_index_offset = physical_cache_block_number * kv_page_stride
 
         key_block_offsets = (
-            head_offsets[:, None] +
+            head_offsets[:, None]
+            +
             # kv_head_index_offset * kv_head_element_stride +
             # kv_head_index_offset * kv_head_stride +
-            kv_head_index_offset +
-            cache_block_offsets[None, :] * kv_cache_block_stride
+            kv_head_index_offset
+            + cache_block_offsets[None, :] * kv_cache_block_stride
             # cache_block_offsets[:, None] * kv_cache_block_stride +
             # kv_head_index_offset * kv_head_element_stride +
             # head_offsets[None, :]
         )
 
-
         key_block_mask = head_mask[:, None] & cache_block_mask[None, :]
 
-        key_block = _load(key_cache_ptr + kv_cache_block_index_offset + key_block_offsets, use_mask=(needs_cache_block_mask or needs_head_mask), mask=key_block_mask, other=0.0)
+        key_block = _load(
+            key_cache_ptr + kv_cache_block_index_offset + key_block_offsets,
+            use_mask=(needs_cache_block_mask or needs_head_mask),
+            mask=key_block_mask,
+            other=0.0,
+        )
 
         # Load the key block as (cxpr_head_size_padded, cache_block_size)
         # Note: we're loading it transposed here
@@ -394,11 +399,12 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         output *= alpha[:, None]
 
         value_block_offsets = (
-            cache_block_offsets[:, None] * kv_cache_block_stride +
+            cache_block_offsets[:, None] * kv_cache_block_stride
+            +
             # kv_head_index_offset * kv_head_element_stride +
             # kv_head_index_offset * kv_head_stride +
-            kv_head_index_offset +
-            head_offsets[None, :]
+            kv_head_index_offset
+            + head_offsets[None, :]
         )
 
         value_block_mask = cache_block_mask[:, None] & head_mask[None, :]
@@ -418,7 +424,12 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         #     mask_second_dim=needs_head_mask,
         #     padding_option="zero",
         # )
-        value_block = _load(value_cache_ptr + kv_cache_block_index_offset + value_block_offsets, use_mask=(needs_cache_block_mask or needs_head_mask), mask=value_block_mask, other=0.0)
+        value_block = _load(
+            value_cache_ptr + kv_cache_block_index_offset + value_block_offsets,
+            use_mask=(needs_cache_block_mask or needs_head_mask),
+            mask=value_block_mask,
+            other=0.0,
+        )
 
         if cxpr_apply_fp8_scaling:
             # Dequantize (multiply by scale factor)
@@ -560,7 +571,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     # Similar to above, we launch the same number of splits for all sequences in the batch, so different kernel launches will have different
     # numbers of query tokens to process. If we've already processed all of the query tokens for this sequence, we can skip this kernel.
     if this_query_split_offset >= this_query_length:
-    # if this_query_split_offset > this_query_length:
+        # if this_query_split_offset > this_query_length:
         return
 
     # return
