@@ -306,9 +306,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         # Load the key block as (cxpr_head_size_padded, cache_block_size)
         # Note: we're loading it transposed here
         key_block_offsets = (
-            head_offsets[:, None]
-            + kv_head_index_offset
-            + cache_block_offsets[None, :] * kv_cache_block_stride
+            head_offsets[:, None] + kv_head_index_offset + cache_block_offsets[None, :] * kv_cache_block_stride
         )
 
         key_block_mask = head_mask[:, None] & cache_block_mask[None, :]
@@ -368,9 +366,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
         # Load the value block as (cache_block_size, cxpr_head_size_padded)
         value_block_offsets = (
-            cache_block_offsets[:, None] * kv_cache_block_stride
-            + kv_head_index_offset
-            + head_offsets[None, :]
+            cache_block_offsets[:, None] * kv_cache_block_stride + kv_head_index_offset + head_offsets[None, :]
         )
 
         value_block_mask = cache_block_mask[:, None] & head_mask[None, :]
@@ -536,9 +532,6 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
 
     # Load scalar current_sequence_length for the current batch
     current_sequence_length = tl.load(seq_lens_ptr + batch_index)
-    if needs_causal_mask:
-        # current_sequence_length = end_seqlen_q
-        current_sequence_length = min(this_query_length, end_seqlen_q)
 
     # The length of the current sequence will tell us how many cache blocks we need to read
     current_seq_num_cache_blocks = tl.cdiv(current_sequence_length, cxpr_cache_block_size)
@@ -556,13 +549,11 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     # Mask to only read valid indices of the actual head size
     head_mask = head_offsets < head_size
 
-    query_mask = query_split_mask[:, None] & head_mask
+    output_mask = query_split_mask[:, None] & head_mask
 
-    # needs_query_split_mask = end_seqlen_q > this_query_length
-    # needs_query_split_mask = end_seqlen_q >= this_query_length
-    needs_query_split_mask = True
+    needs_query_split_mask = end_seqlen_q > this_query_length
     needs_head_mask = head_size != cxpr_head_size_padded
-    needs_query_mask = needs_query_split_mask or needs_head_mask
+    needs_output_mask = needs_query_split_mask or needs_head_mask
 
     # Iterate through every cache block for the current sequence
     for kv_split_index in range(num_kv_splits_this_seq):
@@ -584,15 +575,13 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
 
         this_query_mask = this_query_split_mask[:, None] & head_mask
 
-        # needs_this_query_split_mask = needs_causal_mask and end_seqlen_q >= beginning_seqlen_k
-        needs_this_query_split_mask = True
+        needs_this_query_split_mask = needs_causal_mask or needs_query_split_mask
         needs_this_query_mask = needs_head_mask or needs_this_query_split_mask
 
         # Load output for this cache block, shape -> (cxpr_query_chunk_size, cxpr_head_size_padded)
         block_output = _load(
             output_scratchpad_ptr + output_scratchpad_offsets,
-            # use_mask=needs_this_query_mask,
-            use_mask=True,
+            use_mask=needs_this_query_mask,
             mask=this_query_mask,
             other=0.0,
         )
@@ -608,8 +597,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
         # Load log-sum-exp for this cache block, shape -> (cxpr_query_chunk_size,)
         block_lse = _load(
             lse_scratchpad_ptr + lse_scratchpad_offsets,
-            # use_mask=needs_this_query_split_mask,
-            use_mask=True,
+            use_mask=needs_this_query_split_mask,
             mask=this_query_split_mask,
             other=float("-inf"),
         )
@@ -651,9 +639,8 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     _store(
         output_ptr + output_offsets,
         output,
-        # use_mask=needs_query_mask,
-        use_mask=True,
-        mask=query_mask,
+        use_mask=needs_output_mask,
+        mask=output_mask,
     )
 
 

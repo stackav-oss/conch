@@ -95,11 +95,8 @@ def _convert_paged_to_contiguous(
 
             this_length = relative_end - relative_begin
 
-            this_k_block = current_k_block.permute(1, 0, 2)
-            this_v_block = current_v_block.permute(1, 0, 2)
-
-            this_k[relative_begin:relative_end, :, :] = this_k_block[:this_length, :, :]
-            this_v[relative_begin:relative_end, :, :] = this_v_block[:this_length, :, :]
+            this_k[relative_begin:relative_end, :, :] = current_k_block[:this_length, :, :]
+            this_v[relative_begin:relative_end, :, :] = current_v_block[:this_length, :, :]
 
             relative_begin += cache_block_size
 
@@ -428,8 +425,6 @@ def test_vllm_crash(dtype: torch.dtype) -> None:
     num_query_heads: Final = 32
     num_kv_heads: Final = 8
     cache_block_size: Final = 128
-    sequence_length: Final = 2048
-    num_seqs: Final = 19
 
     from vllm.vllm_flash_attn import flash_attn_varlen_func  # type: ignore[attr-defined, unused-ignore]
 
@@ -444,31 +439,42 @@ def test_vllm_crash(dtype: torch.dtype) -> None:
 
     tolerance = 1e-2 if dtype == torch.bfloat16 else 1e-3
 
-    kv_cache_dtype: Final = "auto"
+    block_tables = torch.tensor(
+        [
+            [1, 2, 3, 4, 10, 6, 7, 8, 9, 0, 0, 0, 0, 0, 0, 0],
+            [11, 12, 13, 14, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [16, 17, 18, 19, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [21, 22, 23, 24, 25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [26, 27, 28, 29, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [31, 32, 33, 34, 35, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [36, 37, 38, 39, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [41, 42, 43, 44, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [46, 47, 48, 49, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [51, 52, 53, 54, 55, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [56, 57, 58, 59, 60, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [61, 62, 63, 64, 65, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [66, 67, 68, 69, 70, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [71, 72, 73, 74, 75, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [76, 77, 78, 79, 80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [81, 82, 83, 84, 85, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [86, 87, 88, 89, 90, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [91, 92, 93, 94, 95, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [96, 97, 98, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        ],
+        device=device,
+        dtype=torch.int32,
+    )
 
-    block_tables = torch.tensor([[ 1,  2,  3,  4, 10,  6,  7,  8,  9,  0,  0,  0,  0,  0,  0,  0],
-             [11, 12, 13, 14, 15,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-             [16, 17, 18, 19, 20,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-             [21, 22, 23, 24, 25,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-             [26, 27, 28, 29, 30,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-             [31, 32, 33, 34, 35,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-             [36, 37, 38, 39, 40,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-             [41, 42, 43, 44, 45,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-             [46, 47, 48, 49, 50,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-             [51, 52, 53, 54, 55,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-             [56, 57, 58, 59, 60,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-             [61, 62, 63, 64, 65,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-             [66, 67, 68, 69, 70,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-             [71, 72, 73, 74, 75,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-             [76, 77, 78, 79, 80,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-             [81, 82, 83, 84, 85,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-             [86, 87, 88, 89, 90,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-             [91, 92, 93, 94, 95,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-             [96, 97, 98,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0]],
-            device=device, dtype=torch.int32)
-
-    cu_seqlens_q = torch.tensor([   0,    1,    2,    3,  534, 1054, 1580, 2095, 2619, 3144, 3681, 4211, 4743, 5261, 5794, 6327, 6842, 7365, 7890, 8192], device=device, dtype=torch.int32)
-    seq_lens = torch.tensor([536, 530, 520, 531, 520, 526, 515, 524, 525, 537, 530, 532, 518, 533, 533, 515, 523, 525, 302], device=device, dtype=torch.int32)
+    cu_seqlens_q = torch.tensor(
+        [0, 1, 2, 3, 534, 1054, 1580, 2095, 2619, 3144, 3681, 4211, 4743, 5261, 5794, 6327, 6842, 7365, 7890, 8192],
+        device=device,
+        dtype=torch.int32,
+    )
+    seq_lens = torch.tensor(
+        [536, 530, 520, 531, 520, 526, 515, 524, 525, 537, 530, 532, 518, 533, 533, 515, 523, 525, 302],
+        device=device,
+        dtype=torch.int32,
+    )
 
     key_cache = torch.randn(3236, cache_block_size, num_kv_heads, head_size, dtype=dtype, device=device)
     value_cache = torch.randn(3236, cache_block_size, num_kv_heads, head_size, dtype=dtype, device=device)

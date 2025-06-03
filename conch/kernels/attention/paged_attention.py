@@ -187,9 +187,7 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             # Load the key block as (cxpr_head_size_padded, cache_block_size)
             # Note: we're loading it transposed here
             key_block_offsets = (
-                head_offsets[:, None]
-                + kv_head_index_offset
-                + cache_block_offsets[None, :] * kv_cache_block_stride
+                head_offsets[:, None] + kv_head_index_offset + cache_block_offsets[None, :] * kv_cache_block_stride
             )
 
             key_block_mask = head_mask[:, None] & cache_block_mask[None, :]
@@ -241,10 +239,7 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
             # Load the value block as (cache_block_size, cxpr_head_size_padded)
             value_block_offsets = (
-                cache_block_offsets[:, None] * kv_cache_block_stride
-                +
-                kv_head_index_offset
-                + head_offsets[None, :]
+                cache_block_offsets[:, None] * kv_cache_block_stride + kv_head_index_offset + head_offsets[None, :]
             )
 
             value_block_mask = cache_block_mask[:, None] & head_mask[None, :]

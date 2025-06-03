@@ -83,11 +83,13 @@ def test_reshape_and_cache(
     )
 
     # Call Triton kernel
-    reshape_and_cache_triton(key, value, key_cache_conch, value_cache_conch, slot_mapping, kv_cache_dtype, k_scale, v_scale)
+    reshape_and_cache_triton(
+        key, value, key_cache_conch, value_cache_conch, slot_mapping, kv_cache_dtype, k_scale, v_scale
+    )
 
     # Reshape vLLM key/value caches
     key_cache_vllm, value_cache_vllm = reshape_vllm_kvcache(key_cache_vllm, value_cache_vllm)
 
     # Compare the results.
-    torch.testing.assert_close(key_cache, key_cache_vllm)
-    torch.testing.assert_close(value_cache, value_cache_vllm)
+    torch.testing.assert_close(key_cache_conch, key_cache_vllm)
+    torch.testing.assert_close(value_cache_conch, value_cache_vllm)

@@ -140,10 +140,10 @@ def _convert_paged_to_contiguous(
     batch_size, _ = block_tables.shape
 
     k_contiguous = torch.empty(
-        (batch_size, num_kv_heads, seq_len, head_size), dtype=k_cache_paged.dtype, device=k_cache_paged.device
+        (batch_size, seq_len, num_kv_heads, head_size), dtype=k_cache_paged.dtype, device=k_cache_paged.device
     )
     v_contiguous = torch.empty(
-        (batch_size, num_kv_heads, seq_len, head_size), dtype=v_cache_paged.dtype, device=v_cache_paged.device
+        (batch_size, seq_len, num_kv_heads, head_size), dtype=v_cache_paged.dtype, device=v_cache_paged.device
     )
 
     for batch_index in range(batch_size):
@@ -165,17 +165,17 @@ def _convert_paged_to_contiguous(
             # Relative end is the end index in the current cache block
             relative_end = actual_end - (relative_block_index * cache_block_size)
 
-            this_k[:, current_seq_len_begin:actual_end, :] = current_k_block.view(
+            this_k[current_seq_len_begin:actual_end, :, :] = current_k_block.view(
                 cache_block_size,
                 num_kv_heads,
                 head_size,
-            )[:, :relative_end, :]
+            )[:relative_end, :, :]
 
-            this_v[:, current_seq_len_begin:actual_end, :] = current_v_block.view(
+            this_v[current_seq_len_begin:actual_end, :, :] = current_v_block.view(
                 cache_block_size,
                 num_kv_heads,
                 head_size,
-            )[:, :relative_end, :]
+            )[:relative_end, :, :]
 
             current_seq_len_begin += cache_block_size
             current_seq_len_end += cache_block_size
@@ -276,6 +276,9 @@ def _run_paged_vs_sdpa(
         head_size,
         cache_block_size,
     )
+
+    kc_duplicate = kc_duplicate.permute(0, 2, 1, 3)
+    vc_duplicate = vc_duplicate.permute(0, 2, 1, 3)
 
     torch.testing.assert_close(k, kc_duplicate, atol=atol, rtol=rtol)
     torch.testing.assert_close(v, vc_duplicate, atol=atol, rtol=rtol)
