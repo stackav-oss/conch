@@ -87,7 +87,8 @@ def _check_key_value_cache_size_compatibility(
         )
         raise ValueError(msg)
 
-    num_blocks, num_kv_heads, cache_block_size, head_size_kv = key_cache.shape
+    # num_blocks, num_kv_heads, cache_block_size, head_size_kv = key_cache.shape
+    num_blocks, cache_block_size, num_kv_heads, head_size_kv = key_cache.shape
 
     if head_size_kv != head_size:
         msg = f"Head size of key/value cache tensors does not match head size of query/output tensors ({head_size_kv = }, {head_size = })"

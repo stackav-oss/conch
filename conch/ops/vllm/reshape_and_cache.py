@@ -22,8 +22,8 @@ def _validate_sizes(
     Args:
         key: New key vectors, shape: (num_tokens, num_kv_heads, head_size).
         value: New value vectors, shape: (num_tokens, num_kv_heads, head_size).
-        key_cache: Key cache, shape: (num_cache_blocks, num_kv_heads, cache_block_size, head_size).
-        value_cache: Value cache, shape: (num_cache_blocks, num_kv_heads, cache_block_size, head_size).
+        key_cache: Key cache, shape: (num_pages, cache_block_size, num_kv_heads, head_size).
+        value_cache: Value cache, shape: (num_pages, cache_block_size, num_kv_heads, head_size).
         slot_mapping: Tensor listing what slots in the cache each key/value vector should be placed in, shape: (num_tokens,).
 
     Raises:
@@ -49,7 +49,8 @@ def _validate_sizes(
         msg = f"Number of dimensions in key cache ({key_cache_dims}) did not match expected ({expected_kv_cache_dims})"
         raise ValueError(msg)
 
-    _, num_kv_heads_kvc, _, head_size_kvc = key_cache.shape
+    # _, num_kv_heads_kvc, _, head_size_kvc = key_cache.shape
+    _, _, num_kv_heads_kvc, head_size_kvc = key_cache.shape
 
     if num_kv_heads_kv != num_kv_heads_kvc:
         msg = f"Number of kv heads in key/value tensors ({num_kv_heads_kv}) does not match number of kv heads in key/value cache tensors ({num_kv_heads_kvc})"
@@ -97,8 +98,8 @@ def reshape_and_cache(
     Args:
         key: New key vectors, shape: (num_tokens, num_kv_heads, head_size).
         value: New value vectors, shape: (num_tokens, num_kv_heads, head_size).
-        key_cache: Key cache, shape: (num_cache_blocks, num_kv_heads, cache_block_size, head_size).
-        value_cache: Value cache, shape: (num_cache_blocks, num_kv_heads, cache_block_size, head_size).
+        key_cache: Key cache, shape: (num_pages, cache_block_size, num_kv_heads, head_size).
+        value_cache: Value cache, shape: (num_pages, cache_block_size, num_kv_heads, head_size).
         slot_mapping: Tensor listing what slots in the cache each key/value vector should be placed in, shape: (num_tokens,).
         kv_cache_dtype: String datatype of kv cache elements.
         k_scale: Fp8 scaling factor for k.
