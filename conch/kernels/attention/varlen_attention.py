@@ -323,21 +323,11 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             # head_offsets[None, :]
         )
 
-        value_block_offsets = (
-            cache_block_offsets[:, None] * kv_cache_block_stride +
-            # kv_head_index_offset * kv_head_element_stride +
-            # kv_head_index_offset * kv_head_stride +
-            kv_head_index_offset +
-            head_offsets[None, :]
-        )
-
 
         key_block_mask = head_mask[:, None] & cache_block_mask[None, :]
-        value_block_mask = cache_block_mask[:, None] & head_mask[None, :]
 
         key_block = _load(key_cache_ptr + kv_cache_block_index_offset + key_block_offsets, use_mask=(needs_cache_block_mask or needs_head_mask), mask=key_block_mask, other=0.0)
 
-        value_block = _load(value_cache_ptr + kv_cache_block_index_offset + value_block_offsets, use_mask=(needs_cache_block_mask or needs_head_mask), mask=value_block_mask, other=0.0)
         # Load the key block as (cxpr_head_size_padded, cache_block_size)
         # Note: we're loading it transposed here
         # key_block_ptr = tl.make_block_ptr(
@@ -403,6 +393,15 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         # Apply scaling factor to running output
         output *= alpha[:, None]
 
+        value_block_offsets = (
+            cache_block_offsets[:, None] * kv_cache_block_stride +
+            # kv_head_index_offset * kv_head_element_stride +
+            # kv_head_index_offset * kv_head_stride +
+            kv_head_index_offset +
+            head_offsets[None, :]
+        )
+
+        value_block_mask = cache_block_mask[:, None] & head_mask[None, :]
         # Load the value block as (cache_block_size, cxpr_head_size_padded)
         # value_block_ptr = tl.make_block_ptr(
         #     value_cache_ptr + kv_cache_block_index_offset + kv_head_index_offset,
@@ -419,6 +418,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         #     mask_second_dim=needs_head_mask,
         #     padding_option="zero",
         # )
+        value_block = _load(value_cache_ptr + kv_cache_block_index_offset + value_block_offsets, use_mask=(needs_cache_block_mask or needs_head_mask), mask=value_block_mask, other=0.0)
 
         if cxpr_apply_fp8_scaling:
             # Dequantize (multiply by scale factor)

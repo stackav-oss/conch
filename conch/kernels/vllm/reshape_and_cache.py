@@ -30,6 +30,7 @@ def _reshape_and_cache_kernel(
     kv_cache_page_stride: int,
     kv_cache_block_stride: int,
     kv_cache_head_stride: int,
+    kv_cache_head_element_stride: int,
     # Scalars
     cache_block_size: int,
     # Constexprs
@@ -56,6 +57,7 @@ def _reshape_and_cache_kernel(
         kv_cache_page_stride: Stride of key/value cache tensors in 0th dimension.
         kv_cache_block_stride: Stride of key/value cache tensors in 1st dimension.
         kv_cache_head_stride: Stride of key/value cache tensors in 2nd dimension.
+        kv_cache_head_element_stride: Stride of key/value cache tensors in 3rd dimension.
         cache_block_size: Size of each cache block / page in the KV cache.
         cxpr_head_size: Head size / dimension for the attention head (must be power of two!).
         cxpr_apply_fp8_scaling: Whether or not to apply FP8 scaling.
@@ -85,7 +87,6 @@ def _reshape_and_cache_kernel(
     k_head_offset = head_index * k_head_stride
     v_head_offset = head_index * v_head_stride
     # Offsets for each element of the head
-    kv_head_offsets = tl.arange(0, cxpr_head_size)
     k_head_offsets = tl.arange(0, cxpr_head_size) * k_head_element_stride
     v_head_offsets = tl.arange(0, cxpr_head_size) * v_head_element_stride
 
@@ -116,6 +117,8 @@ def _reshape_and_cache_kernel(
     # Calculate offset in a cache block to get to the entry for we're copying into
     kv_cache_entry_offset = entry_index * kv_cache_block_stride
     kv_cache_head_offset = head_index * kv_cache_head_stride
+    # kv_head_offsets = kv_head_offsets * kv_cache_head_element_stride
+    kv_head_offsets = tl.arange(0, cxpr_head_size) * kv_cache_head_element_stride
 
     # Store key/value vectors into cache
     tl.store(
@@ -149,9 +152,11 @@ def reshape_and_cache_launcher(
         v_scale: Fp8 scaling factor for v.
     """
     # Assume sizes already checked if calling launcher. For interface with strict size checking, call `reshape_and_cache()`.
-    num_tokens, num_kv_heads, head_size = key.shape
+    _, num_kv_heads, head_size = key.shape
     # num_pages, _, cache_block_size, _ = key_cache.shape
     num_pages, cache_block_size, _, _ = key_cache.shape
+
+    num_tokens = slot_mapping.size(0)
 
     assert key.shape == value.shape  # noqa: S101
     assert key_cache.shape == value_cache.shape  # noqa: S101
@@ -197,6 +202,7 @@ def reshape_and_cache_launcher(
         key_cache.stride(0),
         key_cache.stride(1),
         key_cache.stride(2),
+        key_cache.stride(3),
         # Scalars
         cache_block_size,
         # Constexprs

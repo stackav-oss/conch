@@ -172,8 +172,8 @@ def main(
     query_vllm = query.unsqueeze(1)
     output_conch = torch.empty_like(query)
 
-    key_cache_vllm = key_cache_conch.permute(0, 2, 1, 3)
-    value_cache_vllm = value_cache_conch.permute(0, 2, 1, 3)
+    key_cache_conch = key_cache_conch.permute(0, 2, 1, 3)
+    value_cache_conch = value_cache_conch.permute(0, 2, 1, 3)
 
     softcap = 30.0
     k_scale = torch.full((1,), 1.0, dtype=dtype, device=device)
@@ -182,8 +182,8 @@ def main(
     # Check accuracy match
     output_vllm = flash_attn_with_kvcache(
         query_vllm,
-        key_cache_vllm,
-        value_cache_vllm,
+        key_cache_conch,
+        value_cache_conch,
         block_table=block_tables,
         cache_seqlens=seq_lens,
         softmax_scale=scale,
@@ -221,8 +221,8 @@ def main(
     baseline_result = benchmark_it(
         lambda: flash_attn_with_kvcache(
             query_vllm,
-            key_cache_vllm,
-            value_cache_vllm,
+            key_cache_conch,
+            value_cache_conch,
             block_table=block_tables,
             cache_seqlens=seq_lens,
             softmax_scale=scale,

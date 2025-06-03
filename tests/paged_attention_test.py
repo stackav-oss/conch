@@ -167,10 +167,12 @@ def _convert_paged_to_contiguous(
 
             this_k[:, current_seq_len_begin:actual_end, :] = current_k_block.view(
                 num_kv_heads, cache_block_size, head_size
+                # cache_block_size, num_kv_heads, head_size
             )[:, :relative_end, :]
 
             this_v[:, current_seq_len_begin:actual_end, :] = current_v_block.view(
                 num_kv_heads, cache_block_size, head_size
+                # cache_block_size, num_kv_heads, head_size
             )[:, :relative_end, :]
 
             current_seq_len_begin += cache_block_size
@@ -291,6 +293,9 @@ def _run_paged_vs_sdpa(
 
     q_paged = q[:, :, -1, :]
 
+    key_cache_paged = key_cache_paged.permute(0, 2, 1, 3)
+    value_cache_paged = value_cache_paged.permute(0, 2, 1, 3)
+
     out_paged = paged_attention(
         q_paged,
         key_cache_paged,
@@ -393,6 +398,9 @@ def _triton_vs_vllm_cuda(
         v_scale,
     )
 
+    key_cache_conch = key_cache_conch.permute(0, 2, 1, 3)
+    value_cache_conch = value_cache_conch.permute(0, 2, 1, 3)
+
     # Run Triton implementation
     output_conch = paged_attention(
         query,
@@ -490,8 +498,8 @@ def _triton_vs_flash_attn(
     # Run Triton implementation
     output_conch = paged_attention(
         query,
-        key_cache_conch,
-        value_cache_conch,
+        key_cache_fa,
+        value_cache_fa,
         block_tables,
         seq_lens,
         scale=scale,
