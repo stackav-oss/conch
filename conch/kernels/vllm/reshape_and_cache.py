@@ -29,6 +29,7 @@ def _reshape_and_cache_kernel(
     v_head_element_stride: int,
     kv_cache_page_stride: int,
     kv_cache_block_stride: int,
+    kv_cache_head_stride: int,
     # Scalars
     cache_block_size: int,
     # Constexprs
@@ -54,6 +55,7 @@ def _reshape_and_cache_kernel(
         v_head_element_stride: Stride of value tensor in 2nd dimension.
         kv_cache_page_stride: Stride of key/value cache tensors in 0th dimension.
         kv_cache_block_stride: Stride of key/value cache tensors in 1st dimension.
+        kv_cache_head_stride: Stride of key/value cache tensors in 2nd dimension.
         cache_block_size: Size of each cache block / page in the KV cache.
         cxpr_head_size: Head size / dimension for the attention head (must be power of two!).
         cxpr_apply_fp8_scaling: Whether or not to apply FP8 scaling.
@@ -113,14 +115,14 @@ def _reshape_and_cache_kernel(
     # Calculate offset into key/value cache tensors to get to the head we're copying into
     # Calculate offset in a cache block to get to the entry for we're copying into
     kv_cache_entry_offset = entry_index * kv_cache_block_stride
-    kv_cache_head_offset = head_index * cxpr_head_size 
+    kv_cache_head_offset = head_index * kv_cache_head_stride
 
     # Store key/value vectors into cache
     tl.store(
         key_cache_ptr + kv_page_offset + kv_cache_entry_offset + kv_cache_head_offset + kv_head_offsets, key
     )
     tl.store(
-        value_cache_ptr + kv_page_offset + kv_cache_entry_offset + kv_cache_head_offset +  kv_head_offsets, value
+        value_cache_ptr + kv_page_offset + kv_cache_entry_offset + kv_cache_head_offset + kv_head_offsets, value
     )
 
 
@@ -194,6 +196,7 @@ def reshape_and_cache_launcher(
         value.stride(2),
         key_cache.stride(0),
         key_cache.stride(1),
+        key_cache.stride(2),
         # Scalars
         cache_block_size,
         # Constexprs
