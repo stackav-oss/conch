@@ -158,6 +158,7 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Keep running denominator of softmax
     l_i = tl.full([cxpr_query_group_size_padded], 0.0, dtype=dtype)
 
+    # Offsets for each element of the cache block
     cache_block_offsets = tl.arange(0, cxpr_cache_block_size)
 
     # Iterate through the cache blocks that this kernel is assigned to
@@ -185,28 +186,14 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
             # Load the key block as (cxpr_head_size_padded, cache_block_size)
             # Note: we're loading it transposed here
-            # key_block_ptr = tl.make_block_ptr(
-            #     key_cache_ptr + kv_cache_block_index_offset + kv_head_index_offset,
-            #     shape=(head_size, num_entries_in_cache_block),
-            #     strides=(kv_head_element_stride, kv_cache_block_stride),
-            #     offsets=(0, 0),
-            #     block_shape=(cxpr_head_size_padded, cxpr_cache_block_size),
-            #     order=(1, 0),
-            # )
-            # key_block = tl.load(key_block_ptr, boundary_check=(0, 1), padding_option="zero")
             key_block_offsets = (
                 head_offsets[:, None]
-                +
-                # kv_head_index_offset * kv_head_element_stride +
-                # kv_head_index_offset * kv_head_stride +
-                kv_head_index_offset
+                + kv_head_index_offset
                 + cache_block_offsets[None, :] * kv_cache_block_stride
-                # cache_block_offsets[:, None] * kv_cache_block_stride +
-                # kv_head_index_offset * kv_head_element_stride +
-                # head_offsets[None, :]
             )
 
             key_block_mask = head_mask[:, None] & cache_block_mask[None, :]
+
             key_block = tl.load(
                 key_cache_ptr + kv_cache_block_index_offset + key_block_offsets, mask=key_block_mask, other=0.0
             )
@@ -252,29 +239,19 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             # Apply scaling factor to running output
             output *= alpha[:, None]
 
+            # Load the value block as (cache_block_size, cxpr_head_size_padded)
             value_block_offsets = (
                 cache_block_offsets[:, None] * kv_cache_block_stride
                 +
-                # kv_head_index_offset * kv_head_element_stride +
-                # kv_head_index_offset * kv_head_stride +
                 kv_head_index_offset
                 + head_offsets[None, :]
             )
 
             value_block_mask = cache_block_mask[:, None] & head_mask[None, :]
+
             value_block = tl.load(
                 value_cache_ptr + kv_cache_block_index_offset + value_block_offsets, mask=value_block_mask, other=0.0
             )
-            # Load the value block as (cache_block_size, cxpr_head_size_padded)
-            # value_block_ptr = tl.make_block_ptr(
-            #     value_cache_ptr + kv_cache_block_index_offset + kv_head_index_offset,
-            #     shape=(num_entries_in_cache_block, head_size),
-            #     strides=(kv_cache_block_stride, kv_head_element_stride),
-            #     offsets=(0, 0),
-            #     block_shape=(cxpr_cache_block_size, cxpr_head_size_padded),
-            #     order=(0, 1),
-            # )
-            # value_block = tl.load(value_block_ptr, boundary_check=(0, 1), padding_option="zero")
 
             if cxpr_apply_fp8_scaling:
                 # Dequantize (multiply by scale factor)
@@ -503,13 +480,10 @@ def paged_attention_launcher(  # noqa: PLR0913
 
     # Perform unchecked size accesses, assume has already been checked
     batch_size, num_query_heads, head_size = out.shape
-    # num_cache_blocks, num_kv_heads, cache_block_size, _ = key_cache.shape
     num_cache_blocks, cache_block_size, num_kv_heads, _ = key_cache.shape
     _, max_num_blocks_per_sequence = block_tables.shape
 
     assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"  # noqa: S101
-
-    # print(f"{cache_block_size = }, {num_kv_heads = }")
 
     # Need sizes to be constexpr in order to reshape tensors in kernel
     cxpr_cache_block_size: tl.constexpr = cache_block_size

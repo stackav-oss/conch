@@ -125,7 +125,6 @@ def _check_size_compatibility(
     batch_size, num_query_heads, head_size = out.shape
 
     _check_kv_cache_size_compatibility(key_cache, value_cache, head_size)
-    # num_cache_blocks, num_kv_heads, cache_block_size, _ = key_cache.shape
     num_cache_blocks, cache_block_size, num_kv_heads, _ = key_cache.shape
 
     _check_block_table_size_compatibility(block_tables, batch_size)

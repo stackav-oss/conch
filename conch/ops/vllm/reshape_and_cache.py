@@ -49,7 +49,6 @@ def _validate_sizes(
         msg = f"Number of dimensions in key cache ({key_cache_dims}) did not match expected ({expected_kv_cache_dims})"
         raise ValueError(msg)
 
-    # _, num_kv_heads_kvc, _, head_size_kvc = key_cache.shape
     _, _, num_kv_heads_kvc, head_size_kvc = key_cache.shape
 
     if num_kv_heads_kv != num_kv_heads_kvc:

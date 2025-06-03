@@ -113,11 +113,12 @@ def _reshape_and_cache_kernel(
 
     # Calculate offset into key/value cache tensors to get to the cache block we're copying into
     kv_page_offset = page_index * kv_cache_page_stride
-    # Calculate offset into key/value cache tensors to get to the head we're copying into
     # Calculate offset in a cache block to get to the entry for we're copying into
     kv_cache_entry_offset = entry_index * kv_cache_block_stride
+    # Calculate offset into key/value cache tensors to get to the head we're copying into
     kv_cache_head_offset = head_index * kv_cache_head_stride
-    # kv_head_offsets = kv_head_offsets * kv_cache_head_element_stride
+
+    # Offsets for each element of the head
     kv_head_offsets = tl.arange(0, cxpr_head_size) * kv_cache_head_element_stride
 
     # Store key/value vectors into cache
@@ -149,9 +150,9 @@ def reshape_and_cache_launcher(
     """
     # Assume sizes already checked if calling launcher. For interface with strict size checking, call `reshape_and_cache()`.
     _, num_kv_heads, head_size = key.shape
-    # num_pages, _, cache_block_size, _ = key_cache.shape
     num_pages, cache_block_size, _, _ = key_cache.shape
 
+    # Note: In vLLM v1, slot_mapping is the only tensor that can be trusted to tell the correct number of tokens
     num_tokens = slot_mapping.size(0)
 
     assert key.shape == value.shape  # noqa: S101

@@ -177,10 +177,7 @@ def main(
     )
 
     key_cache_vllm, value_cache_vllm = key_caches_vllm[0], value_caches_vllm[0]
-
     key_cache, value_cache = reshape_vllm_kvcache(key_cache_vllm.clone(), value_cache_vllm.clone())
-    key_cache = key_cache.permute(0, 2, 1, 3)
-    value_cache = value_cache.permute(0, 2, 1, 3)
 
     # Run the reference implementation.
     reshape_and_cache_reference(
@@ -192,8 +189,6 @@ def main(
 
     # Reshape vLLM key/value caches
     key_cache_vllm_out, value_cache_vllm_out = reshape_vllm_kvcache(key_cache_vllm, value_cache_vllm)
-    key_cache_vllm_out = key_cache_vllm_out.permute(0, 2, 1, 3)
-    value_cache_vllm_out = value_cache_vllm_out.permute(0, 2, 1, 3)
 
     if not torch.allclose(key_cache, key_cache_vllm_out, atol=absolute_tolerance):
         print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)

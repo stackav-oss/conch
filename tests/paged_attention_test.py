@@ -78,8 +78,8 @@ def _create_paged_cache_from_contiguous_kv(
     max_seq_len = max_num_pages_per_seq * cache_block_size
     assert sequence_length <= max_seq_len
 
-    k_cache = torch.empty(num_cache_blocks, num_kv_heads, cache_block_size, head_size, dtype=dtype, device=device)
-    v_cache = torch.empty(num_cache_blocks, num_kv_heads, cache_block_size, head_size, dtype=dtype, device=device)
+    k_cache = torch.empty(num_cache_blocks, cache_block_size, num_kv_heads, head_size, dtype=dtype, device=device)
+    v_cache = torch.empty(num_cache_blocks, cache_block_size, num_kv_heads, head_size, dtype=dtype, device=device)
     block_tables = torch.zeros((batch_size, max_num_pages_per_seq), dtype=torch.int32, device=device)
 
     current_page = 0
@@ -95,8 +95,8 @@ def _create_paged_cache_from_contiguous_kv(
                 current_k = key[batch_index][head_index][seq_index].detach().clone()
                 current_v = value[batch_index][head_index][seq_index].detach().clone()
 
-                k_cache[current_page][head_index][current_page_offset] = current_k
-                v_cache[current_page][head_index][current_page_offset] = current_v
+                k_cache[current_page][current_page_offset][head_index] = current_k
+                v_cache[current_page][current_page_offset][head_index] = current_v
 
             current_page_offset += 1
 
@@ -166,17 +166,15 @@ def _convert_paged_to_contiguous(
             relative_end = actual_end - (relative_block_index * cache_block_size)
 
             this_k[:, current_seq_len_begin:actual_end, :] = current_k_block.view(
-                num_kv_heads,
                 cache_block_size,
+                num_kv_heads,
                 head_size,
-                # cache_block_size, num_kv_heads, head_size
             )[:, :relative_end, :]
 
             this_v[:, current_seq_len_begin:actual_end, :] = current_v_block.view(
-                num_kv_heads,
                 cache_block_size,
+                num_kv_heads,
                 head_size,
-                # cache_block_size, num_kv_heads, head_size
             )[:, :relative_end, :]
 
             current_seq_len_begin += cache_block_size
@@ -297,9 +295,6 @@ def _run_paged_vs_sdpa(
 
     q_paged = q[:, :, -1, :]
 
-    key_cache_paged = key_cache_paged.permute(0, 2, 1, 3)
-    value_cache_paged = value_cache_paged.permute(0, 2, 1, 3)
-
     out_paged = paged_attention(
         q_paged,
         key_cache_paged,
@@ -402,9 +397,6 @@ def _triton_vs_vllm_cuda(
         v_scale,
     )
 
-    key_cache_conch = key_cache_conch.permute(0, 2, 1, 3)
-    value_cache_conch = value_cache_conch.permute(0, 2, 1, 3)
-
     # Run Triton implementation
     output_conch = paged_attention(
         query,
@@ -454,7 +446,7 @@ def _triton_vs_flash_attn(
 
     from vllm.vllm_flash_attn import flash_attn_with_kvcache  # type: ignore[attr-defined, unused-ignore]
 
-    query, _, _, key_cache_conch, value_cache_conch, block_tables, seq_lens = create_tensors(
+    query, _, _, key_cache, value_cache, block_tables, seq_lens = create_tensors(
         head_size,
         sequence_length,
         cache_block_size,
@@ -482,13 +474,10 @@ def _triton_vs_flash_attn(
     # Run FlashAttnWithKVCache implementation
     query_fa = query.unsqueeze(1)
 
-    key_cache_fa = key_cache_conch.permute(0, 2, 1, 3)
-    value_cache_fa = value_cache_conch.permute(0, 2, 1, 3)
-
     output_fa = flash_attn_with_kvcache(
         query_fa,
-        key_cache_fa,
-        value_cache_fa,
+        key_cache,
+        value_cache,
         block_table=block_tables,
         cache_seqlens=seq_lens,
         softmax_scale=scale,
@@ -502,8 +491,8 @@ def _triton_vs_flash_attn(
     # Run Triton implementation
     output_conch = paged_attention(
         query,
-        key_cache_fa,
-        value_cache_fa,
+        key_cache,
+        value_cache,
         block_tables,
         seq_lens,
         scale=scale,

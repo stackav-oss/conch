@@ -179,9 +179,6 @@ def main(
         )
     )
 
-    key_cache_conch = key_cache_conch.permute(0, 2, 1, 3)
-    value_cache_conch = value_cache_conch.permute(0, 2, 1, 3)
-
     scale: Final = float(1.0 / (head_dim**0.5))
     max_seq_len: Final = int(seq_lens.max().item())
 
