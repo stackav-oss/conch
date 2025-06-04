@@ -18,7 +18,7 @@ from conch.third_party.vllm.utils import seed_everything
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.has_cuda():
-    from vllm import _custom_ops as vllm_custom_ops  # type: ignore[import-not-found, unused-ignore]
+    from vllm import _custom_ops as vllm_custom_ops
 else:
     vllm_custom_ops = None  # type: ignore[assignment, unused-ignore]
 
