@@ -39,7 +39,7 @@ def _get_tolerance_for_dtype(dtype: torch.dtype) -> float:
 def _convert_paged_to_contiguous(
     k_cache_paged: torch.Tensor,
     v_cache_paged: torch.Tensor,
-    block_tables: torch.Tensor,
+    block_table: torch.Tensor,
     cu_seqlens_k: torch.Tensor,
     total_num_k: int,
     num_kv_heads: int,
@@ -51,7 +51,7 @@ def _convert_paged_to_contiguous(
     Args:
         k_cache_paged: Paged key cache.
         v_cache_paged: Paged value cache.
-        block_tables: Block tables for traversing kv caches.
+        block_table: Block tables for traversing kv caches.
         cu_seqlens_k: Sequence lengths.
         num_kv_heads: The number of kv heads.
         total_num_k: The total number of keys/values.
@@ -61,7 +61,7 @@ def _convert_paged_to_contiguous(
     Returns:
         Tuple of key cache in contiguous memory and value cache in contiguous memory.
     """
-    batch_size, _ = block_tables.shape
+    batch_size, _ = block_table.shape
 
     k_contiguous = torch.empty(
         (total_num_k, num_kv_heads, head_size), dtype=k_cache_paged.dtype, device=k_cache_paged.device
@@ -78,7 +78,7 @@ def _convert_paged_to_contiguous(
         this_k = k_contiguous[current_seq_len_begin:current_seq_len_end]
         this_v = v_contiguous[current_seq_len_begin:current_seq_len_end]
 
-        these_blocks = block_tables[batch_index]
+        these_blocks = block_table[batch_index]
 
         relative_begin = 0
 
@@ -243,7 +243,7 @@ def test_varlen_attention_vs_pytorch(
 
     cache_block_size = 16
 
-    _, _, _, key_cache, value_cache, block_tables, seq_lens = create_tensors(
+    _, _, _, key_cache, value_cache, block_table, seq_lens = create_tensors(
         head_size,
         sequence_length,
         cache_block_size,
@@ -271,7 +271,7 @@ def test_varlen_attention_vs_pytorch(
     key_contiguous, value_contiguous = _convert_paged_to_contiguous(
         key_cache,
         value_cache,
-        block_tables,
+        block_table,
         cu_seqlens_k,
         total_num_k,
         num_kv_heads,
@@ -298,7 +298,7 @@ def test_varlen_attention_vs_pytorch(
         query=q,
         key_cache=key_cache,
         value_cache=value_cache,
-        block_tables=block_tables,
+        block_table=block_table,
         seq_lens=seq_lens,
         cu_seqlens_q=cu_seqlens_q,
         cu_seqlens_k=cu_seqlens_k,
@@ -348,7 +348,7 @@ def test_varlen_attention_vs_flash_attn(
 
     cache_block_size = 16
 
-    _, _, _, key_cache, value_cache, block_tables, seq_lens = create_tensors(
+    _, _, _, key_cache, value_cache, block_table, seq_lens = create_tensors(
         head_size,
         sequence_length,
         cache_block_size,
@@ -394,7 +394,7 @@ def test_varlen_attention_vs_flash_attn(
         cu_seqlens_q=cu_seqlens_q,
         max_seqlen_q=max_seqlen_q,
         max_seqlen_k=max_seqlen_k,
-        block_table=block_tables,
+        block_table=block_table,
         seqused_k=seq_lens,
         softmax_scale=scale,
         causal=causal,
@@ -404,7 +404,7 @@ def test_varlen_attention_vs_flash_attn(
         query=q,
         key_cache=key_cache,
         value_cache=value_cache,
-        block_tables=block_tables,
+        block_table=block_table,
         seq_lens=seq_lens,
         cu_seqlens_q=cu_seqlens_q,
         cu_seqlens_k=cu_seqlens_k,
@@ -440,7 +440,7 @@ def test_vllm_crash(dtype: torch.dtype) -> None:
 
     tolerance = 1e-2 if dtype == torch.bfloat16 else 1e-3
 
-    block_tables = torch.tensor(
+    block_table = torch.tensor(
         [
             [1, 2, 3, 4, 10, 6, 7, 8, 9, 0, 0, 0, 0, 0, 0, 0],
             [11, 12, 13, 14, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -495,7 +495,7 @@ def test_vllm_crash(dtype: torch.dtype) -> None:
         cu_seqlens_q=cu_seqlens_q,
         max_seqlen_q=max_seqlen_q,
         max_seqlen_k=max_seqlen_k,
-        block_table=block_tables,
+        block_table=block_table,
         seqused_k=seq_lens,
         softmax_scale=scale,
         causal=causal,
@@ -505,7 +505,7 @@ def test_vllm_crash(dtype: torch.dtype) -> None:
         query=q,
         key_cache=key_cache,
         value_cache=value_cache,
-        block_tables=block_tables,
+        block_table=block_table,
         seq_lens=seq_lens,
         cu_seqlens_q=cu_seqlens_q,
         cu_seqlens_k=cu_seqlens_q,

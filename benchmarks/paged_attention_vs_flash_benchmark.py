@@ -158,11 +158,11 @@ def main(
 
     kv_cache_dtype = "auto"
 
-    query, _, _, key_cache, value_cache, block_tables, seq_lens = create_tensors(
+    query, _, _, key_cache, value_cache, block_table, seq_lens = create_tensors(
         head_dim, seq_len, cache_block_size, batch_size, num_query_heads, num_kv_heads, kv_cache_dtype, device, dtype
     )
 
-    _, max_num_blocks_per_seq = block_tables.shape
+    _, max_num_blocks_per_seq = block_table.shape
 
     scale: Final = float(1.0 / (head_dim**0.5))
 
@@ -181,7 +181,7 @@ def main(
         query_vllm,
         key_cache,
         value_cache,
-        block_table=block_tables,
+        block_table=block_table,
         cache_seqlens=seq_lens,
         softmax_scale=scale,
         causal=True,
@@ -195,7 +195,7 @@ def main(
         query,
         key_cache,
         value_cache,
-        block_tables,
+        block_table,
         seq_lens,
         output=output_conch,
         scale=scale,
@@ -220,7 +220,7 @@ def main(
             query_vllm,
             key_cache,
             value_cache,
-            block_table=block_tables,
+            block_table=block_table,
             cache_seqlens=seq_lens,
             softmax_scale=scale,
             causal=True,
@@ -238,7 +238,7 @@ def main(
             query,
             key_cache,
             value_cache,
-            block_tables,
+            block_table,
             seq_lens,
             output=output_conch,
             scale=scale,

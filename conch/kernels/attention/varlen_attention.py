@@ -84,7 +84,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     query_ptr: tl.tensor,  # (total_num_q, num_query_heads, head_size)
     key_cache_ptr: tl.tensor,  # (num_cache_blocks, cache_block_size, num_kv_heads, head_size)
     value_cache_ptr: tl.tensor,  # (num_cache_blocks, cache_block_size, num_kv_heads, head_size)
-    block_tables_ptr: tl.tensor,  # (batch_size, max_num_blocks_per_sequence)
+    block_table_ptr: tl.tensor,  # (batch_size, max_num_blocks_per_sequence)
     seq_lens_ptr: tl.tensor,  # (batch_size, )
     cu_seqlens_q_ptr: tl.tensor,  # (batch_size + 1, )
     k_scale_ptr: tl.tensor,  # (1,)
@@ -109,7 +109,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     kv_cache_block_stride: int,  # key_cache.stride(1), same for key and value
     kv_head_stride: int,  # key_cache.stride(2), same for key and value
     kv_head_element_stride: int,  # key_cache.stride(3), same for key and value
-    block_tables_batch_stride: int,  # block_tables.stride(0)
+    block_table_batch_stride: int,  # block_table.stride(0)
     # Constexprs
     cxpr_query_group_size_padded: tl.constexpr,  # num_query_heads // num_kv_heads
     cxpr_query_chunk_size: tl.constexpr,
@@ -119,6 +119,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     cxpr_apply_fp8_scaling: tl.constexpr,
     cxpr_is_rocm: tl.constexpr,
     cxpr_is_causal: tl.constexpr,
+    cxpr_split_kv: tl.constexpr,
 ) -> None:
     """Varlen Attention kernel: compute attention for a split block.
 
@@ -128,7 +129,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         query_ptr: Pointer to tensor storing the query, shape: (total_num_q, num_query_heads, head_size).
         key_cache_ptr: Tensor with cached K values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
         value_cache_ptr: Tensor with cached V values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
-        block_tables_ptr: Pointer to tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
+        block_table_ptr: Pointer to tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
         seq_lens_ptr: Pointer to tensor holding the current sequence length for each sequence in the batch, shape: (batch_size, ).
         cu_seqlens_q_ptr: Pointer to tensor holding the cumulative sequence lengths for each sequence in the batch, shape: (batch_size, ).
         k_scale_ptr: Pointer to scalar fp8 scaling factor for k.
@@ -150,7 +151,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         kv_cache_block_stride: Stride of the k/v tensors in the 1st dimension.
         kv_head_stride: Stride of the k/v tensors in the 2nd dimension.
         kv_head_element_stride: Stride of the k/v tensors in the 3rd dimension.
-        block_tables_batch_stride: Stride of the block table tensor in the 0th dimension.
+        block_table_batch_stride: Stride of the block table tensor in the 0th dimension.
         cxpr_query_group_size_padded: The number of query heads to group together (must be power-of-two!).
         cxpr_query_chunk_size: The size of the query chunks (must be power of two!).
         cxpr_cache_block_size: The size of the cache blocks (must be power of two!).
@@ -269,9 +270,9 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Index/offset for the current kv_head in the key_cache and value_cache
     kv_head_index_offset = kv_head_index * kv_head_stride
 
-    # Pointer arithmetic to get to the entry in the block_tables for the current batch_index
-    current_block_table_offset = batch_index * block_tables_batch_stride
-    current_block_table_ptr = block_tables_ptr + current_block_table_offset
+    # Pointer arithmetic to get to the entry in the block_table for the current batch_index
+    current_block_table_offset = batch_index * block_table_batch_stride
+    current_block_table_ptr = block_table_ptr + current_block_table_offset
 
     # Scratchpad for output from this group of cache blocks
     output = tl.zeros([cxpr_query_chunk_size * cxpr_query_group_size_padded, cxpr_head_size_padded], dtype=dtype)
@@ -306,7 +307,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         # Load the key block as (cxpr_head_size_padded, cache_block_size)
         # Note: we're loading it transposed here
         key_block_offsets = (
-            head_offsets[:, None] + kv_head_index_offset + cache_block_offsets[None, :] * kv_cache_block_stride
+            cache_block_offsets[None, :] * kv_cache_block_stride + kv_head_index_offset + head_offsets[:, None]
         )
 
         key_block_mask = head_mask[:, None] & cache_block_mask[None, :]
@@ -416,28 +417,29 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         mask=query_mask,
     )
 
-    # Calculate scratchpad log(sum(exp))
-    # Note: log() only accepts fp32/fp64 arguments
-    lse = m_i + tl.log(l_i.to(tl.float32)).to(dtype)
+    if cxpr_split_kv:
+        # Calculate scratchpad log(sum(exp))
+        # Note: log() only accepts fp32/fp64 arguments
+        lse = m_i + tl.log(l_i.to(tl.float32)).to(dtype)
 
-    # Calculate offsets to store log-sum-exp for this query split/query group
-    # 1D block of shape (query_chunk_size * query_group_size,)
-    lse_scratch_offsets = (
-        this_query_start * lse_scratchpad_batch_stride
-        + query_split_group_seq_offsets * lse_scratchpad_batch_stride
-        + kv_split_index * lse_scratchpad_kv_split_stride
-        + query_split_group_head_offsets
-    )
+        # Calculate offsets to store log-sum-exp for this query split/query group
+        # 1D block of shape (query_chunk_size * query_group_size,)
+        lse_scratch_offsets = (
+            this_query_start * lse_scratchpad_batch_stride
+            + query_split_group_seq_offsets * lse_scratchpad_batch_stride
+            + kv_split_index * lse_scratchpad_kv_split_stride
+            + query_split_group_head_offsets
+        )
 
-    lse_mask = query_split_group_seq_mask & query_split_group_head_mask
+        lse_mask = query_split_group_seq_mask & query_split_group_head_mask
 
-    # Store lse scratchpad results
-    _store(
-        lse_scratchpad_ptr + lse_scratch_offsets,
-        lse,
-        use_mask=(needs_query_split_mask or needs_query_group_mask),
-        mask=lse_mask,
-    )
+        # Store lse scratchpad results
+        _store(
+            lse_scratchpad_ptr + lse_scratch_offsets,
+            lse,
+            use_mask=(needs_query_split_mask or needs_query_group_mask),
+            mask=lse_mask,
+        )
 
 
 @triton.jit  # type: ignore[misc]
@@ -649,7 +651,7 @@ def _get_block_size(device_name: str) -> int:
     if "MI300X" in device_name:
         return 256
 
-    return 128
+    return 64
 
 
 def _get_tuned_sizes(head_size_padded: int, query_group_size_padded: int, max_seqlen_q: int) -> tuple[int, int, int]:
@@ -679,14 +681,14 @@ def varlen_attention_launcher(  # noqa: PLR0913
     query: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
-    output_scratchpad: torch.Tensor,
-    lse_scratchpad: torch.Tensor,
-    block_tables: torch.Tensor,
+    block_table: torch.Tensor,
     seq_lens: torch.Tensor,
     cu_seqlens_q: torch.Tensor,
     cu_seqlens_k: torch.Tensor,
     max_seqlen_q: int,
     max_seqlen_k: int,
+    output_scratchpad: torch.Tensor | None = None,
+    lse_scratchpad: torch.Tensor | None = None,
     causal: bool = False,
     scale: float | None = None,
     softcap: float = 0.0,
@@ -701,14 +703,14 @@ def varlen_attention_launcher(  # noqa: PLR0913
         query: Query tensor, shape: (total_num_q, num_heads, head_size).
         key_cache: Tensor with cached K values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
         value_cache: Tensor with cached V values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
-        output_scratchpad: Tensor used as scratchpad to share cache block outputs between two stages, shape: (total_num_q, num_kv_splits, num_query_heads, head_size)
-        lse_scratchpad: Tensor used as scratchpad to share cache block log-sum-exp between two stages, shape: (total_num_q, num_kv_splits, num_query_heads)
-        block_tables: Tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
+        block_table: Tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
         seq_lens: Tensor with the sequence length of each index in the batch, shape: (batch_size, ).
         cu_seqlens_q: Tensor with the cumulative query sequence lengths for each index in the batch, shape: (batch_size + 1, ).
         cu_seqlens_k: Tensor with the cumulative key/value sequence lengths for each index in the batch, shape: (batch_size + 1, ).
         max_seqlen_q: Maximum sequence length of the query.
         max_seqlen_k: Maximum sequence length of the key/value.
+        output_scratchpad: Tensor used as scratchpad to share cache block outputs between two stages, shape: (total_num_q, num_kv_splits, num_query_heads, head_size)
+        lse_scratchpad: Tensor used as scratchpad to share cache block log-sum-exp between two stages, shape: (total_num_q, num_kv_splits, num_query_heads)
         causal: Whether or not to apply causal masking.
         scale: Scaling factor, 1/sqrt(head_size).
         softcap: Softcap value to apply to logits.
@@ -728,15 +730,21 @@ def varlen_attention_launcher(  # noqa: PLR0913
     allowed_in_out_dtypes = [torch.float32, torch.float16, torch.bfloat16]
     assert query.dtype in allowed_in_out_dtypes  # noqa: S101
     assert output.dtype == query.dtype  # noqa: S101
-    assert output_scratchpad.dtype == query.dtype  # noqa: S101
-    assert lse_scratchpad.dtype == query.dtype  # noqa: S101
-    assert output_scratchpad.size(1) == lse_scratchpad.size(1)  # noqa: S101
 
     # Perform unchecked size accesses, assume has already been checked
     total_num_q, num_query_heads, head_size = output.shape
     num_cache_blocks, cache_block_size, num_kv_heads, _ = key_cache.shape
-    batch_size, max_num_blocks_per_sequence = block_tables.shape
-    _, max_num_kv_splits, _, _ = output_scratchpad.shape
+    batch_size, max_num_blocks_per_sequence = block_table.shape
+
+    max_num_kv_splits = 1
+
+    if output_scratchpad is not None or lse_scratchpad is not None:
+        assert output_scratchpad is not None
+        assert lse_scratchpad is not None
+        assert output_scratchpad.dtype == query.dtype  # noqa: S101
+        assert lse_scratchpad.dtype == query.dtype  # noqa: S101
+        assert output_scratchpad.size(1) == lse_scratchpad.size(1)  # noqa: S101
+        _, max_num_kv_splits, _, _ = output_scratchpad.shape
 
     assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"  # noqa: S101
 
@@ -783,18 +791,34 @@ def varlen_attention_launcher(  # noqa: PLR0913
         assert k_scale.numel() == 1  # noqa: S101
         assert k_scale.numel() == 1  # noqa: S101
 
+    output_scratchpad_batch_stride = output.stride(0)
+    output_scratchpad_kv_split_stride = 0
+    output_scratchpad_head_stride = output.stride(1)
+    lse_scratchpad_batch_stride = 0
+    lse_scratchpad_kv_split_stride = 0
+
+    if num_kv_splits > 1:
+        assert output_scratchpad is not None
+        assert lse_scratchpad is not None
+
+        output_scratchpad_batch_stride = output_scratchpad.stride(0)
+        output_scratchpad_kv_split_stride = output_scratchpad.stride(1)
+        output_scratchpad_head_stride = output_scratchpad.stride(2)
+        lse_scratchpad_batch_stride = lse_scratchpad.stride(0)
+        lse_scratchpad_kv_split_stride = lse_scratchpad.stride(1)
+
     # For computing attention for split block (stage 1): parallelize over query splits, KV splits, batches, and KV heads.
     stage1_grid = (num_query_splits_stage1, num_kv_splits, batch_size * num_kv_heads)
 
     # Launch stage 1 kernel
     _varlen_attention_compute_splits_kernel[stage1_grid](
         # Relevant tensors
-        output_scratchpad_ptr=output_scratchpad,
-        lse_scratchpad_ptr=lse_scratchpad,
+        output_scratchpad_ptr=output_scratchpad if num_kv_splits > 1 else output,
+        lse_scratchpad_ptr=lse_scratchpad if num_kv_splits > 1 else None,
         query_ptr=query,
         key_cache_ptr=key_cache,
         value_cache_ptr=value_cache,
-        block_tables_ptr=block_tables,
+        block_table_ptr=block_table,
         seq_lens_ptr=seq_lens,
         cu_seqlens_q_ptr=cu_seqlens_q,
         k_scale_ptr=k_scale,
@@ -807,18 +831,18 @@ def varlen_attention_launcher(  # noqa: PLR0913
         query_group_size=query_group_size,
         batch_size=batch_size,
         # Strides of relevant tensors
-        output_scratchpad_batch_stride=output_scratchpad.stride(0),
-        output_scratchpad_kv_split_stride=output_scratchpad.stride(1),
-        output_scratchpad_head_stride=output_scratchpad.stride(2),
-        lse_scratchpad_batch_stride=lse_scratchpad.stride(0),
-        lse_scratchpad_kv_split_stride=lse_scratchpad.stride(1),
+        output_scratchpad_batch_stride=output_scratchpad_batch_stride,
+        output_scratchpad_kv_split_stride=output_scratchpad_kv_split_stride,
+        output_scratchpad_head_stride=output_scratchpad_head_stride,
+        lse_scratchpad_batch_stride=lse_scratchpad_batch_stride,
+        lse_scratchpad_kv_split_stride=lse_scratchpad_kv_split_stride,
         query_batch_stride=query.stride(0),
         query_head_stride=query.stride(1),
         kv_page_stride=key_cache.stride(0),
         kv_cache_block_stride=key_cache.stride(1),
         kv_head_stride=key_cache.stride(2),
         kv_head_element_stride=key_cache.stride(3),
-        block_tables_batch_stride=block_tables.stride(0),
+        block_table_batch_stride=block_table.stride(0),
         # Constexpr sizes
         cxpr_query_group_size_padded=query_group_size_padded,
         cxpr_query_chunk_size=query_chunk_size_stage1,
@@ -828,34 +852,39 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_apply_fp8_scaling=cxpr_apply_fp8_scaling,
         cxpr_is_rocm=cxpr_is_rocm,
         cxpr_is_causal=causal,
+        cxpr_split_kv=(num_kv_splits > 1),
     )
 
-    # For reducing over splits (stage 2): parallelize over batches, query splits, and query heads
-    stage2_grid = (batch_size, num_query_splits_stage2, num_query_heads)
+    if num_kv_splits > 1:
+        assert output_scratchpad is not None  # noqa: S101
+        assert lse_scratchpad is not None  # noqa: S101
 
-    # Launch stage 2 kernel
-    _varlen_attention_reduce_splits_kernel[stage2_grid](
-        # Relevant tensors
-        output_ptr=output,
-        output_scratchpad_ptr=output_scratchpad,
-        lse_scratchpad_ptr=lse_scratchpad,
-        seq_lens_ptr=seq_lens,
-        cu_seqlens_q_ptr=cu_seqlens_q,
-        # Scalars
-        num_cache_blocks_per_split=num_cache_blocks_per_split,
-        head_size=head_size,
-        batch_size=batch_size,
-        # Strides of relevant tensors
-        output_batch_stride=output.stride(0),
-        output_head_stride=output.stride(1),
-        output_scratchpad_batch_stride=output_scratchpad.stride(0),
-        output_scratchpad_kv_split_stride=output_scratchpad.stride(1),
-        output_scratchpad_head_stride=output_scratchpad.stride(2),
-        lse_scratchpad_batch_stride=lse_scratchpad.stride(0),
-        lse_scratchpad_kv_split_stride=lse_scratchpad.stride(1),
-        # Constexpr sizes
-        cxpr_query_chunk_size=query_chunk_size_stage2,
-        cxpr_cache_block_size=cxpr_cache_block_size,
-        cxpr_head_size_padded=cxpr_head_size_padded,
-        cxpr_is_causal=causal,
-    )
+        # For reducing over splits (stage 2): parallelize over batches, query splits, and query heads
+        stage2_grid = (batch_size, num_query_splits_stage2, num_query_heads)
+
+        # Launch stage 2 kernel
+        _varlen_attention_reduce_splits_kernel[stage2_grid](
+            # Relevant tensors
+            output_ptr=output,
+            output_scratchpad_ptr=output_scratchpad,
+            lse_scratchpad_ptr=lse_scratchpad,
+            seq_lens_ptr=seq_lens,
+            cu_seqlens_q_ptr=cu_seqlens_q,
+            # Scalars
+            num_cache_blocks_per_split=num_cache_blocks_per_split,
+            head_size=head_size,
+            batch_size=batch_size,
+            # Strides of relevant tensors
+            output_batch_stride=output.stride(0),
+            output_head_stride=output.stride(1),
+            output_scratchpad_batch_stride=output_scratchpad.stride(0),
+            output_scratchpad_kv_split_stride=output_scratchpad.stride(1),
+            output_scratchpad_head_stride=output_scratchpad.stride(2),
+            lse_scratchpad_batch_stride=lse_scratchpad.stride(0),
+            lse_scratchpad_kv_split_stride=lse_scratchpad.stride(1),
+            # Constexpr sizes
+            cxpr_query_chunk_size=query_chunk_size_stage2,
+            cxpr_cache_block_size=cxpr_cache_block_size,
+            cxpr_head_size_padded=cxpr_head_size_padded,
+            cxpr_is_causal=causal,
+        )

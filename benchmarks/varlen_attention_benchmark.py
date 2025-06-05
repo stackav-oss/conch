@@ -172,7 +172,7 @@ def main(
     kv_cache_dtype: Final = "auto"
     dtype: Final = torch.float16
 
-    _, _, _, key_cache, value_cache, block_tables, seq_lens = create_tensors(
+    _, _, _, key_cache, value_cache, block_table, seq_lens = create_tensors(
         head_dim,
         seq_len,
         cache_block_size,
@@ -215,7 +215,7 @@ def main(
         query=query,
         key_cache=key_cache,
         value_cache=value_cache,
-        block_tables=block_tables,
+        block_table=block_table,
         seq_lens=seq_lens,
         cu_seqlens_q=cu_seqlens_q,
         cu_seqlens_k=cu_seqlens_k,
@@ -233,7 +233,7 @@ def main(
             cu_seqlens_q=cu_seqlens_q,
             max_seqlen_q=max_seqlen_q,
             max_seqlen_k=max_seqlen_k,
-            block_table=block_tables,
+            block_table=block_table,
             seqused_k=seq_lens,
             softmax_scale=scale,
             causal=causal,
@@ -257,7 +257,7 @@ def main(
                 cu_seqlens_q=cu_seqlens_q,
                 max_seqlen_q=max_seqlen_q,
                 max_seqlen_k=max_seqlen_k,
-                block_table=block_tables,
+                block_table=block_table,
                 seqused_k=seq_lens,
                 softmax_scale=scale,
                 causal=causal,
@@ -288,7 +288,7 @@ def main(
                 softmax_scale=scale,
                 causal=causal,
                 window_size=(-1, -1),
-                block_table=block_tables,
+                block_table=block_table,
                 softcap=0.0,
                 q_descale=None,
                 k_descale=None,
@@ -308,8 +308,9 @@ def main(
             query=query,
             key_cache=key_cache,
             value_cache=value_cache,
-            block_tables=block_tables,
+            block_table=block_table,
             seq_lens=seq_lens,
+            output=output_conch,
             cu_seqlens_q=cu_seqlens_q,
             cu_seqlens_k=cu_seqlens_k,
             max_seqlen_q=max_seqlen_q,

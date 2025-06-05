@@ -183,12 +183,12 @@ def create_tensors(
 
     # Create the block tables.
     max_num_blocks_per_seq = (max_seq_len + cache_block_size - 1) // cache_block_size
-    block_tables_lst: list[list[int]] = []
+    block_table_lst: list[list[int]] = []
     for _ in range(batch_size):
         block_table = [random.randint(0, num_cache_blocks - 1) for _ in range(max_num_blocks_per_seq)]  # noqa: S311
-        block_tables_lst.append(block_table)
+        block_table_lst.append(block_table)
 
-    block_tables = torch.as_tensor(block_tables_lst, dtype=torch.int)
+    block_table = torch.as_tensor(block_table_lst, dtype=torch.int)
 
     # Create the KV caches.
     key_caches_vllm, value_caches_vllm = create_kv_caches_with_random(
@@ -207,4 +207,4 @@ def create_tensors(
 
     key_cache_flash, value_cache_flash = reshape_vllm_kvcache(key_cache_vllm, value_cache_vllm)
 
-    return query, key_cache_vllm, value_cache_vllm, key_cache_flash, value_cache_flash, block_tables, seq_lens
+    return query, key_cache_vllm, value_cache_vllm, key_cache_flash, value_cache_flash, block_table, seq_lens
