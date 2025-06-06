@@ -23,7 +23,7 @@ _MARKDOWN_TABLE_ROW: Final = "| {} | {:.3f} ms | {:.3f} ms | {:.2f} |\n"
 _TABLE_OP_NAME_TO_BENCHMARK: Final = {
     "GeLU, Tanh, and Mul": "gelu_tanh_and_mul_benchmark",
     "SiLU and Mul": "silu_and_mul_benchmark",
-    "Paged Attention": "paged_attention_vs_flash_benchmark",
+    "Paged Attention": "paged_attention_benchmark",
     "Rotary Embedding": "rotary_embedding_benchmark",
     "RMS Norm (Gemma-style)": "gemma_rms_norm_benchmark",
     "RMS Norm (Llama-style)": "rms_norm_benchmark",
@@ -42,6 +42,9 @@ _DEVICE_SPECIFIC_BLACKLIST: Final = {
         "static_scaled_fp8_quant_benchmark",
         "mixed_precision_gemm_benchmark",
     ],
+    # "AMD Instinct MI300X": [
+    #     "paged_attention_vs_flash_benchmark",
+    # ],
     "unknown": [],
 }
 
