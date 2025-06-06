@@ -19,9 +19,9 @@ _DEFAULT_PLATFORM_REQUIREMENTS: Final = [
 ]
 
 # For ROCm:
-# --extra-index-url https://download.pytorch.org/whl/rocm6.2.4
+# --extra-index-url https://download.pytorch.org/whl/rocm6.2
 _ROCM_PLATFORM_REQUIREMENTS: Final = [
-    f"torch=={_TORCH_VERSION}+rocm6.2.4",
+    f"torch=={_TORCH_VERSION}+rocm6.2",
     "pytorch-triton-rocm==3.1.0",
 ]
 
