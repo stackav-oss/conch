@@ -1,4 +1,5 @@
-# Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
 
 """Flash Attention with varlen."""
 
@@ -59,8 +60,8 @@ def _check_key_value_cache_size_compatibility(
     """Check size compatibility of Key and Value tensors.
 
     Args:
-        key_cache: Tensor with cached K values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
-        value_cache: Tensor with cached V values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
+        key_cache: Tensor with cached K values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
+        value_cache: Tensor with cached V values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
         head_size: Size of attention head, deduced from query tensor size.
         num_query_heads: Number of query heads, deduced from query tensor size.
 
@@ -86,7 +87,7 @@ def _check_key_value_cache_size_compatibility(
         )
         raise ValueError(msg)
 
-    num_blocks, num_kv_heads, cache_block_size, head_size_kv = key_cache.shape
+    num_blocks, cache_block_size, num_kv_heads, head_size_kv = key_cache.shape
 
     if head_size_kv != head_size:
         msg = f"Head size of key/value cache tensors does not match head size of query/output tensors ({head_size_kv = }, {head_size = })"
@@ -125,20 +126,20 @@ def _check_cumulative_sequence_length_size_compatibility(
         raise ValueError(msg)
 
 
-def _check_block_table_size_compatibility(block_tables: torch.Tensor, batch_size: int) -> None:
-    """Check size compatibility of block_tables tensor.
+def _check_block_table_size_compatibility(block_table: torch.Tensor, batch_size: int) -> None:
+    """Check size compatibility of block_table tensor.
 
     Args:
-        block_tables: Block tables tensor.
+        block_table: Block tables tensor.
         batch_size: Expected size of batch.
 
     Raises:
         ValueError if sizes are mismatched.
     """
-    batch_size_block_tables: int = block_tables.shape[0]
+    batch_size_block_table: int = block_table.shape[0]
 
-    if batch_size_block_tables != batch_size:
-        msg = f"Batch size from block_tables tensor ({batch_size_block_tables}) does not match batch_size from output/query tensors ({batch_size})"
+    if batch_size_block_table != batch_size:
+        msg = f"Batch size from block_table tensor ({batch_size_block_table}) does not match batch_size from output/query tensors ({batch_size})"
         raise ValueError(msg)
 
 
@@ -165,12 +166,30 @@ def _check_seqlen_size_compatibility(seq_lens: torch.Tensor, batch_size: int) ->
 
 
 def _determine_max_num_kv_splits(max_seqlen_q: int, max_seqlen_k: int) -> int:
-    _ = max_seqlen_k
-
+    # If we have any prefills, disable FlashDecoding/KV-splits
     if max_seqlen_q > 1:
         return 1
 
-    return 64
+    # Note: this is a pretty basic heuristic, we could try and do something more sophisticated in the future
+    if max_seqlen_k > 8192:
+        return 64
+
+    if max_seqlen_k > 2048:
+        return 32
+
+    if max_seqlen_k > 1024:
+        return 16
+
+    if max_seqlen_k > 512:
+        return 8
+
+    if max_seqlen_k > 256:
+        return 4
+
+    if max_seqlen_k > 128:
+        return 2
+
+    return 1
 
 
 def _create_varlen_metadata(
@@ -180,7 +199,7 @@ def _create_varlen_metadata(
     value_cache: torch.Tensor,
     cu_seqlens_q: torch.Tensor,
     cu_seqlens_k: torch.Tensor,
-    block_tables: torch.Tensor,
+    block_table: torch.Tensor,
     seq_lens: torch.Tensor,
     max_seqlen_q: int,
     max_seqlen_k: int,
@@ -190,11 +209,11 @@ def _create_varlen_metadata(
     Args:
         output: Tensor to write the output of the attention calculation, shape: (total_num_q, num_query_heads, head_size).
         query: Query tensor, shape: (total_num_q, num_query_heads, head_size).
-        key_cache: Tensor with cached K values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
-        value_cache: Tensor with cached V values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
+        key_cache: Tensor with cached K values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
+        value_cache: Tensor with cached V values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
         cu_seqlens_q: Cumulative sequence length for query/output tensors, shape: (batch_size + 1).
         cu_seqlens_k: Cumulative sequence length for key/value tensors, shape: (batch_size + 1).
-        block_tables: Block tables tensor, shape: (batch_size, max_num_blocks_per_sequence).
+        block_table: Block tables tensor, shape: (batch_size, max_num_blocks_per_sequence).
         seq_lens: Sequence lengths tensor, shape: (batch_size,).
 
     Raises:
@@ -207,13 +226,13 @@ def _create_varlen_metadata(
     total_num_q, num_query_heads, head_size = out.shape
 
     _check_key_value_cache_size_compatibility(key_cache, value_cache, head_size, num_query_heads)
-    _, num_kv_heads, _, _ = key_cache.shape
+    _, _, num_kv_heads, _ = key_cache.shape
 
     _check_cumulative_sequence_length_size_compatibility(cu_seqlens_q, cu_seqlens_k)
     batch_size = cu_seqlens_q.shape[0] - 1
 
-    _check_block_table_size_compatibility(block_tables, batch_size)
-    _, max_num_blocks_per_sequence = block_tables.shape
+    _check_block_table_size_compatibility(block_table, batch_size)
+    _, max_num_blocks_per_sequence = block_table.shape
 
     _check_seqlen_size_compatibility(seq_lens, batch_size)
 
@@ -232,7 +251,7 @@ def varlen_attention(
     query: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
-    block_tables: torch.Tensor,
+    block_table: torch.Tensor,
     seq_lens: torch.Tensor,
     cu_seqlens_q: torch.Tensor,
     cu_seqlens_k: torch.Tensor,
@@ -250,9 +269,9 @@ def varlen_attention(
 
     Args:
         query: Query tensor, shape: (total_num_q, num_query_heads, head_size).
-        key_cache: Tensor with cached K values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
-        value_cache: Tensor with cached V values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
-        block_tables: Block tables tensor, shape: (batch_size, max_num_blocks_per_sequence).
+        key_cache: Tensor with cached K values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
+        value_cache: Tensor with cached V values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
+        block_table: Block tables tensor, shape: (batch_size, max_num_blocks_per_sequence).
         seq_lens: Sequence lengths tensor, shape: (batch_size,).
         cu_seqlens_q: Cumulative sequence length for query/output tensors, shape: (batch_size + 1).
         cu_seqlens_k: Cumulative sequence length for key/value tensors, shape: (batch_size + 1).
@@ -278,39 +297,43 @@ def varlen_attention(
         value_cache,
         cu_seqlens_q,
         cu_seqlens_k,
-        block_tables,
+        block_table,
         seq_lens,
         max_seqlen_q,
         max_seqlen_k,
     )
 
-    # Allocate additional memory for intermediate result (of shape (head_size,)) for each batch/kv split/query head
-    output_scratchpad = torch.zeros(
-        (metadata.total_num_q, metadata.num_kv_splits, metadata.num_query_heads, metadata.head_size),
-        dtype=output.dtype,
-        device=output.device,
-    )
+    output_scratchpad = None
+    lse_scratchpad = None
 
-    # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/kv split/query head
-    lse_scratchpad = torch.zeros(
-        (metadata.total_num_q, metadata.num_kv_splits, metadata.num_query_heads),
-        dtype=output.dtype,
-        device=output.device,
-    )
+    if metadata.num_kv_splits > 1:
+        # Allocate additional memory for intermediate result (of shape (head_size,)) for each batch/kv split/query head
+        output_scratchpad = torch.zeros(
+            (metadata.total_num_q, metadata.num_kv_splits, metadata.num_query_heads, metadata.head_size),
+            dtype=output.dtype,
+            device=output.device,
+        )
+
+        # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/kv split/query head
+        lse_scratchpad = torch.zeros(
+            (metadata.total_num_q, metadata.num_kv_splits, metadata.num_query_heads),
+            dtype=output.dtype,
+            device=output.device,
+        )
 
     varlen_attention_launcher(
         output=output,
         query=query,
         key_cache=key_cache,
         value_cache=value_cache,
-        output_scratchpad=output_scratchpad,
-        lse_scratchpad=lse_scratchpad,
-        block_tables=block_tables,
+        block_table=block_table,
         seq_lens=seq_lens,
         cu_seqlens_q=cu_seqlens_q,
         cu_seqlens_k=cu_seqlens_k,
         max_seqlen_q=max_seqlen_q,
         max_seqlen_k=max_seqlen_k,
+        output_scratchpad=output_scratchpad,
+        lse_scratchpad=lse_scratchpad,
         causal=causal,
         scale=scale,
         softcap=softcap,

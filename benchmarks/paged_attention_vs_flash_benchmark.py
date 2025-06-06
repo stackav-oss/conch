@@ -1,4 +1,5 @@
-# Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
 
 """Triton paged attention vs. FlashAttnWithKVCache benchmark."""
 
@@ -157,11 +158,11 @@ def main(
 
     kv_cache_dtype = "auto"
 
-    query, _, _, key_cache_conch, value_cache_conch, block_tables, seq_lens = create_tensors(
+    query, _, _, key_cache, value_cache, block_table, seq_lens = create_tensors(
         head_dim, seq_len, cache_block_size, batch_size, num_query_heads, num_kv_heads, kv_cache_dtype, device, dtype
     )
 
-    _, max_num_blocks_per_seq = block_tables.shape
+    _, max_num_blocks_per_seq = block_table.shape
 
     scale: Final = float(1.0 / (head_dim**0.5))
 
@@ -171,9 +172,6 @@ def main(
     query_vllm = query.unsqueeze(1)
     output_conch = torch.empty_like(query)
 
-    key_cache_vllm = key_cache_conch.permute(0, 2, 1, 3)
-    value_cache_vllm = value_cache_conch.permute(0, 2, 1, 3)
-
     softcap = 30.0
     k_scale = torch.full((1,), 1.0, dtype=dtype, device=device)
     v_scale = torch.full((1,), 1.0, dtype=dtype, device=device)
@@ -181,9 +179,9 @@ def main(
     # Check accuracy match
     output_vllm = flash_attn_with_kvcache(
         query_vllm,
-        key_cache_vllm,
-        value_cache_vllm,
-        block_table=block_tables,
+        key_cache,
+        value_cache,
+        block_table=block_table,
         cache_seqlens=seq_lens,
         softmax_scale=scale,
         causal=True,
@@ -195,9 +193,9 @@ def main(
 
     paged_attention(
         query,
-        key_cache_conch,
-        value_cache_conch,
-        block_tables,
+        key_cache,
+        value_cache,
+        block_table,
         seq_lens,
         output=output_conch,
         scale=scale,
@@ -220,9 +218,9 @@ def main(
     baseline_result = benchmark_it(
         lambda: flash_attn_with_kvcache(
             query_vllm,
-            key_cache_vllm,
-            value_cache_vllm,
-            block_table=block_tables,
+            key_cache,
+            value_cache,
+            block_table=block_table,
             cache_seqlens=seq_lens,
             softmax_scale=scale,
             causal=True,
@@ -238,9 +236,9 @@ def main(
     triton_result = benchmark_it(
         lambda: paged_attention(
             query,
-            key_cache_conch,
-            value_cache_conch,
-            block_tables,
+            key_cache,
+            value_cache,
+            block_table,
             seq_lens,
             output=output_conch,
             scale=scale,

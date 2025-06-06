@@ -1,4 +1,5 @@
-# Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
 
 """Triton reshape_and_cache benchmark."""
 
@@ -176,7 +177,6 @@ def main(
     )
 
     key_cache_vllm, value_cache_vllm = key_caches_vllm[0], value_caches_vllm[0]
-
     key_cache, value_cache = reshape_vllm_kvcache(key_cache_vllm.clone(), value_cache_vllm.clone())
 
     # Run the reference implementation.

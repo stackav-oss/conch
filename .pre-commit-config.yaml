@@ -1,3 +1,6 @@
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
+
 repos:
 - repo: https://github.com/pre-commit/pre-commit-hooks
   rev: v5.0.0
@@ -16,6 +19,16 @@ repos:
   hooks:
     - id: isort
 
+- repo: https://github.com/google/addlicense
+  rev: 499ed7f28389eb4a08c2d7e40b1637cfd7f65381 # master
+  hooks:
+    - id: addlicense
+      args: ["-c=Stack AV Co.", "-l=Apache-2.0", "-s=only"]
+      exclude: |
+        (?x)^(
+          |conch/third_party/.*
+        )$
+
 - repo: https://github.com/astral-sh/ruff-pre-commit
   rev: v0.11.2
   hooks:
@@ -31,6 +44,6 @@ repos:
   hooks:
     - id: mypy-local
       name: mypy-local
-      entry: ./scripts/mypy.sh
+      entry: ./tools/mypy.sh
       language: system
       files: \.py$

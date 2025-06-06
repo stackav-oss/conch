@@ -1,4 +1,5 @@
-# Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
 
 """Triton paged attention benchmark."""
 
@@ -164,18 +165,16 @@ def main(
         },
     )
 
-    query, key_cache_vllm, value_cache_vllm, key_cache_conch, value_cache_conch, block_tables, seq_lens = (
-        create_tensors(
-            head_dim,
-            seq_len,
-            cache_block_size,
-            batch_size,
-            num_query_heads,
-            num_kv_heads,
-            kv_cache_dtype,
-            device,
-            dtype,
-        )
+    query, key_cache_vllm, value_cache_vllm, key_cache_conch, value_cache_conch, block_table, seq_lens = create_tensors(
+        head_dim,
+        seq_len,
+        cache_block_size,
+        batch_size,
+        num_query_heads,
+        num_kv_heads,
+        kv_cache_dtype,
+        device,
+        dtype,
     )
 
     scale: Final = float(1.0 / (head_dim**0.5))
@@ -190,7 +189,7 @@ def main(
         query,
         key_cache_conch,
         value_cache_conch,
-        block_tables,
+        block_table,
         seq_lens,
         output=output_conch,
         scale=scale,
@@ -231,7 +230,7 @@ def main(
             value_cache_vllm,
             num_kv_heads,
             scale,
-            block_tables,
+            block_table,
             seq_lens,
             cache_block_size,
             max_seq_len,
@@ -262,7 +261,7 @@ def main(
                 value_cache_vllm,
                 num_kv_heads,
                 scale,
-                block_tables,
+                block_table,
                 seq_lens,
                 cache_block_size,
                 max_seq_len,
@@ -286,7 +285,7 @@ def main(
             query,
             key_cache_conch,
             value_cache_conch,
-            block_tables,
+            block_table,
             seq_lens,
             output=output_conch,
             scale=scale,

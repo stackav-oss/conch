@@ -130,19 +130,22 @@ def create_kv_caches_with_random(
 def reshape_vllm_kvcache(
     key_cache_vllm: torch.Tensor, value_cache_vllm: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Reshape vLLM key and value caches.
+    """Reshape vLLM key and value caches into format expected by FlashAttention.
 
     Args:
         key_cache_vllm: vLLM key cache, shape: (num_cache_blocks, num_kv_heads, head_size // x, cache_block_size, x).
         value_cache_vllm: vLLM value cache, shape: (num_cache_blocks, num_kv_heads, head_size, cache_block_size).
 
     Returns:
-        Reshaped key and value caches as (num_cache_blocks, num_kv_heads, cache_block_size, head_size).
+        Reshaped key and value caches as (num_cache_blocks, cache_block_size, num_kv_heads, head_size).
     """
     num_cache_blocks, num_kv_heads, head_size, cache_block_size = value_cache_vllm.shape
 
     k = key_cache_vllm.permute(0, 1, 3, 2, 4).contiguous().reshape(num_cache_blocks, num_kv_heads, cache_block_size, head_size)
     v = value_cache_vllm.permute(0, 1, 3, 2).contiguous().reshape(num_cache_blocks, num_kv_heads, cache_block_size, head_size)
+
+    k = k.permute(0, 2, 1, 3).contiguous()
+    v = v.permute(0, 2, 1, 3).contiguous()
 
     return k, v
 
@@ -180,12 +183,12 @@ def create_tensors(
 
     # Create the block tables.
     max_num_blocks_per_seq = (max_seq_len + cache_block_size - 1) // cache_block_size
-    block_tables_lst: list[list[int]] = []
+    block_table_lst: list[list[int]] = []
     for _ in range(batch_size):
         block_table = [random.randint(0, num_cache_blocks - 1) for _ in range(max_num_blocks_per_seq)]  # noqa: S311
-        block_tables_lst.append(block_table)
+        block_table_lst.append(block_table)
 
-    block_tables = torch.as_tensor(block_tables_lst, dtype=torch.int)
+    block_table = torch.as_tensor(block_table_lst, dtype=torch.int)
 
     # Create the KV caches.
     key_caches_vllm, value_caches_vllm = create_kv_caches_with_random(
@@ -202,6 +205,6 @@ def create_tensors(
 
     key_cache_vllm, value_cache_vllm = key_caches_vllm[0], value_caches_vllm[0]
 
-    key_cache_conch, value_cache_conch = reshape_vllm_kvcache(key_cache_vllm, value_cache_vllm)
+    key_cache_flash, value_cache_flash = reshape_vllm_kvcache(key_cache_vllm, value_cache_vllm)
 
-    return query, key_cache_vllm, value_cache_vllm, key_cache_conch, value_cache_conch, block_tables, seq_lens
+    return query, key_cache_vllm, value_cache_vllm, key_cache_flash, value_cache_flash, block_table, seq_lens

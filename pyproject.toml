@@ -1,3 +1,6 @@
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
+
 [build-system]
 requires = ["setuptools>=42", "wheel", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
@@ -64,10 +67,12 @@ disable_error_code = "attr-defined"
 include = ["conch*"]
 exclude = [
   "benchmarks*",
-  "env*",
+  "build*",
+  "dist*",
   "docs*",
-  "scripts*",
+  "results*",
   "tests*",
+  "tools*",
 ]
 
 [tool.setuptools.dynamic]

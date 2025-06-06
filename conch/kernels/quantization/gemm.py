@@ -1,4 +1,5 @@
-# Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
 
 """GEMM kernel supporting mixed-precision (e.g. w{1|2|4|8|16}, a{16|32}) and scaled matrix multiplications (fp8/int8 with scaling factors to different output dtype).
 
@@ -135,7 +136,7 @@ def _get_metadata_eviction_policy() -> str:
 
 def _get_tuning_parameters() -> dict[str, int]:
     """Get block sizes/tuning parameters for current device."""
-    device_name = torch.cuda.get_device_name() if torch.cuda.is_available() else ""
+    device_name = current_platform.get_device_name()
 
     if "H100" in device_name:
         return {

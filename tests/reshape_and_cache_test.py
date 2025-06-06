@@ -1,4 +1,5 @@
-# Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
 
 """Test cases for Triton reshape_and_cache."""
 
@@ -17,7 +18,7 @@ _DTYPES: Final = [torch.float16, torch.bfloat16, torch.float32]
 _NUM_TOKENS: Final = [20, 40, 60]
 _NUM_HEADS: Final = [1, 4]
 _HEAD_SIZES: Final = [128]
-_BLOCK_SIZES: Final = [32]
+_BLOCK_SIZES: Final = [32, 128]
 _NUM_BLOCKS: Final = [1000]
 _KV_CACHE_DTYPE: Final = ["auto", "fp8"]
 

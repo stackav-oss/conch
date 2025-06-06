@@ -1,4 +1,5 @@
-# Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
 
 """Triton implementation of vLLM reshape_and_cache_kernel."""
 
@@ -26,8 +27,10 @@ def _reshape_and_cache_kernel(
     v_token_stride: int,
     v_head_stride: int,
     v_head_element_stride: int,
+    kv_cache_page_stride: int,
     kv_cache_block_stride: int,
     kv_cache_head_stride: int,
+    kv_cache_head_element_stride: int,
     # Scalars
     cache_block_size: int,
     # Constexprs
@@ -40,8 +43,8 @@ def _reshape_and_cache_kernel(
     Args:
         key_ptr: Pointer to tensor of new key vectors, shape: (num_tokens, num_kv_heads, head_size).
         value_ptr: Pointer to tensor of new value vectors, shape: (num_tokens, num_kv_heads, head_size).
-        key_cache_ptr: Pointer to tensor of key cache, shape: (num_cache_blocks, num_kv_heads, cache_block_size, head_size).
-        value_cache_ptr: Pointer to tensor of value cache, shape: (num_cache_blocks, num_kv_heads, cache_block_size, head_size).
+        key_cache_ptr: Pointer to tensor of key cache, shape: (num_pages, cache_block_size, num_kv_heads, head_size).
+        value_cache_ptr: Pointer to tensor of value cache, shape: (num_pages, cache_block_size, num_kv_heads, head_size).
         slot_mapping_ptr: Pointer to slot mapping tensor, shape: (num_tokens,).
         k_scale_ptr: Pointer to Fp8 scaling factor for k.
         v_scale_ptr: Pointer to Fp8 scaling factor for v.
@@ -51,8 +54,10 @@ def _reshape_and_cache_kernel(
         v_token_stride: Stride of value tensor in 0th dimension.
         v_head_stride: Stride of value tensor in 1st dimension.
         v_head_element_stride: Stride of value tensor in 2nd dimension.
-        kv_cache_block_stride: Stride of key/value cache tensors in 0th dimension.
-        kv_cache_head_stride: Stride of key/value cache tensors in 1st dimension.
+        kv_cache_page_stride: Stride of key/value cache tensors in 0th dimension.
+        kv_cache_block_stride: Stride of key/value cache tensors in 1st dimension.
+        kv_cache_head_stride: Stride of key/value cache tensors in 2nd dimension.
+        kv_cache_head_element_stride: Stride of key/value cache tensors in 3rd dimension.
         cache_block_size: Size of each cache block / page in the KV cache.
         cxpr_head_size: Head size / dimension for the attention head (must be power of two!).
         cxpr_apply_fp8_scaling: Whether or not to apply FP8 scaling.
@@ -70,8 +75,8 @@ def _reshape_and_cache_kernel(
     if slot_index < 0:
         return
 
-    # Calculate index of cache block for this slot (value in range(0, num_cache_blocks))
-    cache_block_index = slot_index // cache_block_size
+    # Calculate index of page (value in range(0, num_pages))
+    page_index = slot_index // cache_block_size
     # Calculate entry index inside of a cache block/page for this slot (value in range(0, cache_block_size))
     entry_index = slot_index % cache_block_size
 
@@ -82,7 +87,6 @@ def _reshape_and_cache_kernel(
     k_head_offset = head_index * k_head_stride
     v_head_offset = head_index * v_head_stride
     # Offsets for each element of the head
-    kv_head_offsets = tl.arange(0, cxpr_head_size)
     k_head_offsets = tl.arange(0, cxpr_head_size) * k_head_element_stride
     v_head_offsets = tl.arange(0, cxpr_head_size) * v_head_element_stride
 
@@ -108,19 +112,18 @@ def _reshape_and_cache_kernel(
         value = value.to(fp8_dtype).to(value_cache_ptr.dtype.element_ty, bitcast=True)
 
     # Calculate offset into key/value cache tensors to get to the cache block we're copying into
-    kv_cache_block_offset = cache_block_index * kv_cache_block_stride
+    kv_page_offset = page_index * kv_cache_page_stride
+    # Calculate offset in a cache block to get to the entry for we're copying into
+    kv_cache_entry_offset = entry_index * kv_cache_block_stride
     # Calculate offset into key/value cache tensors to get to the head we're copying into
     kv_cache_head_offset = head_index * kv_cache_head_stride
-    # Calculate offset in a cache block to get to the entry for we're copying into
-    kv_cache_entry_offset = entry_index * cxpr_head_size
+
+    # Offsets for each element of the head
+    kv_head_offsets = tl.arange(0, cxpr_head_size) * kv_cache_head_element_stride
 
     # Store key/value vectors into cache
-    tl.store(
-        key_cache_ptr + kv_cache_block_offset + kv_cache_head_offset + kv_cache_entry_offset + kv_head_offsets, key
-    )
-    tl.store(
-        value_cache_ptr + kv_cache_block_offset + kv_cache_head_offset + kv_cache_entry_offset + kv_head_offsets, value
-    )
+    tl.store(key_cache_ptr + kv_page_offset + kv_cache_entry_offset + kv_cache_head_offset + kv_head_offsets, key)
+    tl.store(value_cache_ptr + kv_page_offset + kv_cache_entry_offset + kv_cache_head_offset + kv_head_offsets, value)
 
 
 def reshape_and_cache_launcher(
@@ -138,16 +141,19 @@ def reshape_and_cache_launcher(
     Args:
         key: New key vectors, shape: (num_tokens, num_kv_heads, head_size).
         value: New value vectors, shape: (num_tokens, num_kv_heads, head_size).
-        key_cache: Key cache, shape: (num_cache_blocks, num_kv_heads, cache_block_size, head_size).
-        value_cache: Value cache, shape: (num_cache_blocks, num_kv_heads, cache_block_size, head_size).
+        key_cache: Key cache, shape: (num_pages, cache_block_size, num_kv_heads, head_size).
+        value_cache: Value cache, shape: (num_pages, cache_block_size, num_kv_heads, head_size).
         slot_mapping: Tensor listing what slots in the cache each key/value vector should be placed in, shape: (num_tokens,).
         kv_cache_dtype: String datatype of kv cache elements.
         k_scale: Fp8 scaling factor for k.
         v_scale: Fp8 scaling factor for v.
     """
     # Assume sizes already checked if calling launcher. For interface with strict size checking, call `reshape_and_cache()`.
-    num_tokens, num_kv_heads, head_size = key.shape
-    num_cache_blocks, _, cache_block_size, _ = key_cache.shape
+    _, num_kv_heads, head_size = key.shape
+    num_pages, cache_block_size, _, _ = key_cache.shape
+
+    # Note: In vLLM v1, slot_mapping is the only tensor that can be trusted to tell the correct number of tokens
+    num_tokens = slot_mapping.size(0)
 
     assert key.shape == value.shape  # noqa: S101
     assert key_cache.shape == value_cache.shape  # noqa: S101
@@ -192,6 +198,8 @@ def reshape_and_cache_launcher(
         value.stride(2),
         key_cache.stride(0),
         key_cache.stride(1),
+        key_cache.stride(2),
+        key_cache.stride(3),
         # Scalars
         cache_block_size,
         # Constexprs

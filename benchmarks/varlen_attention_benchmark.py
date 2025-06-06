@@ -1,4 +1,5 @@
-# Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
 
 """Triton varlen attention vs. FlashAttnVarlen benchmark."""
 
@@ -171,7 +172,7 @@ def main(
     kv_cache_dtype: Final = "auto"
     dtype: Final = torch.float16
 
-    _, _, _, key_cache_conch, value_cache_conch, block_tables, seq_lens = create_tensors(
+    _, _, _, key_cache, value_cache, block_table, seq_lens = create_tensors(
         head_dim,
         seq_len,
         cache_block_size,
@@ -212,9 +213,9 @@ def main(
 
     output_conch = varlen_attention(
         query=query,
-        key_cache=key_cache_conch,
-        value_cache=value_cache_conch,
-        block_tables=block_tables,
+        key_cache=key_cache,
+        value_cache=value_cache,
+        block_table=block_table,
         seq_lens=seq_lens,
         cu_seqlens_q=cu_seqlens_q,
         cu_seqlens_k=cu_seqlens_k,
@@ -224,18 +225,15 @@ def main(
         causal=causal,
     )
 
-    key_cache_fa = key_cache_conch.permute(0, 2, 1, 3)
-    value_cache_fa = value_cache_conch.permute(0, 2, 1, 3)
-
     if flash_attn_varlen_func is not None:
         output_vllm = flash_attn_varlen_func(
             q=query,
-            k=key_cache_fa,
-            v=value_cache_fa,
+            k=key_cache,
+            v=value_cache,
             cu_seqlens_q=cu_seqlens_q,
             max_seqlen_q=max_seqlen_q,
             max_seqlen_k=max_seqlen_k,
-            block_table=block_tables,
+            block_table=block_table,
             seqused_k=seq_lens,
             softmax_scale=scale,
             causal=causal,
@@ -254,12 +252,12 @@ def main(
         baseline_result = benchmark_it(
             lambda: flash_attn_varlen_func(
                 q=query,
-                k=key_cache_fa,
-                v=value_cache_fa,
+                k=key_cache,
+                v=value_cache,
                 cu_seqlens_q=cu_seqlens_q,
                 max_seqlen_q=max_seqlen_q,
                 max_seqlen_k=max_seqlen_k,
-                block_table=block_tables,
+                block_table=block_table,
                 seqused_k=seq_lens,
                 softmax_scale=scale,
                 causal=causal,
@@ -280,8 +278,8 @@ def main(
         vllm_triton_result = benchmark_it(
             lambda: unified_attention(
                 q=query,
-                k=key_cache_fa,
-                v=value_cache_fa,
+                k=key_cache,
+                v=value_cache,
                 out=out,
                 cu_seqlens_q=cu_seqlens_q,
                 max_seqlen_q=max_seqlen_q,
@@ -290,7 +288,7 @@ def main(
                 softmax_scale=scale,
                 causal=causal,
                 window_size=(-1, -1),
-                block_table=block_tables,
+                block_table=block_table,
                 softcap=0.0,
                 q_descale=None,
                 k_descale=None,
@@ -308,10 +306,11 @@ def main(
     triton_result = benchmark_it(
         lambda: varlen_attention(
             query=query,
-            key_cache=key_cache_conch,
-            value_cache=value_cache_conch,
-            block_tables=block_tables,
+            key_cache=key_cache,
+            value_cache=value_cache,
+            block_table=block_table,
             seq_lens=seq_lens,
+            output=output_conch,
             cu_seqlens_q=cu_seqlens_q,
             cu_seqlens_k=cu_seqlens_k,
             max_seqlen_q=max_seqlen_q,

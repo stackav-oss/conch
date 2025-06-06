@@ -1,4 +1,5 @@
-# Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
 
 """Create markdown table for README."""
 
@@ -9,6 +10,8 @@ from typing import Final
 
 import click
 import pandas as pd  # type: ignore[import-untyped]
+
+from conch.platforms import current_platform
 
 _MARKDOWN_TABLE_HEADER: Final = """\
 | Operation | CUDA Runtime | Triton Runtime | Triton Speedup |
@@ -34,6 +37,14 @@ _TABLE_OP_NAME_TO_BENCHMARK: Final = {
     "vLLM: Reshape and Cache": "reshape_and_cache_benchmark",
 }
 
+_DEVICE_SPECIFIC_BLACKLIST: Final = {
+    "NVIDIA A10": [
+        "static_scaled_fp8_quant_benchmark",
+        "mixed_precision_gemm_benchmark",
+    ],
+    "unknown": [],
+}
+
 
 @click.command()
 @click.option(
@@ -53,7 +64,7 @@ def main(results_directory: Path, use_cached_results: bool) -> None:
     os.environ["CONCH_BENCH_ENABLE_ALL_REF"] = "1"
     os.environ["CONCH_ENABLE_BNB"] = "1"
     os.environ["CONCH_ENABLE_VLLM"] = "1"
-    os.environ["VLLM_CONFIGURE_LOGGING"] = "0"
+    os.environ["VLLM_LOGGING_LEVEL"] = "CRITICAL"
 
     # Create directory for output if it doesn't exist already
     results_directory.mkdir(parents=True, exist_ok=True)
@@ -61,7 +72,16 @@ def main(results_directory: Path, use_cached_results: bool) -> None:
     # Running string for markdown table output
     result = _MARKDOWN_TABLE_HEADER
 
+    device_name = current_platform.get_device_name()
+
     for op_name, benchmark_name in _TABLE_OP_NAME_TO_BENCHMARK.items():
+        if (
+            device_name in _DEVICE_SPECIFIC_BLACKLIST.keys()
+            and benchmark_name in _DEVICE_SPECIFIC_BLACKLIST[device_name]
+        ):
+            print(f"Skipping {op_name} benchmark because it is blacklisted on current platform ({device_name = })")
+            continue
+
         results_csv = results_directory / f"{benchmark_name}.csv"
 
         if use_cached_results and results_csv.exists():

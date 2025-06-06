@@ -1,8 +1,10 @@
 #!/bin/bash
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
 
 # Need to enable vLLM to compare against vLLM CUDA implementation
 export CONCH_ENABLE_VLLM=1
-export VLLM_CONFIGURE_LOGGING=0
+export VLLM_LOGGING_LEVEL=CRITICAL
 
 # Create output directory
 benchmark_name="copy_blocks"

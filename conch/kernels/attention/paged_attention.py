@@ -1,11 +1,10 @@
-# Copyright (C) 2025 Stack AV Co. - All Rights Reserved.
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
 
 """Triton implementation of Flash Attention w/ Paged KV Cache + FlashDecoding.
 
 Compatible with A10, H100, AMD MI300X.
 """
-
-from typing import Final
 
 import torch
 import triton
@@ -14,9 +13,6 @@ from triton.language.extra import libdevice  # type: ignore[attr-defined]
 
 from conch.platforms import current_platform
 
-# The maximum number of stage 1 kernels to launch to split processing of the sequence
-MAX_NUM_SPLITS: Final = 64
-
 
 @triton.jit  # type: ignore[misc]
 def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
@@ -24,9 +20,9 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     output_scratchpad_ptr: tl.tensor,  # (batch_size, max_num_blocks_per_sequence, num_query_heads, head_size)
     lse_scratchpad_ptr: tl.tensor,  # (batch_size, max_num_blocks_per_sequence, num_query_heads)
     query_ptr: tl.tensor,  # (batch_size, num_query_heads, head_size)
-    key_cache_ptr: tl.tensor,  # (num_cache_blocks, num_kv_heads, cache_block_size, head_size)
-    value_cache_ptr: tl.tensor,  # (num_cache_blocks, num_kv_heads, cache_block_size, head_size)
-    block_tables_ptr: tl.tensor,  # (batch_size, max_num_blocks_per_sequence)
+    key_cache_ptr: tl.tensor,  # (num_cache_blocks, cache_block_size, num_kv_heads, head_size)
+    value_cache_ptr: tl.tensor,  # (num_cache_blocks, cache_block_size, num_kv_heads, head_size)
+    block_table_ptr: tl.tensor,  # (batch_size, max_num_blocks_per_sequence)
     seq_lens_ptr: tl.tensor,  # (batch_size, )
     k_scale_ptr: tl.tensor,  # (1,)
     v_scale_ptr: tl.tensor,  # (1,)
@@ -46,10 +42,10 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     query_batch_stride: int,  # query.stride(0)
     query_head_stride: int,  # query.stride(1)
     kv_page_stride: int,  # key_cache.stride(0), same for key and value
-    kv_head_stride: int,  # key_cache.stride(1), same for key and value
-    kv_cache_block_stride: int,  # key_cache.stride(2), same for key and value
+    kv_cache_block_stride: int,  # key_cache.stride(1), same for key and value
+    kv_head_stride: int,  # key_cache.stride(2), same for key and value
     kv_head_element_stride: int,  # key_cache.stride(3), same for key and value
-    block_tables_batch_stride: int,  # block_tables.stride(0)
+    block_table_batch_stride: int,  # block_table.stride(0)
     # Constexprs
     cxpr_cache_block_size: tl.constexpr,
     cxpr_head_size_padded: tl.constexpr,
@@ -64,9 +60,9 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         output_scratchpad_ptr: Pointer to tensor as scratchpad for output of each cache block, shape: (batch_size, max_num_blocks_per_sequence, num_query_heads, head_size).
         lse_scratchpad_ptr: Pointer to tensor as scratchpad for log-sum-exp of each cache block, shape: (batch_size, max_num_blocks_per_sequence, num_query_heads).
         query_ptr: Pointer to tensor storing the query, shape: (batch_size, num_query_heads, head_size).
-        key_cache_ptr: Tensor with cached K values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
-        value_cache_ptr: Tensor with cached V values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
-        block_tables_ptr: Pointer to tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
+        key_cache_ptr: Tensor with cached K values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
+        value_cache_ptr: Tensor with cached V values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
+        block_table_ptr: Pointer to tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
         seq_lens_ptr: Pointer to tensor holding the current sequence length for each sequence in the batch, shape: (batch_size, ).
         k_scale_ptr: Pointer to tensor holding fp8 scaling factor for k.
         v_scale_ptr: Pointer to tensor holding fp8 scaling factor for v.
@@ -83,10 +79,10 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         query_batch_stride: Stride of the query tensor in the 0th dimension.
         query_head_stride: Stride of the query tensor in the 1st dimension.
         kv_page_stride: Stride of the k/v tensors in the 0th dimension.
-        kv_head_stride: Stride of the k/v tensors in the 1st dimension.
-        kv_cache_block_stride: Stride of the k/v tensors in the 2nd dimension.
+        kv_cache_block_stride: Stride of the k/v tensors in the 1st dimension.
+        kv_head_stride: Stride of the k/v tensors in the 2nd dimension.
         kv_head_element_stride: Stride of the k/v tensors in the 3rd dimension.
-        block_tables_batch_stride: Stride of the block table tensor in the 0th dimension.
+        block_table_batch_stride: Stride of the block table tensor in the 0th dimension.
         cxpr_cache_block_size: The size of the cache blocks (must be power of two!).
         cxpr_head_size_padded: The head size of the attention layer padded to the next power of two.
         cxpr_query_group_size_padded: The query group size padded to the next power of two.
@@ -146,9 +142,9 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Offset for the current kv_head in the key_cache and value_cache
     kv_head_index_offset = kv_head_index * kv_head_stride
 
-    # Pointer arithmetic to get to the entry in the block_tables for the current batch_index
-    current_block_table_offset = batch_index * block_tables_batch_stride
-    current_block_table_ptr = block_tables_ptr + current_block_table_offset
+    # Pointer arithmetic to get to the entry in the block_table for the current batch_index
+    current_block_table_offset = batch_index * block_table_batch_stride
+    current_block_table_ptr = block_table_ptr + current_block_table_offset
 
     # Scratchpad for output from this group of cache blocks
     output = tl.zeros([cxpr_query_group_size_padded, cxpr_head_size_padded], dtype=dtype)
@@ -156,6 +152,9 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     m_i = tl.full([cxpr_query_group_size_padded], -float("inf"), dtype=dtype)
     # Keep running denominator of softmax
     l_i = tl.full([cxpr_query_group_size_padded], 0.0, dtype=dtype)
+
+    # Offsets for each element of the cache block
+    cache_block_offsets = tl.arange(0, cxpr_cache_block_size)
 
     # Iterate through the cache blocks that this kernel is assigned to
     for relative_cache_block_index in range(num_cache_blocks_per_split):
@@ -171,6 +170,8 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
                 current_sequence_length - (cache_block_index * cxpr_cache_block_size), cxpr_cache_block_size
             )
 
+            cache_block_mask = cache_block_offsets < num_entries_in_cache_block
+
             # Offset from the block_table row for the current batch by the number of cache blocks
             current_cache_block_number_ptr = current_block_table_ptr + cache_block_index
             physical_cache_block_number = tl.load(current_cache_block_number_ptr)
@@ -180,15 +181,15 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
             # Load the key block as (cxpr_head_size_padded, cache_block_size)
             # Note: we're loading it transposed here
-            key_block_ptr = tl.make_block_ptr(
-                key_cache_ptr + kv_cache_block_index_offset + kv_head_index_offset,
-                shape=(head_size, num_entries_in_cache_block),
-                strides=(kv_head_element_stride, kv_cache_block_stride),
-                offsets=(0, 0),
-                block_shape=(cxpr_head_size_padded, cxpr_cache_block_size),
-                order=(1, 0),
+            key_block_offsets = (
+                cache_block_offsets[None, :] * kv_cache_block_stride + kv_head_index_offset + head_offsets[:, None]
             )
-            key_block = tl.load(key_block_ptr, boundary_check=(0, 1), padding_option="zero")
+
+            key_block_mask = head_mask[:, None] & cache_block_mask[None, :]
+
+            key_block = tl.load(
+                key_cache_ptr + kv_cache_block_index_offset + key_block_offsets, mask=key_block_mask, other=0.0
+            )
 
             if cxpr_apply_fp8_scaling:
                 # Dequantize (multiply by scale factor)
@@ -203,7 +204,7 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             qk = (scale * tl.dot(query, key_block)).to(dtype)
 
             # Need to mask out any elements that represent unused cache block entries or padding elements
-            cache_block_mask = tl.arange(0, cxpr_cache_block_size) < num_entries_in_cache_block
+            # cache_block_mask = tl.arange(0, cxpr_cache_block_size) < num_entries_in_cache_block
             qk_mask = query_group_mask[:, None] & cache_block_mask[None, :]
 
             # Set masked out elements to -inf
@@ -232,15 +233,15 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             output *= alpha[:, None]
 
             # Load the value block as (cache_block_size, cxpr_head_size_padded)
-            value_block_ptr = tl.make_block_ptr(
-                value_cache_ptr + kv_cache_block_index_offset + kv_head_index_offset,
-                shape=(num_entries_in_cache_block, head_size),
-                strides=(kv_cache_block_stride, kv_head_element_stride),
-                offsets=(0, 0),
-                block_shape=(cxpr_cache_block_size, cxpr_head_size_padded),
-                order=(0, 1),
+            value_block_offsets = (
+                cache_block_offsets[:, None] * kv_cache_block_stride + kv_head_index_offset + head_offsets[None, :]
             )
-            value_block = tl.load(value_block_ptr, boundary_check=(0, 1), padding_option="zero")
+
+            value_block_mask = cache_block_mask[:, None] & head_mask[None, :]
+
+            value_block = tl.load(
+                value_cache_ptr + kv_cache_block_index_offset + value_block_offsets, mask=value_block_mask, other=0.0
+            )
 
             if cxpr_apply_fp8_scaling:
                 # Dequantize (multiply by scale factor)
@@ -427,7 +428,7 @@ def paged_attention_launcher(  # noqa: PLR0913
     value_cache: torch.Tensor,
     output_scratchpad: torch.Tensor,
     lse_scratchpad: torch.Tensor,
-    block_tables: torch.Tensor,
+    block_table: torch.Tensor,
     seq_lens: torch.Tensor,
     scale: float | None = None,
     softcap: float = 0.0,
@@ -440,11 +441,11 @@ def paged_attention_launcher(  # noqa: PLR0913
     Args:
         out: Tensor to write the output of the attention calculation, shape: (batch_size, num_heads, head_size).
         query: Query tensor, shape: (batch_size, num_heads, head_size).
-        key_cache: Tensor with cached K values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
-        value_cache: Tensor with cached V values, shape: (num_blocks, num_kv_heads, cache_block_size, head_size).
+        key_cache: Tensor with cached K values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
+        value_cache: Tensor with cached V values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
         output_scratchpad: Tensor used as scratchpad to share cache block outputs between two stages, shape: (batch_size, max_num_blocks_per_sequence, num_query_heads, head_size)
         lse_scratchpad: Tensor used as scratchpad to share cache block log-sum-exp between two stages, shape: (batch_size, max_num_blocks_per_sequence, num_query_heads)
-        block_tables: Tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
+        block_table: Tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
         seq_lens: Tensor with the sequence length of each index in the batch, shape: (batch_size, ).
         scale: Scaling factor, 1/sqrt(head_size).
         softcap: Logit softcap to apply (0.0 means no softcap will be applied).
@@ -456,6 +457,9 @@ def paged_attention_launcher(  # noqa: PLR0913
     assert key_cache.shape == value_cache.shape  # noqa: S101
     assert key_cache.stride(0) == value_cache.stride(0)  # noqa: S101
     assert key_cache.stride(1) == value_cache.stride(1)  # noqa: S101
+    assert key_cache.stride(2) == value_cache.stride(2)  # noqa: S101
+    assert key_cache.stride(3) == value_cache.stride(3)  # noqa: S101
+    assert key_cache.stride(3) == 1  # noqa: S101
     assert softcap >= 0.0  # noqa: S101
 
     allowed_in_out_dtypes = [torch.float32, torch.float16, torch.bfloat16]
@@ -466,8 +470,9 @@ def paged_attention_launcher(  # noqa: PLR0913
 
     # Perform unchecked size accesses, assume has already been checked
     batch_size, num_query_heads, head_size = out.shape
-    num_cache_blocks, num_kv_heads, cache_block_size, _ = key_cache.shape
-    _, max_num_blocks_per_sequence = block_tables.shape
+    num_cache_blocks, cache_block_size, num_kv_heads, _ = key_cache.shape
+    _, max_num_blocks_per_sequence = block_table.shape
+    _, max_num_splits, _, _ = output_scratchpad.shape
 
     assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"  # noqa: S101
 
@@ -488,10 +493,10 @@ def paged_attention_launcher(  # noqa: PLR0913
 
     # What is the maximum number of stage 1 kernels to launch per batch/head?
     # Each kernel processes up to {cache_block_size} tokens at a time (in many cases cache_block_size=32 for vLLM), so we can process
-    # a sequence up to {MAX_NUM_SPLITS * cache_block_size} == 64 * 32 == 2048 tokens before a stage 1 kernel will process multiple cache
+    # a sequence up to {max_num_splits * cache_block_size} == 64 * 32 == 2048 tokens before a stage 1 kernel will process multiple cache
     # blocks. This helps to reduce the overhead of kernel launches / split reduction for long sequences.
     # Note: we may need to tune this value for a given HW platform.
-    num_splits = min(max_num_blocks_per_sequence, MAX_NUM_SPLITS)
+    num_splits = min(max_num_blocks_per_sequence, max_num_splits)
 
     num_cache_blocks_per_split = triton.cdiv(max_num_blocks_per_sequence, num_splits)
 
@@ -518,7 +523,7 @@ def paged_attention_launcher(  # noqa: PLR0913
         query,
         key_cache,
         value_cache,
-        block_tables,
+        block_table,
         seq_lens,
         k_scale,
         v_scale,
@@ -541,7 +546,7 @@ def paged_attention_launcher(  # noqa: PLR0913
         key_cache.stride(1),
         key_cache.stride(2),
         key_cache.stride(3),
-        block_tables.stride(0),
+        block_table.stride(0),
         # Constexpr sizes
         cxpr_cache_block_size,
         cxpr_head_size_padded,
