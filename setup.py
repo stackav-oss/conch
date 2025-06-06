@@ -5,7 +5,7 @@ from typing import Final
 
 from setuptools import setup
 
-_TORCH_VERSION: Final = "2.6.0"
+_TORCH_VERSION: Final = "2.5.1"
 
 _REQUIREMENTS: Final = [
     "numpy>=1.26.4",
@@ -15,14 +15,14 @@ _REQUIREMENTS: Final = [
 # --extra-index-url https://download.pytorch.org/whl/cpu
 _DEFAULT_PLATFORM_REQUIREMENTS: Final = [
     f"torch=={_TORCH_VERSION}",
-    "triton>=3.1.0",
+    "triton==3.1.0",
 ]
 
 # For ROCm:
-# --extra-index-url https://download.pytorch.org/whl/rocm6.2.4
+# --extra-index-url https://download.pytorch.org/whl/rocm6.2
 _ROCM_PLATFORM_REQUIREMENTS: Final = [
-    f"torch=={_TORCH_VERSION}+rocm6.2.4",
-    "pytorch-triton-rocm>=3.1.0",
+    f"torch=={_TORCH_VERSION}+rocm6.2",
+    "pytorch-triton-rocm==3.1.0",
 ]
 
 # For XPU:
