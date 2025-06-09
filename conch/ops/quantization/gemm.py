@@ -15,7 +15,6 @@ from conch.kernels.quantization.gemm import (
     mixed_precision_gemm_launcher,
     scaled_gemm_launcher,
 )
-from conch.third_party.vllm.scalar_type import ScalarType
 
 
 def _check_contiguous(
@@ -44,7 +43,8 @@ def create_mixed_precision_metadata(
     w_q_packed: torch.Tensor,
     w_s: torch.Tensor,
     w_zp: torch.Tensor | None,
-    weight_type: ScalarType,
+    weight_size_bits: int,
+    weight_bias: int,
     group_size: int,
     *,
     output_dtype: torch.dtype | None = None,
@@ -77,18 +77,14 @@ def create_mixed_precision_metadata(
         error_msg = f"Invalid datatype for packed weights: {packed_dtype}"
         raise ValueError(error_msg)
 
-    if weight_type.is_signed():
-        error_msg = "Mixed precision GEMM does not support signed weight types"
-        raise NotImplementedError(error_msg)
-
     # Assume 32-bit packing
     packed_bitwidth: Final = 32
-    elements_per_sample = packed_bitwidth // weight_type.size_bits
+    elements_per_sample = packed_bitwidth // weight_size_bits
 
     m_dim, k_dim = x.shape
     _, n_dim = w_q_packed.shape
 
-    unpack_mask = 2**weight_type.size_bits - 1
+    unpack_mask = 2**weight_size_bits - 1
 
     # Verify shape of w_s
     expected_scales_shape: Final = (k_dim // group_size, n_dim)
@@ -114,8 +110,8 @@ def create_mixed_precision_metadata(
         m_dim=m_dim,
         k_dim=k_dim,
         n_dim=n_dim,
-        weight_type=weight_type,
-        weight_bias=weight_type.bias,
+        weight_size_bits=weight_size_bits,
+        weight_bias=weight_bias,
         group_size=group_size,
         elements_per_sample=elements_per_sample,
         zero_is_scalar=zero_is_scalar,
@@ -135,7 +131,8 @@ def mixed_precision_gemm(
     w_q_packed: torch.Tensor,
     w_s: torch.Tensor,
     w_zp: torch.Tensor | None,
-    weight_type: ScalarType,
+    weight_size_bits: int,
+    weight_bias: int,
     group_size: int,
     *,
     output_dtype: torch.dtype | None = None,
@@ -149,7 +146,8 @@ def mixed_precision_gemm(
         w_q_packed,
         w_s,
         w_zp,
-        weight_type,
+        weight_size_bits,
+        weight_bias,
         group_size,
         output_dtype=output_dtype,
         acc_dtype=acc_dtype,

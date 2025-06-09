@@ -209,7 +209,9 @@ def main(
 
     output_ref = torch.matmul(a, w_ref)
 
-    triton_output = mixed_precision_gemm(a, w_q, w_s, None, weight_dtype_vllm, group_size)
+    triton_output = mixed_precision_gemm(
+        a, w_q, w_s, None, weight_dtype_vllm.size_bits, weight_dtype_vllm.bias, group_size
+    )
 
     # Relax atol as our reduction dim becomes larger (more rounding error)
     atol = min(5e-2 * math.sqrt(k_dim), 1)
@@ -261,7 +263,9 @@ def main(
         baseline_result = None
 
     triton_result = benchmark_it(
-        lambda: mixed_precision_gemm(a, w_q, w_s, None, weight_dtype_vllm, group_size),
+        lambda: mixed_precision_gemm(
+            a, w_q, w_s, None, weight_dtype_vllm.size_bits, weight_dtype_vllm.bias, group_size
+        ),
         tag="Triton",
         metadata=metadata,
         num_iterations=num_iterations,
