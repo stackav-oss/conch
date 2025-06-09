@@ -853,7 +853,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_split_kv=(num_kv_splits > 1),
     )
 
-    print(stage1_kernel.asm["ttir"])
+    print(stage1_kernel.asm["ptx"])
 
     if num_kv_splits > 1:
         assert output_scratchpad is not None  # noqa: S101
