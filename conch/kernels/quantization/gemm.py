@@ -15,7 +15,6 @@ import triton
 import triton.language as tl
 
 from conch.platforms import current_platform
-from conch.third_party.vllm.scalar_type import ScalarType
 
 
 class DType(Enum):
@@ -485,7 +484,7 @@ class MixedPrecisionMatmulMetadata:
     m_dim: int
     k_dim: int
     n_dim: int
-    weight_type: ScalarType
+    weight_size_bits: int
     weight_bias: int
     group_size: int
     elements_per_sample: int
@@ -530,7 +529,7 @@ def mixed_precision_gemm_launcher(
         k_dim=metadata.k_dim,
         n_dim=metadata.n_dim,
         # Quantization paramers
-        cxpr_w_nbits=metadata.weight_type.size_bits,
+        cxpr_w_nbits=metadata.weight_size_bits,
         cxpr_weight_bias=metadata.weight_bias,
         cxpr_group_size=metadata.group_size,
         cxpr_unpack_mask=metadata.unpack_mask,

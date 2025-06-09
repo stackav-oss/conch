@@ -69,7 +69,9 @@ def test_gemm(
 
     output_ref = torch.matmul(a, w_ref)
 
-    triton_output = mixed_precision_gemm(a, w_q_packed, w_s, w_zp, weight_dtype, group_size)
+    triton_output = mixed_precision_gemm(
+        a, w_q_packed, w_s, w_zp, weight_dtype.size_bits, weight_dtype.bias, group_size
+    )
 
     atol = min(5e-2 * math.sqrt(k_dim), 1)
     torch.testing.assert_close(triton_output, output_ref, rtol=1e-1, atol=atol)
