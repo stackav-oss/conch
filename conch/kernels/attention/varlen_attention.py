@@ -267,15 +267,15 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     query_mask = query_split_group_seq_mask[:, None] & query_split_group_head_mask[:, None] & head_mask[None, :]
 
     # Determine whether or not we need masking for different dimensions
-    # needs_query_split_mask = end_seqlen_q > this_query_length
-    # needs_query_group_mask = query_group_size != cxpr_query_group_size_padded
-    # needs_head_mask = head_size != cxpr_head_size_padded
-    # needs_query_mask = (needs_query_split_mask or needs_query_group_mask) or needs_head_mask
-    # needs_causal_mask = cxpr_is_causal and not is_pure_decode
+    needs_query_split_mask = end_seqlen_q > this_query_length
+    needs_query_group_mask = query_group_size != cxpr_query_group_size_padded
+    needs_head_mask = head_size != cxpr_head_size_padded
+    needs_query_mask = (needs_query_split_mask or needs_query_group_mask) or needs_head_mask
+    needs_causal_mask = cxpr_is_causal and not is_pure_decode
 
     # Load queries
-    # query = _load(query_ptr + query_offsets, use_mask=needs_query_mask, mask=query_mask, other=0.0)
-    query = tl.load(query_ptr + query_offsets, mask=query_mask, other=0.0)
+    query = _load(query_ptr + query_offsets, use_mask=needs_query_mask, mask=query_mask, other=0.0)
+    # query = tl.load(query_ptr + query_offsets, mask=query_mask, other=0.0)
 
     # Index/offset for the current kv_head in the key_cache and value_cache
     kv_head_index_offset = kv_head_index * kv_head_stride
@@ -291,22 +291,24 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Keep running denominator of softmax
     l_i = tl.full([cxpr_query_chunk_size * cxpr_query_group_size_padded], 0.0, dtype=dtype)
 
-    # cache_block_offsets = tl.arange(0, cxpr_cache_block_size)
+    cache_block_offsets = tl.arange(0, cxpr_cache_block_size)
 
-    # key_block_offsets = (
-    #     cache_block_offsets[None, :] * kv_cache_block_stride + kv_head_index_offset + head_offsets[:, None]
-    # )
+    key_block_offsets = (
+        cache_block_offsets[None, :] * kv_cache_block_stride + kv_head_index_offset + head_offsets[:, None]
+    )
 
-    # value_block_offsets = (
-    #     cache_block_offsets[:, None] * kv_cache_block_stride + kv_head_index_offset + head_offsets[None, :]
-    # )
+    value_block_offsets = (
+        cache_block_offsets[:, None] * kv_cache_block_stride + kv_head_index_offset + head_offsets[None, :]
+    )
 
     # is_causal_mask = tl.broadcast_to(cxpr_is_causal, (cxpr_cache_block_size,))
 
-    # starting_seq_len = starting_cache_block_index * cxpr_cache_block_size
+    starting_seq_len = starting_cache_block_index * cxpr_cache_block_size
 
-    # k_c_ptr = key_cache_ptr + key_block_offsets
-    # v_c_ptr = value_cache_ptr + value_block_offsets
+    k_c_ptr = key_cache_ptr + key_block_offsets
+    v_c_ptr = value_cache_ptr + value_block_offsets
+
+    effective_seqlen_k_offsets = starting_cache_block_index * cxpr_cache_block_size + cache_block_offsets
 
     # Iterate through the cache blocks that this kernel is assigned to
     for cache_block_index in range(
@@ -314,28 +316,28 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     ):
         # Calculate number of entries in this cache block (will be a value between 1 and cache_block_size)
         num_entries_in_cache_block = min(
-            current_sequence_length - (cache_block_index * cxpr_cache_block_size), cxpr_cache_block_size
-            # current_sequence_length - starting_seq_len, cxpr_cache_block_size
+                # current_sequence_length - (cache_block_index * cxpr_cache_block_size), cxpr_cache_block_size
+            current_sequence_length - starting_seq_len, cxpr_cache_block_size
         )
 
-        # starting_seq_len += cxpr_cache_block_size
-        cache_block_offsets = tl.arange(0, cxpr_cache_block_size)
+        starting_seq_len += cxpr_cache_block_size
+        # cache_block_offsets = tl.arange(0, cxpr_cache_block_size)
 
         cache_block_mask = cache_block_offsets < num_entries_in_cache_block
 
-        key_block_offsets = (
-            cache_block_offsets[None, :] * kv_cache_block_stride + kv_head_index_offset + head_offsets[:, None]
-        )
+        # key_block_offsets = (
+        #     cache_block_offsets[None, :] * kv_cache_block_stride + kv_head_index_offset + head_offsets[:, None]
+        # )
 
-        value_block_offsets = (
-            cache_block_offsets[:, None] * kv_cache_block_stride + kv_head_index_offset + head_offsets[None, :]
-        )
+        # value_block_offsets = (
+        #     cache_block_offsets[:, None] * kv_cache_block_stride + kv_head_index_offset + head_offsets[None, :]
+        # )
 
-        k_c_ptr = key_cache_ptr + key_block_offsets
-        v_c_ptr = value_cache_ptr + value_block_offsets
+        # k_c_ptr = key_cache_ptr + key_block_offsets
+        # v_c_ptr = value_cache_ptr + value_block_offsets
 
-        # needs_cache_block_mask = num_entries_in_cache_block != cxpr_cache_block_size
-        # needs_qk_mask = (needs_query_split_mask or needs_query_group_mask) or needs_cache_block_mask
+        needs_cache_block_mask = num_entries_in_cache_block != cxpr_cache_block_size
+        needs_qk_mask = (needs_query_split_mask or needs_query_group_mask) or needs_cache_block_mask
 
         # Offset from the block_table row for the current batch by the number of cache blocks
         current_cache_block_number_ptr = current_block_table_ptr + cache_block_index
@@ -349,11 +351,11 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
         # Load the key block as (cxpr_head_size_padded, cache_block_size)
         # Note: we're loading it transposed here
-        # key_block = _load(
-        key_block = tl.load(
+        # key_block = tl.load(
+        key_block = _load(
             # key_cache_ptr + kv_cache_block_index_offset + key_block_offsets,
             k_c_ptr + kv_cache_block_index_offset,
-            # use_mask=(needs_cache_block_mask or needs_head_mask),
+            use_mask=(needs_cache_block_mask or needs_head_mask),
             mask=key_block_mask,
             other=0.0,
         )
@@ -373,24 +375,27 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         # Need to mask out any elements that represent unused cache block entries or padding elements
         qk_mask = query_split_group_seq_mask[:, None] & query_split_group_head_mask[:, None] & cache_block_mask[None, :]
 
-        # effective_seqlen_k_offsets = starting_cache_block_index * cxpr_cache_block_size + cache_block_offsets
-        effective_seqlen_k_offsets = cache_block_index * cxpr_cache_block_size + cache_block_offsets
-        # if needs_causal_mask:
-        #     # effective_seqlen_k_offsets = cache_block_index * cxpr_cache_block_size + cache_block_offsets
-        #     effective_seqlen_k_offsets += cxpr_cache_block_size
-        #     causal_mask = query_split_group_seq_offsets[:, None] >= effective_seqlen_k_offsets[None, :]
-        #     qk_mask = qk_mask & causal_mask
-        # effective_seqlen_k_offsets += cxpr_cache_block_size
-        causal_mask = query_split_group_seq_offsets[:, None] >= effective_seqlen_k_offsets[None, :]
-        # not_causal = [True, True, True, True] | causal_mask -> every KV selected
-        # causal = [False, False, False, False] | causal_mask -> Only KVs selected by causal_mask
-        # causal_mask = causal_selector | causal_mask
-        causal_mask = (not cxpr_is_causal or is_pure_decode) | causal_mask
-        qk_mask = qk_mask & causal_mask
+        effective_seqlen_k_offsets += cxpr_cache_block_size
 
-        # if needs_qk_mask or needs_causal_mask:
-        #     # Set masked out elements to -inf
-        qk = tl.where(qk_mask, qk, -float("inf")).to(dtype)
+        # effective_seqlen_k_offsets = starting_cache_block_index * cxpr_cache_block_size + cache_block_offsets
+        if needs_causal_mask:
+            # effective_seqlen_k_offsets = cache_block_index * cxpr_cache_block_size + cache_block_offsets
+            # effective_seqlen_k_offsets += cxpr_cache_block_size
+            causal_mask = query_split_group_seq_offsets[:, None] >= effective_seqlen_k_offsets[None, :]
+            qk_mask = qk_mask & causal_mask
+
+
+        # effective_seqlen_k_offsets += cxpr_cache_block_size
+        # causal_mask = query_split_group_seq_offsets[:, None] >= effective_seqlen_k_offsets[None, :]
+        # # not_causal = [True, True, True, True] | causal_mask -> every KV selected
+        # # causal = [False, False, False, False] | causal_mask -> Only KVs selected by causal_mask
+        # # causal_mask = causal_selector | causal_mask
+        # causal_mask = (not cxpr_is_causal or is_pure_decode) | causal_mask
+        # qk_mask = qk_mask & causal_mask
+
+        if needs_qk_mask or needs_causal_mask:
+            #     # Set masked out elements to -inf
+            qk = tl.where(qk_mask, qk, -float("inf")).to(dtype)
 
         # Handle softcapping
         if cxpr_is_softcap:
@@ -415,11 +420,11 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         output *= alpha[:, None]
 
         # Load the value block as (cache_block_size, cxpr_head_size_padded)
-        # value_block = _load(
-        value_block = tl.load(
+        # value_block = tl.load(
+        value_block = _load(
             # value_cache_ptr + kv_cache_block_index_offset + value_block_offsets,
             v_c_ptr + kv_cache_block_index_offset,
-            # use_mask=(needs_cache_block_mask or needs_head_mask),
+            use_mask=(needs_cache_block_mask or needs_head_mask),
             mask=value_block_mask,
             other=0.0,
         )
@@ -455,11 +460,11 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     )
 
     # Store output scratchpad results
-    # _store(
-    tl.store(
+    # tl.store(
+    _store(
         output_scratchpad_ptr + output_scratch_offsets,
         output,
-        # use_mask=needs_query_mask,
+        use_mask=needs_query_mask,
         mask=query_mask,
     )
 
@@ -480,11 +485,11 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         lse_mask = query_split_group_seq_mask & query_split_group_head_mask
 
         # Store lse scratchpad results
-        # _store(
-        tl.store(
+        # tl.store(
+        _store(
             lse_scratchpad_ptr + lse_scratch_offsets,
             lse,
-            # use_mask=(needs_query_split_mask or needs_query_group_mask),
+            use_mask=(needs_query_split_mask or needs_query_group_mask),
             mask=lse_mask,
         )
 
