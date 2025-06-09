@@ -220,6 +220,9 @@ def main(
         causal=causal,
     )
 
+    # Early return so we can print the TTIR/PTX
+    return
+
     if flash_attn_varlen_func is not None:
         output_vllm = flash_attn_varlen_func(
             q=query,
