@@ -192,16 +192,12 @@ def main(
         cu_seqlens_q = torch.cumsum(seqlens_q, dim=0, dtype=torch.int32)
         cu_seqlens_q = torch.cat((starting_item, cu_seqlens_q), dim=0)
 
-        cu_seqlens_k = torch.cumsum(seq_lens, dim=0, dtype=torch.int32)
-        cu_seqlens_k = torch.cat((starting_item, cu_seqlens_k), dim=0)
-
         max_seqlen_q = int(torch.max(seqlens_q).item())
         max_seqlen_k = int(torch.max(seq_lens).item())
     else:
         cu_seqlens_q = torch.cumsum(seq_lens, dim=0, dtype=torch.int32)
 
         cu_seqlens_q = torch.cat((starting_item, cu_seqlens_q), dim=0)
-        cu_seqlens_k = cu_seqlens_q.clone()
 
         max_seqlen_q = int(torch.max(seq_lens).item())
         max_seqlen_k = int(max_seqlen_q)
@@ -215,12 +211,11 @@ def main(
         query=query,
         key_cache=key_cache,
         value_cache=value_cache,
-        block_table=block_table,
-        seq_lens=seq_lens,
         cu_seqlens_q=cu_seqlens_q,
-        cu_seqlens_k=cu_seqlens_k,
         max_seqlen_q=max_seqlen_q,
+        seq_lens=seq_lens,
         max_seqlen_k=max_seqlen_k,
+        block_table=block_table,
         scale=scale,
         causal=causal,
     )
@@ -308,13 +303,12 @@ def main(
             query=query,
             key_cache=key_cache,
             value_cache=value_cache,
-            block_table=block_table,
-            seq_lens=seq_lens,
-            output=output_conch,
             cu_seqlens_q=cu_seqlens_q,
-            cu_seqlens_k=cu_seqlens_k,
             max_seqlen_q=max_seqlen_q,
+            seq_lens=seq_lens,
             max_seqlen_k=max_seqlen_k,
+            block_table=block_table,
+            output=output_conch,
             scale=scale,
             causal=causal,
         ),

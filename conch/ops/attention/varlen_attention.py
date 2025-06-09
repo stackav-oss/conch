@@ -98,34 +98,6 @@ def _check_key_value_cache_size_compatibility(
         raise ValueError(msg)
 
 
-def _check_cumulative_sequence_length_size_compatibility(
-    cu_seqlens_q: torch.Tensor, cu_seqlens_k: torch.Tensor
-) -> None:
-    """Check size compatibility of cumulative sequence length tensors.
-
-    Args:
-        cu_seqlens_q: Cumulative sequence length for query/output tensors, shape: (batch_size + 1).
-        cu_seqlens_k: Cumulative sequence length for key/value tensors, shape: (batch_size + 1).
-
-    Raises:
-        ValueError if sizes are mismatched.
-    """
-    # Cumulative sequence length tensors should be 1-D tensors of shape (batch_size + 1)
-    expected_cu_seqlen_shape_dims: Final = 1
-
-    if len(cu_seqlens_q.shape) != expected_cu_seqlen_shape_dims:
-        msg = f"Cumulative sequence length tensor for query has unexpected shape ({cu_seqlens_q.shape = }), expected {expected_cu_seqlen_shape_dims}-D tensor"
-        raise ValueError(msg)
-
-    if len(cu_seqlens_k.shape) != expected_cu_seqlen_shape_dims:
-        msg = f"Cumulative sequence length tensor for key has unexpected shape ({cu_seqlens_k.shape = }), expected {expected_cu_seqlen_shape_dims}-D tensor"
-        raise ValueError(msg)
-
-    if cu_seqlens_q.shape != cu_seqlens_k.shape:
-        msg = f"Shape of cumulative sequence length tensors does not match ({cu_seqlens_q.shape = }, {cu_seqlens_k.shape = })"
-        raise ValueError(msg)
-
-
 def _check_block_table_size_compatibility(block_table: torch.Tensor, batch_size: int) -> None:
     """Check size compatibility of block_table tensor.
 
@@ -198,9 +170,8 @@ def _create_varlen_metadata(
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
     cu_seqlens_q: torch.Tensor,
-    cu_seqlens_k: torch.Tensor,
-    block_table: torch.Tensor,
     seq_lens: torch.Tensor,
+    block_table: torch.Tensor,
     max_seqlen_q: int,
     max_seqlen_k: int,
 ) -> VarlenAttentionMetadata:
@@ -212,9 +183,8 @@ def _create_varlen_metadata(
         key_cache: Tensor with cached K values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
         value_cache: Tensor with cached V values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
         cu_seqlens_q: Cumulative sequence length for query/output tensors, shape: (batch_size + 1).
-        cu_seqlens_k: Cumulative sequence length for key/value tensors, shape: (batch_size + 1).
-        block_table: Block tables tensor, shape: (batch_size, max_num_blocks_per_sequence).
         seq_lens: Sequence lengths tensor, shape: (batch_size,).
+        block_table: Block tables tensor, shape: (batch_size, max_num_blocks_per_sequence).
 
     Raises:
         ValueError if sizes are mismatched.
@@ -228,7 +198,6 @@ def _create_varlen_metadata(
     _check_key_value_cache_size_compatibility(key_cache, value_cache, head_size, num_query_heads)
     _, _, num_kv_heads, _ = key_cache.shape
 
-    _check_cumulative_sequence_length_size_compatibility(cu_seqlens_q, cu_seqlens_k)
     batch_size = cu_seqlens_q.shape[0] - 1
 
     _check_block_table_size_compatibility(block_table, batch_size)
@@ -251,12 +220,11 @@ def varlen_attention(
     query: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
-    block_table: torch.Tensor,
-    seq_lens: torch.Tensor,
     cu_seqlens_q: torch.Tensor,
-    cu_seqlens_k: torch.Tensor,
     max_seqlen_q: int,
+    seq_lens: torch.Tensor,
     max_seqlen_k: int,
+    block_table: torch.Tensor,
     output: torch.Tensor | None = None,
     causal: bool = False,
     scale: float | None = None,
@@ -271,12 +239,11 @@ def varlen_attention(
         query: Query tensor, shape: (total_num_q, num_query_heads, head_size).
         key_cache: Tensor with cached K values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
         value_cache: Tensor with cached V values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
-        block_table: Block tables tensor, shape: (batch_size, max_num_blocks_per_sequence).
-        seq_lens: Sequence lengths tensor, shape: (batch_size,).
         cu_seqlens_q: Cumulative sequence length for query/output tensors, shape: (batch_size + 1).
-        cu_seqlens_k: Cumulative sequence length for key/value tensors, shape: (batch_size + 1).
         max_seqlen_q: Maximum sequence length for query/output tensors.
+        seq_lens: Sequence lengths tensor, shape: (batch_size,).
         max_seqlen_k: Maximum sequence length for key/value tensors.
+        block_table: Block tables tensor, shape: (batch_size, max_num_blocks_per_sequence).
         output: (Optional), Tensor to write the output of the attention calculation, shape: (total_num_q, num_query_heads, head_size).
         causal: (Optional), Whether to apply causal masking.
         scale: (Optional), Scaling factor, 1/sqrt(head_size).
@@ -296,9 +263,8 @@ def varlen_attention(
         key_cache,
         value_cache,
         cu_seqlens_q,
-        cu_seqlens_k,
-        block_table,
         seq_lens,
+        block_table,
         max_seqlen_q,
         max_seqlen_k,
     )
@@ -326,12 +292,11 @@ def varlen_attention(
         query=query,
         key_cache=key_cache,
         value_cache=value_cache,
-        block_table=block_table,
-        seq_lens=seq_lens,
         cu_seqlens_q=cu_seqlens_q,
-        cu_seqlens_k=cu_seqlens_k,
         max_seqlen_q=max_seqlen_q,
+        seq_lens=seq_lens,
         max_seqlen_k=max_seqlen_k,
+        block_table=block_table,
         output_scratchpad=output_scratchpad,
         lse_scratchpad=lse_scratchpad,
         causal=causal,
