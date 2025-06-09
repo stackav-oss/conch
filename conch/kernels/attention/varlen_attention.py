@@ -809,7 +809,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
     stage1_grid = (num_query_splits_stage1, num_kv_splits, batch_size * num_kv_heads)
 
     # Launch stage 1 kernel
-    _varlen_attention_compute_splits_kernel[stage1_grid](
+    stage1_kernel = _varlen_attention_compute_splits_kernel[stage1_grid](
         # Relevant tensors
         output_scratchpad_ptr=output_scratchpad if num_kv_splits > 1 else output,
         lse_scratchpad_ptr=lse_scratchpad if num_kv_splits > 1 else None,
@@ -852,6 +852,8 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_is_causal=causal,
         cxpr_split_kv=(num_kv_splits > 1),
     )
+
+    print(stage1_kernel.asm["ttir"])
 
     if num_kv_splits > 1:
         assert output_scratchpad is not None  # noqa: S101
