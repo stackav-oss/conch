@@ -681,12 +681,11 @@ def varlen_attention_launcher(  # noqa: PLR0913
     query: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
-    block_table: torch.Tensor,
-    seq_lens: torch.Tensor,
     cu_seqlens_q: torch.Tensor,
-    cu_seqlens_k: torch.Tensor,
     max_seqlen_q: int,
+    seq_lens: torch.Tensor,
     max_seqlen_k: int,
+    block_table: torch.Tensor,
     output_scratchpad: torch.Tensor | None = None,
     lse_scratchpad: torch.Tensor | None = None,
     causal: bool = False,
@@ -703,12 +702,11 @@ def varlen_attention_launcher(  # noqa: PLR0913
         query: Query tensor, shape: (total_num_q, num_heads, head_size).
         key_cache: Tensor with cached K values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
         value_cache: Tensor with cached V values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
-        block_table: Tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
-        seq_lens: Tensor with the sequence length of each index in the batch, shape: (batch_size, ).
         cu_seqlens_q: Tensor with the cumulative query sequence lengths for each index in the batch, shape: (batch_size + 1, ).
-        cu_seqlens_k: Tensor with the cumulative key/value sequence lengths for each index in the batch, shape: (batch_size + 1, ).
         max_seqlen_q: Maximum sequence length of the query.
+        seq_lens: Tensor with the sequence length of each index in the batch, shape: (batch_size, ).
         max_seqlen_k: Maximum sequence length of the key/value.
+        block_table: Tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
         output_scratchpad: Tensor used as scratchpad to share cache block outputs between two stages, shape: (total_num_q, num_kv_splits, num_query_heads, head_size)
         lse_scratchpad: Tensor used as scratchpad to share cache block log-sum-exp between two stages, shape: (total_num_q, num_kv_splits, num_query_heads)
         causal: Whether or not to apply causal masking.
