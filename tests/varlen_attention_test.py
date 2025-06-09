@@ -395,7 +395,8 @@ def test_varlen_attention_vs_flash_attn(
         max_seqlen_q=max_seqlen_q,
         max_seqlen_k=max_seqlen_k,
         block_table=block_table,
-        seqused_k=seq_lens,
+        # seqused_k=seq_lens,
+        cu_seqlens_k=cu_seqlens_k,
         softmax_scale=scale,
         causal=causal,
     )
@@ -486,6 +487,10 @@ def test_vllm_crash(dtype: torch.dtype) -> None:
     max_seqlen_q = int(torch.max(seq_lens).item())
     max_seqlen_k = max_seqlen_q
 
+    starting_item = torch.as_tensor([0], dtype=torch.int32)
+    cu_seqlens_k = torch.cumsum(seq_lens, dim=0, dtype=torch.int32)
+    cu_seqlens_k = torch.cat((starting_item, cu_seqlens_k), dim=0)
+
     causal = True
 
     vllm_output = flash_attn_varlen_func(
@@ -496,7 +501,8 @@ def test_vllm_crash(dtype: torch.dtype) -> None:
         max_seqlen_q=max_seqlen_q,
         max_seqlen_k=max_seqlen_k,
         block_table=block_table,
-        seqused_k=seq_lens,
+        # seqused_k=seq_lens,
+        cu_seqlens_k=cu_seqlens_k,
         softmax_scale=scale,
         causal=causal,
     )
