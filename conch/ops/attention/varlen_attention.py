@@ -138,6 +138,8 @@ def _check_seqlen_size_compatibility(seq_lens: torch.Tensor, batch_size: int) ->
 
 
 def _determine_max_num_kv_splits(max_seqlen_q: int, max_seqlen_k: int) -> int:
+    # return 1 
+
     # If we have any prefills, disable FlashDecoding/KV-splits
     if max_seqlen_q > 1:
         return 1
@@ -150,16 +152,20 @@ def _determine_max_num_kv_splits(max_seqlen_q: int, max_seqlen_k: int) -> int:
         return 32
 
     if max_seqlen_k > 1024:
-        return 16
+        # return 16
+        return 2
 
     if max_seqlen_k > 512:
-        return 8
+        # return 8
+        # return 4
+        # return 2
+        return 1
 
     if max_seqlen_k > 256:
-        return 4
+        return 1
 
     if max_seqlen_k > 128:
-        return 2
+        return 1
 
     return 1
 

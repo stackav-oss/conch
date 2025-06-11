@@ -13,6 +13,7 @@ from conch import envs
 from conch.ops.attention.paged_attention import paged_attention
 from conch.platforms import current_platform
 from conch.third_party.vllm.utils import create_tensors, seed_everything
+from conch.third_party.vllm.unified_attention import unified_attention
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 if envs.CONCH_ENABLE_VLLM and current_platform.has_cuda():
@@ -199,6 +200,10 @@ def main(
         v_scale=v_scale,
     )
 
+    output_vllm = torch.empty_like(query)
+
+    cu_seqlens_q = torch.arange(0, batch_size + 1, dtype=torch.int32, device=device)
+
     if vllm_paged_attention_v2 is not None:
         # VLLM scratchpads
         partition_size: Final = 512
@@ -280,6 +285,33 @@ def main(
         print("Skipping checking vs. reference vLLM implementation...", file=sys.stderr)
         baseline_result = None
 
+    vllm_triton_result = benchmark_it(
+        lambda: unified_attention(
+            query,
+            key_cache_conch,
+            value_cache_conch,
+            output_vllm,
+            cu_seqlens_q,
+            1,
+            seq_lens,
+            seq_len,
+            scale,
+            True,
+            (-1, -1),
+            block_table,
+            0.0,
+            None,
+            None,
+            None,
+        ),
+        tag="vLLM Triton",
+        metadata=metadata,
+        num_iterations=num_iterations,
+        num_warmup_iterations=num_warmup_iterations,
+        device=query.device,
+    )
+
+
     triton_result = benchmark_it(
         lambda: paged_attention(
             query,
@@ -294,7 +326,7 @@ def main(
             k_scale=k_scale,
             v_scale=v_scale,
         ),
-        tag="Triton",
+        tag="Conch",
         metadata=metadata,
         num_iterations=num_iterations,
         num_warmup_iterations=num_warmup_iterations,
@@ -304,6 +336,7 @@ def main(
     # Print results
     triton_result.print_parameters(csv=csv)
     triton_result.print_results(csv=csv)
+    vllm_triton_result.print_results(csv=csv)
     if baseline_result is not None:
         baseline_result.print_results(csv=csv)
 
