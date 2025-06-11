@@ -591,10 +591,9 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
 def _get_block_size(device_name: str) -> int:
     """Get block size for tuning purposes."""
     if "MI300X" in device_name:
-        return 256
+        return 32
 
-    return 64
-    # return 32
+    return 32
 
 
 def _get_tuned_sizes(head_size_padded: int, query_group_size_padded: int, max_seqlen_q: int) -> tuple[int, int]:
