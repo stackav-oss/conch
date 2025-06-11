@@ -23,14 +23,14 @@ def _reshape_and_cache_kernel(
     # Strides of relevant tensors
     k_token_stride: int,
     k_head_stride: int,
-    k_head_element_stride: int,
+    k_head_element_stride: tl.constexpr,
     v_token_stride: int,
     v_head_stride: int,
-    v_head_element_stride: int,
+    v_head_element_stride: tl.constexpr,
     kv_cache_page_stride: int,
     kv_cache_block_stride: int,
     kv_cache_head_stride: int,
-    kv_cache_head_element_stride: int,
+    kv_cache_head_element_stride: tl.constexpr,
     # Scalars
     cache_block_size: int,
     # Constexprs
@@ -65,8 +65,6 @@ def _reshape_and_cache_kernel(
     """
     # What token is this program processing?
     token_index = tl.program_id(0)
-    # What head is this program processing?
-    head_index = tl.program_id(1)
 
     # Get index of slot for this token from mapping tensor
     slot_index = tl.load(slot_mapping_ptr + token_index)
@@ -75,10 +73,8 @@ def _reshape_and_cache_kernel(
     if slot_index < 0:
         return
 
-    # Calculate index of page (value in range(0, num_pages))
-    page_index = slot_index // cache_block_size
-    # Calculate entry index inside of a cache block/page for this slot (value in range(0, cache_block_size))
-    entry_index = slot_index % cache_block_size
+    # What head is this program processing?
+    head_index = tl.program_id(1)
 
     # Calculate offset into key/value tensors to get to the token for this program
     k_token_offset = token_index * k_token_stride
@@ -110,6 +106,11 @@ def _reshape_and_cache_kernel(
         # to uint8 to match the dtype of the cache
         key = key.to(fp8_dtype).to(key_cache_ptr.dtype.element_ty, bitcast=True)
         value = value.to(fp8_dtype).to(value_cache_ptr.dtype.element_ty, bitcast=True)
+
+    # Calculate index of page (value in range(0, num_pages))
+    page_index = slot_index // cache_block_size
+    # Calculate entry index inside of a cache block/page for this slot (value in range(0, cache_block_size))
+    entry_index = slot_index % cache_block_size
 
     # Calculate offset into key/value cache tensors to get to the cache block we're copying into
     kv_page_offset = page_index * kv_cache_page_stride
