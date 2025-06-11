@@ -135,6 +135,7 @@ def reshape_and_cache_launcher(
     kv_cache_dtype: str = "auto",
     k_scale: torch.Tensor | None = None,
     v_scale: torch.Tensor | None = None,
+    strict: bool = False,
 ) -> None:
     """Launch reshape_and_cache kernel.
 
@@ -148,29 +149,30 @@ def reshape_and_cache_launcher(
         k_scale: Fp8 scaling factor for k.
         v_scale: Fp8 scaling factor for v.
     """
-    # Assume sizes already checked if calling launcher. For interface with strict size checking, call `reshape_and_cache()`.
+    # Assume sizes already checked if calling launcher. For interface with strict size checking, call `ops.reshape_and_cache()` with `strict=True`.
     _, num_kv_heads, head_size = key.shape
     num_pages, cache_block_size, _, _ = key_cache.shape
 
     # Note: In vLLM v1, slot_mapping is the only tensor that can be trusted to tell the correct number of tokens
     num_tokens = slot_mapping.size(0)
 
-    assert key.shape == value.shape  # noqa: S101
-    assert key_cache.shape == value_cache.shape  # noqa: S101
+    if strict:
+        assert key.shape == value.shape  # noqa: S101
+        assert key_cache.shape == value_cache.shape  # noqa: S101
 
-    assert key_cache.stride(0) == value_cache.stride(0)  # noqa: S101
-    assert key_cache.stride(1) == value_cache.stride(1)  # noqa: S101
-    assert key_cache.stride(2) == value_cache.stride(2)  # noqa: S101
-    assert key_cache.stride(3) == value_cache.stride(3)  # noqa: S101
-    assert key_cache.stride(3) == 1  # noqa: S101
+        assert key_cache.stride(0) == value_cache.stride(0)  # noqa: S101
+        assert key_cache.stride(1) == value_cache.stride(1)  # noqa: S101
+        assert key_cache.stride(2) == value_cache.stride(2)  # noqa: S101
+        assert key_cache.stride(3) == value_cache.stride(3)  # noqa: S101
+        assert key_cache.stride(3) == 1  # noqa: S101
 
-    assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"  # noqa: S101
-    assert head_size == triton.next_power_of_2(head_size), "Head size must be a power of two!"  # noqa: S101
+        assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"  # noqa: S101
+        assert head_size == triton.next_power_of_2(head_size), "Head size must be a power of two!"  # noqa: S101
 
     is_rocm: tl.constexpr = current_platform.is_amd()
     apply_fp8_scaling: tl.constexpr = kv_cache_dtype == "fp8" or kv_cache_dtype == "fp8_e4m3"
 
-    if apply_fp8_scaling:
+    if strict and apply_fp8_scaling:
         assert k_scale is not None  # noqa: S101
         assert v_scale is not None  # noqa: S101
         assert k_scale.numel() == 1  # noqa: S101

@@ -91,6 +91,7 @@ def reshape_and_cache(
     kv_cache_dtype: str = "auto",
     k_scale: torch.Tensor | None = None,
     v_scale: torch.Tensor | None = None,
+    strict: bool = False,
 ) -> None:
     """Reshape key/value vectors and add them to the cache.
 
@@ -104,11 +105,12 @@ def reshape_and_cache(
         k_scale: Fp8 scaling factor for k.
         v_scale: Fp8 scaling factor for v.
     """
-    # Verify input sizes/tensor shapes
-    _validate_sizes(key, value, key_cache, value_cache, slot_mapping)
+    if strict:
+        # Verify input sizes/tensor shapes
+        _validate_sizes(key, value, key_cache, value_cache, slot_mapping)
 
-    # Validate kv cache dtype is valid
-    _validate_kv_cache_dtype(kv_cache_dtype)
+        # Validate kv cache dtype is valid
+        _validate_kv_cache_dtype(kv_cache_dtype)
 
     # Call kernel launch wrapper
     reshape_and_cache_launcher(
@@ -120,4 +122,5 @@ def reshape_and_cache(
         kv_cache_dtype,
         k_scale,
         v_scale,
+        strict=strict,
     )
