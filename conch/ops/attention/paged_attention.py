@@ -100,27 +100,28 @@ def _check_block_table_size_compatibility(block_table: torch.Tensor, batch_size:
         raise ValueError(msg)
 
 
-def _determine_max_num_kv_splits(max_seqlen_k: int) -> int:
+def _determine_max_num_kv_splits(max_num_blocks_per_sequence: int) -> int:
     # Note: this is a pretty basic heuristic, we could try and do something more sophisticated in the future
-    if max_seqlen_k > 8192:
+    if max_num_blocks_per_sequence > 1024:
         return 64
 
-    if max_seqlen_k > 2048:
+    if max_num_blocks_per_sequence > 512:
         return 32
 
-    if max_seqlen_k > 1024:
+    if max_num_blocks_per_sequence > 256:
         return 16
 
-    if max_seqlen_k > 512:
+    if max_num_blocks_per_sequence > 128:
         return 8
 
-    if max_seqlen_k > 256:
+    if max_num_blocks_per_sequence > 64:
         return 4
 
-    if max_seqlen_k > 128:
-        return 2
+    # if max_num_blocks_per_sequence > 32:
+    #     return 2
 
-    return 1
+    # return 1
+    return 2
 
 
 def _check_size_compatibility(
@@ -161,7 +162,7 @@ def _check_size_compatibility(
         head_size=head_size,
         num_cache_blocks=num_cache_blocks,
         max_num_blocks_per_sequence=max_num_blocks_per_sequence,
-        max_num_splits=_determine_max_num_kv_splits(max_num_blocks_per_sequence * cache_block_size),
+        max_num_splits=_determine_max_num_kv_splits(max_num_blocks_per_sequence),
     )
 
 

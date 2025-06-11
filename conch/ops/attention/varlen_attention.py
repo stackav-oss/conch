@@ -137,28 +137,28 @@ def _check_seqlen_size_compatibility(seq_lens: torch.Tensor, batch_size: int) ->
         raise ValueError(msg)
 
 
-def _determine_max_num_kv_splits(max_seqlen_q: int, max_seqlen_k: int) -> int:
+def _determine_max_num_kv_splits(max_seqlen_q: int, max_num_blocks_per_sequence: int) -> int:
     # If we have any prefills, disable FlashDecoding/KV-splits
     if max_seqlen_q > 1:
         return 1
 
     # Note: this is a pretty basic heuristic, we could try and do something more sophisticated in the future
-    if max_seqlen_k > 8192:
+    if max_num_blocks_per_sequence > 1024:
         return 64
 
-    if max_seqlen_k > 2048:
+    if max_num_blocks_per_sequence > 512:
         return 32
 
-    if max_seqlen_k > 1024:
+    if max_num_blocks_per_sequence > 256:
         return 16
 
-    if max_seqlen_k > 512:
+    if max_num_blocks_per_sequence > 128:
         return 8
 
-    if max_seqlen_k > 256:
+    if max_num_blocks_per_sequence > 64:
         return 4
 
-    if max_seqlen_k > 128:
+    if max_num_blocks_per_sequence > 32:
         return 2
 
     return 1
@@ -212,7 +212,7 @@ def _create_varlen_metadata(
         head_size=head_size,
         total_num_q=total_num_q,
         max_num_blocks_per_sequence=max_num_blocks_per_sequence,
-        num_kv_splits=_determine_max_num_kv_splits(max_seqlen_q, max_seqlen_k),
+        num_kv_splits=_determine_max_num_kv_splits(max_seqlen_q, max_num_blocks_per_sequence),
     )
 
 
