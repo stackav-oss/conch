@@ -1,7 +1,7 @@
 # Copyright 2025 Stack AV Co.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Triton rms_norm benchmark."""
+"""Conch rms_norm benchmark."""
 
 import sys
 from typing import Final
@@ -9,7 +9,7 @@ from typing import Final
 import click
 import torch
 
-from conch.ops.normalization.rms_norm import rms_norm as rms_norm_triton
+from conch.ops.normalization.rms_norm import rms_norm as rms_norm_conch
 from conch.platforms import current_platform
 from conch.reference.normalization.rms_norm import rms_norm as rms_norm_reference
 from conch.third_party.vllm.utils import seed_everything
@@ -32,18 +32,18 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of tokens",
 )
 @click.option(
-    "--num-iterations",
+    "--iteration-time-ms",
     required=False,
     type=int,
-    default=100,
-    help="Number of iterations",
+    default=10000,
+    help="Time in milliseconds to run benchmark",
 )
 @click.option(
-    "--num-warmup-iterations",
+    "--warmup-time-ms",
     required=False,
     type=int,
-    default=10,
-    help="Number of warmup iterations",
+    default=1000,
+    help="Time in milliseconds to warmup before recording times",
 )
 @click.option(
     "--verbose",
@@ -65,19 +65,19 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 def main(  # noqa: PLR0913
     hidden_size: int,
     num_tokens: int,
-    num_iterations: int,
-    num_warmup_iterations: int,
+    iteration_time_ms: int,
+    warmup_time_ms: int,
     verbose: bool,
     gpu: str,
     csv: bool,
 ) -> None:
-    """Benchmark Triton rms_norm op.
+    """Benchmark Conch rms_norm op.
 
     Args:
         hidden_size: Dimension of input/output.
         num_tokens: Number of tokens.
-        num_iterations: Number of iterations to record benchmark times for each impl
-        num_warmup_iterations: Number of iterations to "warmup" each impl before recording benchmark times
+        iteration_time_ms: Time in milliseconds to run the benchmark.
+        warmup_time_ms: Time in milliseconds to warm up before recording times.
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag for printing results in CSV format.
@@ -103,21 +103,21 @@ def main(  # noqa: PLR0913
     x = torch.randn((num_tokens, hidden_size), dtype=dtype, device=device)
     weight = torch.randn((hidden_size,), dtype=dtype, device=device)
 
-    triton_output = rms_norm_triton(x, weight, epsilon)
+    conch_output = rms_norm_conch(x, weight, epsilon)
 
     ref_output = rms_norm_reference(x, weight, epsilon)
 
-    if not torch.allclose(ref_output, triton_output, atol=tolerance, rtol=tolerance):
-        print(f"WARNING: Reference and Triton results differ! (atol={tolerance}, rtol={tolerance})", file=sys.stderr)
-        print(f"Output max diff: {(ref_output - triton_output).abs().max().item()}", file=sys.stderr)
+    if not torch.allclose(ref_output, conch_output, atol=tolerance, rtol=tolerance):
+        print(f"WARNING: Reference and Conch results differ! (atol={tolerance}, rtol={tolerance})", file=sys.stderr)
+        print(f"Output max diff: {(ref_output - conch_output).abs().max().item()}", file=sys.stderr)
 
         if verbose:
             print(f"Reference output: {ref_output}", file=sys.stderr)
-            print(f"Triton output: {triton_output}", file=sys.stderr)
+            print(f"Conch output: {conch_output}", file=sys.stderr)
     else:
         print(f"Results matched with atol={tolerance} and rtol={tolerance} :)", file=sys.stderr)
 
-    # Benchmark Reference vs. Triton implementations
+    # Benchmark Reference vs. Conch implementations
     baseline_result = benchmark_it(
         lambda: rms_norm_reference(
             x,
@@ -126,27 +126,25 @@ def main(  # noqa: PLR0913
         ),
         tag="Baseline",
         metadata=metadata,
-        num_iterations=num_iterations,
-        num_warmup_iterations=num_warmup_iterations,
-        device=device,
+        iteration_time_ms=iteration_time_ms,
+        warmup_time_ms=warmup_time_ms,
     )
 
-    triton_result = benchmark_it(
-        lambda: rms_norm_triton(
+    conch_result = benchmark_it(
+        lambda: rms_norm_conch(
             x,
             weight,
             epsilon,
         ),
-        tag="Triton",
+        tag="Conch",
         metadata=metadata,
-        num_iterations=num_iterations,
-        num_warmup_iterations=num_warmup_iterations,
-        device=device,
+        iteration_time_ms=iteration_time_ms,
+        warmup_time_ms=warmup_time_ms,
     )
 
     # Print results
-    triton_result.print_parameters(csv=csv)
-    triton_result.print_results(csv=csv)
+    conch_result.print_parameters(csv=csv)
+    conch_result.print_results(csv=csv)
     baseline_result.print_results(csv=csv)
 
 

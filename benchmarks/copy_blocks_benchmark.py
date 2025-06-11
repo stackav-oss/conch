@@ -1,7 +1,7 @@
 # Copyright 2025 Stack AV Co.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Triton copy_blocks benchmark."""
+"""Conch copy_blocks benchmark."""
 
 import random
 import sys
@@ -10,7 +10,7 @@ from typing import Final
 import click
 import torch
 
-from conch.ops.vllm.copy_blocks import copy_blocks as copy_blocks_triton
+from conch.ops.vllm.copy_blocks import copy_blocks as copy_blocks_conch
 from conch.platforms import current_platform
 from conch.reference.vllm.copy_blocks import copy_blocks as copy_blocks_reference
 from conch.third_party.vllm.utils import seed_everything
@@ -61,18 +61,18 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of mappings to copy",
 )
 @click.option(
-    "--num-iterations",
+    "--iteration-time-ms",
     required=False,
     type=int,
-    default=100,
-    help="Number of iterations",
+    default=10000,
+    help="Time in milliseconds to run benchmark",
 )
 @click.option(
-    "--num-warmup-iterations",
+    "--warmup-time-ms",
     required=False,
     type=int,
-    default=10,
-    help="Number of warmup iterations",
+    default=1000,
+    help="Time in milliseconds to warmup before recording times",
 )
 @click.option(
     "--absolute-tolerance",
@@ -105,14 +105,14 @@ def main(
     num_kv_heads: int,
     num_blocks: int,
     num_mappings: int,
-    num_iterations: int,
-    num_warmup_iterations: int,
+    iteration_time_ms: int,
+    warmup_time_ms: int,
     absolute_tolerance: float,
     verbose: bool,
     gpu: str,
     csv: bool,
 ) -> None:
-    """Benchmark Triton copy_blocks operation.
+    """Benchmark Conch copy_blocks operation.
 
     Args:
         head_dim: Head dimension of input tensors.
@@ -121,9 +121,9 @@ def main(
         num_kv_heads: Number of attention kv heads.
         num_blocks: Number of blocks in the cache.
         num_mappings: Number of pairs of blocks to copy.
-        num_iterations: Number of iterations to record benchmark times for each impl.
-        num_warmup_iterations: Number of iterations to "warmup" each impl before recording benchmark times.
-        absolute_tolerance: Absolute tolerance used to check accuracy of PyTorch vs. Triton.
+        iteration_time_ms: Time in milliseconds to run benchmark.
+        warmup_time_ms: Time in milliseconds to warmup before recording times.
+        absolute_tolerance: Absolute tolerance used to check accuracy of PyTorch vs. Conch.
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag to indicate whether or not to print results in CSV format.
@@ -181,8 +181,8 @@ def main(
 
     # Run the reference implementation.
     copy_blocks_reference(cloned_key_caches, cloned_value_caches, block_mapping)
-    # Call Triton kernel
-    copy_blocks_triton(key_caches, value_caches, block_mapping_tensor)
+    # Call Conch kernel
+    copy_blocks_conch(key_caches, value_caches, block_mapping_tensor)
 
     # Compare the results.
     num_key_matched = 0
@@ -190,30 +190,30 @@ def main(
 
     for key_cache, cloned_key_cache in zip(key_caches, cloned_key_caches, strict=False):
         if not torch.allclose(key_cache, cloned_key_cache, atol=absolute_tolerance):
-            print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)
+            print(f"WARNING: Reference and Conch results differ! (atol={absolute_tolerance})", file=sys.stderr)
             print(f"Output max diff: {(cloned_key_cache - key_cache).abs().max().item()}", file=sys.stderr)
 
             if verbose:
                 print(f"Reference output: {key_cache}", file=sys.stderr)
-                print(f"Triton output: {cloned_key_cache}", file=sys.stderr)
+                print(f"Conch output: {cloned_key_cache}", file=sys.stderr)
         else:
             num_key_matched += 1
 
     for value_cache, cloned_value_cache in zip(value_caches, cloned_value_caches, strict=False):
         if not torch.allclose(value_cache, cloned_value_cache, atol=absolute_tolerance):
-            print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)
+            print(f"WARNING: Reference and Conch results differ! (atol={absolute_tolerance})", file=sys.stderr)
             print(f"Output max diff: {(cloned_value_cache - value_cache).abs().max().item()}", file=sys.stderr)
 
             if verbose:
                 print(f"Reference output: {value_cache}", file=sys.stderr)
-                print(f"Triton output: {cloned_value_cache}", file=sys.stderr)
+                print(f"Conch output: {cloned_value_cache}", file=sys.stderr)
         else:
             num_value_matched += 1
 
     if num_key_matched == num_layers and num_value_matched == num_layers:
         print(f"Results matched with atol={absolute_tolerance} :)", file=sys.stderr)
 
-    # Benchmark Reference vs. Triton implementations
+    # Benchmark Reference vs. Conch implementations
     baseline_result = benchmark_it(
         lambda: copy_blocks_reference(
             cloned_key_caches,
@@ -222,27 +222,25 @@ def main(
         ),
         tag="Baseline",
         metadata=metadata,
-        num_iterations=num_iterations,
-        num_warmup_iterations=num_warmup_iterations,
-        device=block_mapping_tensor.device,
+        iteration_time_ms=iteration_time_ms,
+        warmup_time_ms=warmup_time_ms,
     )
 
-    triton_result = benchmark_it(
-        lambda: copy_blocks_triton(
+    conch_result = benchmark_it(
+        lambda: copy_blocks_conch(
             key_caches,
             value_caches,
             block_mapping_tensor,
         ),
-        tag="Triton",
+        tag="Conch",
         metadata=metadata,
-        num_iterations=num_iterations,
-        num_warmup_iterations=num_warmup_iterations,
-        device=block_mapping_tensor.device,
+        iteration_time_ms=iteration_time_ms,
+        warmup_time_ms=warmup_time_ms,
     )
 
     # Print results
-    triton_result.print_parameters(csv=csv)
-    triton_result.print_results(csv=csv)
+    conch_result.print_parameters(csv=csv)
+    conch_result.print_results(csv=csv)
     baseline_result.print_results(csv=csv)
 
 

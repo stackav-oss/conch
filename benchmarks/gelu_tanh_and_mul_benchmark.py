@@ -1,7 +1,7 @@
 # Copyright 2025 Stack AV Co.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Triton gelu_tanh_and_mul benchmark."""
+"""Conch gelu_tanh_and_mul benchmark."""
 
 import sys
 from typing import Final
@@ -9,7 +9,7 @@ from typing import Final
 import click
 import torch
 
-from conch.ops.activation.gelu_tanh_and_mul import gelu_tanh_and_mul as gelu_tanh_and_mul_triton
+from conch.ops.activation.gelu_tanh_and_mul import gelu_tanh_and_mul as gelu_tanh_and_mul_conch
 from conch.platforms import current_platform
 from conch.reference.activation.gelu_tanh_and_mul import gelu_tanh_and_mul as gelu_tanh_and_mul_reference
 from conch.third_party.vllm.utils import seed_everything
@@ -32,18 +32,18 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of tokens",
 )
 @click.option(
-    "--num-iterations",
+    "--iteration-time-ms",
     required=False,
     type=int,
-    default=100,
-    help="Number of iterations",
+    default=10000,
+    help="Time in milliseconds to run benchmark",
 )
 @click.option(
-    "--num-warmup-iterations",
+    "--warmup-time-ms",
     required=False,
     type=int,
-    default=10,
-    help="Number of warmup iterations",
+    default=1000,
+    help="Time in milliseconds to warmup before recording times",
 )
 @click.option(
     "--absolute-tolerance",
@@ -72,21 +72,21 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 def main(
     hidden_size: int,
     num_tokens: int,
-    num_iterations: int,
-    num_warmup_iterations: int,
+    iteration_time_ms: int,
+    warmup_time_ms: int,
     absolute_tolerance: float,
     verbose: bool,
     gpu: str,
     csv: bool,
 ) -> None:
-    """Benchmark Triton GeluTanhAndMul op.
+    """Benchmark Conch GeluTanhAndMul op.
 
     Args:
         hidden_size: Feedforward hidden size.
         num_tokens: Number of tokens.
-        num_iterations: Number of iterations to record benchmark times for each impl.
-        num_warmup_iterations: Number of iterations to "warmup" each impl before recording benchmark times.
-        absolute_tolerance: Absolute tolerance used to check accuracy of PyTorch vs. Triton.
+        iteration_time_ms: Time in milliseconds to run the benchmark.
+        warmup_time_ms: Time in milliseconds to warm up before recording times.
+        absolute_tolerance: Absolute tolerance used to check accuracy of PyTorch vs. Conch.
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag for printing results in CSV format.
@@ -108,15 +108,15 @@ def main(
     projections = torch.rand((num_tokens, hidden_size * 2), device=device)
 
     ref_output = gelu_tanh_and_mul_reference(projections)
-    triton_output = gelu_tanh_and_mul_triton(projections)
+    conch_output = gelu_tanh_and_mul_conch(projections)
 
-    if not torch.allclose(ref_output, triton_output, atol=absolute_tolerance):
-        print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)
-        print(f"Output max diff: {(triton_output - ref_output).abs().max().item()}", file=sys.stderr)
+    if not torch.allclose(ref_output, conch_output, atol=absolute_tolerance):
+        print(f"WARNING: Reference and Conch results differ! (atol={absolute_tolerance})", file=sys.stderr)
+        print(f"Output max diff: {(conch_output - ref_output).abs().max().item()}", file=sys.stderr)
 
         if verbose:
             print(f"Reference output: {ref_output}", file=sys.stderr)
-            print(f"Triton output: {triton_output}", file=sys.stderr)
+            print(f"Conch output: {conch_output}", file=sys.stderr)
     else:
         print(f"Results matched with atol={absolute_tolerance} :)", file=sys.stderr)
 
@@ -124,23 +124,21 @@ def main(
         lambda: gelu_tanh_and_mul_reference(projections),
         tag="Baseline",
         metadata=metadata,
-        num_iterations=num_iterations,
-        num_warmup_iterations=num_warmup_iterations,
-        device=device,
+        iteration_time_ms=iteration_time_ms,
+        warmup_time_ms=warmup_time_ms,
     )
 
-    triton_result = benchmark_it(
-        lambda: gelu_tanh_and_mul_triton(projections),
-        tag="Triton",
+    conch_result = benchmark_it(
+        lambda: gelu_tanh_and_mul_conch(projections),
+        tag="Conch",
         metadata=metadata,
-        num_iterations=num_iterations,
-        num_warmup_iterations=num_warmup_iterations,
-        device=device,
+        iteration_time_ms=iteration_time_ms,
+        warmup_time_ms=warmup_time_ms,
     )
 
     # Print results
-    triton_result.print_parameters(csv=csv)
-    triton_result.print_results(csv=csv)
+    conch_result.print_parameters(csv=csv)
+    conch_result.print_results(csv=csv)
     baseline_result.print_results(csv=csv)
 
 

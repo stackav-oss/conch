@@ -1,7 +1,7 @@
 # Copyright 2025 Stack AV Co.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Triton paged attention vs. FlashAttnWithKVCache benchmark."""
+"""Conch paged attention vs. FlashAttnWithKVCache benchmark."""
 
 import sys
 from typing import Final
@@ -65,18 +65,18 @@ else:
     help="Number of kv heads",
 )
 @click.option(
-    "--num-iterations",
+    "--iteration-time-ms",
     required=False,
     type=int,
-    default=100,
-    help="Number of iterations",
+    default=10000,
+    help="Time in milliseconds to run benchmark",
 )
 @click.option(
-    "--num-warmup-iterations",
+    "--warmup-time-ms",
     required=False,
     type=int,
-    default=10,
-    help="Number of warmup iterations",
+    default=1000,
+    help="Time in milliseconds to warmup before recording times",
 )
 @click.option(
     "--absolute-tolerance",
@@ -109,14 +109,14 @@ def main(
     batch_size: int,
     num_query_heads: int,
     num_kv_heads: int,
-    num_iterations: int,
-    num_warmup_iterations: int,
+    iteration_time_ms: int,
+    warmup_time_ms: int,
     absolute_tolerance: float,
     verbose: bool,
     gpu: str,
     csv: bool,
 ) -> None:
-    """Benchmark Triton PagedAttention.
+    """Benchmark PagedAttention.
 
     Args:
         head_dim: Head dimension of input tensors.
@@ -125,9 +125,9 @@ def main(
         batch_size: Batch size of input tensors.
         num_query_heads: Number of attention query heads.
         num_kv_heads: Number of attention kv heads.
-        num_iterations: Number of iterations to record benchmark times for each impl.
-        num_warmup_iterations: Number of iterations to "warmup" each impl before recording benchmark times.
-        absolute_tolerance: Absolute tolerance used to check accuracy of PyTorch vs. Triton.
+        iteration_time_ms: Time in milliseconds to run benchmark.
+        warmup_time_ms: Time in milliseconds to warmup before recording times.
+        absolute_tolerance: Absolute tolerance used to check accuracy of PyTorch vs. Conch.
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag to indicate whether or not to print results in CSV format.
@@ -206,12 +206,12 @@ def main(
     )
 
     if not torch.allclose(output_vllm, output_conch, atol=absolute_tolerance):
-        print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)
+        print(f"WARNING: Reference and Conch results differ! (atol={absolute_tolerance})", file=sys.stderr)
         print(f"Output max diff: {(output_conch - output_vllm).abs().max().item()}", file=sys.stderr)
 
         if verbose:
             print(f"Reference output: {output_vllm}", file=sys.stderr)
-            print(f"Triton output: {output_conch}", file=sys.stderr)
+            print(f"Conch output: {output_conch}", file=sys.stderr)
     else:
         print(f"Results matched with atol={absolute_tolerance} :)", file=sys.stderr)
 
@@ -228,12 +228,9 @@ def main(
         ),
         tag="Baseline",
         metadata=metadata,
-        num_iterations=num_iterations,
-        num_warmup_iterations=num_warmup_iterations,
-        device=query.device,
     )
 
-    triton_result = benchmark_it(
+    conch_result = benchmark_it(
         lambda: paged_attention(
             query,
             key_cache,
@@ -247,16 +244,13 @@ def main(
             k_scale=k_scale,
             v_scale=v_scale,
         ),
-        tag="Triton",
+        tag="Conch",
         metadata=metadata,
-        num_iterations=num_iterations,
-        num_warmup_iterations=num_warmup_iterations,
-        device=query.device,
     )
 
     # Print results
-    triton_result.print_parameters(csv=csv)
-    triton_result.print_results(csv=csv)
+    conch_result.print_parameters(csv=csv)
+    conch_result.print_results(csv=csv)
     baseline_result.print_results(csv=csv)
 
 
