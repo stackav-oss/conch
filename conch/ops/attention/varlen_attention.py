@@ -269,15 +269,15 @@ def varlen_attention(
 
     if metadata.num_kv_splits > 1:
         # Allocate additional memory for intermediate result (of shape (head_size,)) for each batch/kv split/query head
-        output_scratchpad = torch.zeros(
-            (metadata.total_num_q, metadata.num_kv_splits, metadata.num_query_heads, metadata.head_size),
+        output_scratchpad = torch.empty(
+            (metadata.num_kv_splits, metadata.total_num_q, metadata.num_query_heads, metadata.head_size),
             dtype=output.dtype,
             device=output.device,
         )
 
         # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/kv split/query head
-        lse_scratchpad = torch.zeros(
-            (metadata.total_num_q, metadata.num_kv_splits, metadata.num_query_heads),
+        lse_scratchpad = torch.empty(
+            (metadata.num_kv_splits, metadata.total_num_q, metadata.num_query_heads),
             dtype=output.dtype,
             device=output.device,
         )
