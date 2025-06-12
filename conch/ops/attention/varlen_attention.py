@@ -139,12 +139,13 @@ def _check_seqlen_size_compatibility(seq_lens: torch.Tensor, batch_size: int) ->
 
 
 def _determine_max_num_kv_splits(max_seqlen_q: int, max_seqlen_k: int, max_num_blocks_per_sequence: int) -> int:
-    # If we have any prefills, disable FlashDecoding/KV-splits
-    if max_seqlen_q > 1:
-        return 1
-
+    # If we have any prefills (max_seqlen_q > 1), disable FlashDecoding/KV-splits.
+    # If we have all decodes, only enable FlashDecoding if we have a long sequence (>=2048 tokens) and
+    # many cache blocks for each sequence (>=16 cache blocks for the longest sequence).
     # Note: this is a pretty basic heuristic, we could try and do something more sophisticated in the future
-    if max_seqlen_k >= 2048 and max_num_blocks_per_sequence >= 16:
+    if max_seqlen_q > 1 and max_seqlen_k >= 2048 and max_num_blocks_per_sequence >= 16:
+        # This number of KV splits affects the size of the scratchpad memory that we allocate,
+        # so cap the number of splits at 64 so that we don't allocate too much memory
         return min(max_num_blocks_per_sequence // 4, 64)
 
     return 1
