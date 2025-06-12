@@ -588,19 +588,17 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     )
 
 
-def _get_block_size(device_name: str) -> int:
+def _get_block_size() -> int:
     """Get block size for tuning purposes."""
-    if "MI300X" in device_name:
-        return 32
-
+    # Note: in the future we could specify different settings here based on the platform or autotune,
+    # but for simplicity right now we'll hardcode this block size because it gives good performance
+    # on A10, H100, and MI300X.
     return 32
 
 
 def _get_tuned_sizes(head_size_padded: int, query_group_size_padded: int, max_seqlen_q: int) -> tuple[int, int]:
     """Get tuned sizes for current device."""
-    device_name = current_platform.get_device_name()
-
-    block_size = _get_block_size(device_name)
+    block_size = _get_block_size()
 
     # If the head size grows too large then we want to limit how many queries we're chunking together
     small_head_size_limit: Final = 128
@@ -608,12 +606,12 @@ def _get_tuned_sizes(head_size_padded: int, query_group_size_padded: int, max_se
         block_size = block_size // 2
 
     # The "query chunk size" represents the number of queries that each kernel will process at a time.
-    query_chunk_size_stage1 = max(1, block_size // query_group_size_padded) if max_seqlen_q > 1 else 1
+    query_chunk_size = max(1, block_size // query_group_size_padded) if max_seqlen_q > 1 else 1
 
     # If we have all decodes, we need to make sure that we have at least a block size of 16 for tl.dot
     query_group_size_padded = query_group_size_padded if max_seqlen_q > 1 else max(16, query_group_size_padded)
 
-    return query_chunk_size_stage1, query_group_size_padded
+    return query_chunk_size, query_group_size_padded
 
 
 def varlen_attention_launcher(  # noqa: PLR0913
