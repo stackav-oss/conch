@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Final
 
 import torch
+import triton
 
 from conch.kernels.attention.varlen_attention import varlen_attention_launcher
 
@@ -137,29 +138,15 @@ def _check_seqlen_size_compatibility(seq_lens: torch.Tensor, batch_size: int) ->
         raise ValueError(msg)
 
 
-def _determine_max_num_kv_splits(max_seqlen_q: int, max_seqlen_k: int) -> int:
-    # If we have any prefills, disable FlashDecoding/KV-splits
-    if max_seqlen_q > 1:
-        return 1
-
+def _determine_max_num_kv_splits(max_seqlen_q: int, max_seqlen_k: int, max_num_blocks_per_sequence: int) -> int:
+    # If we have any prefills (max_seqlen_q > 1), disable FlashDecoding/KV-splits.
+    # If we have all decodes, only enable FlashDecoding if we have a long sequence (>=2048 tokens) and
+    # many cache blocks for each sequence (>=16 cache blocks for the longest sequence).
     # Note: this is a pretty basic heuristic, we could try and do something more sophisticated in the future
-    if max_seqlen_k > 8192:
-        return 64
-
-    if max_seqlen_k > 2048:
-        return 32
-
-    if max_seqlen_k > 1024:
-        return 16
-
-    if max_seqlen_k > 512:
-        return 8
-
-    if max_seqlen_k > 256:
-        return 4
-
-    if max_seqlen_k > 128:
-        return 2
+    if max_seqlen_q > 1 and max_seqlen_k >= 2048 and max_num_blocks_per_sequence >= 16:
+        # This number of KV splits affects the size of the scratchpad memory that we allocate,
+        # so cap the number of splits at 64 so that we don't allocate too much memory
+        return min(max_num_blocks_per_sequence // 4, 64)
 
     return 1
 
@@ -174,6 +161,7 @@ def _create_varlen_metadata(
     block_table: torch.Tensor,
     max_seqlen_q: int,
     max_seqlen_k: int,
+    strict: bool = False,
 ) -> VarlenAttentionMetadata:
     """Check size compatibility of tensors for variable-length attention and return metadata if successful.
 
@@ -185,25 +173,27 @@ def _create_varlen_metadata(
         cu_seqlens_q: Cumulative sequence length for query/output tensors, shape: (batch_size + 1).
         seq_lens: Sequence lengths tensor, shape: (batch_size,).
         block_table: Block tables tensor, shape: (batch_size, max_num_blocks_per_sequence).
+        strict: (Optional), Enable strict checking of tensor sizes.
 
     Raises:
-        ValueError if sizes are mismatched.
+        ValueError if strict checking is enabled and sizes are mismatched.
 
     Returns:
         Metadata dataclass holding information about tensor sizes.
     """
-    _check_output_query_size_compatibility(out, query)
-    total_num_q, num_query_heads, head_size = out.shape
-
-    _check_key_value_cache_size_compatibility(key_cache, value_cache, head_size, num_query_heads)
-    _, _, num_kv_heads, _ = key_cache.shape
+    if strict:
+        _check_output_query_size_compatibility(out, query)
 
     batch_size = cu_seqlens_q.shape[0] - 1
+    total_num_q, num_query_heads, head_size = out.shape
 
-    _check_block_table_size_compatibility(block_table, batch_size)
+    if strict:
+        _check_key_value_cache_size_compatibility(key_cache, value_cache, head_size, num_query_heads)
+        _check_block_table_size_compatibility(block_table, batch_size)
+        _check_seqlen_size_compatibility(seq_lens, batch_size)
+
+    _, cache_block_size, num_kv_heads, _ = key_cache.shape
     _, max_num_blocks_per_sequence = block_table.shape
-
-    _check_seqlen_size_compatibility(seq_lens, batch_size)
 
     return VarlenAttentionMetadata(
         batch_size=batch_size,
@@ -212,7 +202,9 @@ def _create_varlen_metadata(
         head_size=head_size,
         total_num_q=total_num_q,
         max_num_blocks_per_sequence=max_num_blocks_per_sequence,
-        num_kv_splits=_determine_max_num_kv_splits(max_seqlen_q, max_seqlen_k),
+        num_kv_splits=_determine_max_num_kv_splits(
+            max_seqlen_q, max_seqlen_k, triton.cdiv(max_seqlen_k, cache_block_size)
+        ),
     )
 
 
@@ -232,6 +224,7 @@ def varlen_attention(
     kv_cache_dtype: str = "auto",
     k_scale: torch.Tensor | None = None,
     v_scale: torch.Tensor | None = None,
+    strict: bool = False,
 ) -> torch.Tensor:
     """Varlen attention interface to verify sizes and launch kernel.
 
@@ -251,6 +244,7 @@ def varlen_attention(
         kv_cache_dtype: (Optional), String datatype of KV-cache.
         k_scale: (Optional), Scaling factor for K values.
         v_scale: (Optional), Scaling factor for V values.
+        strict: (Optional), Enable strict checking of tensor sizes.
     """
     # Allocate output tensor if not provided
     if output is None:
@@ -267,6 +261,7 @@ def varlen_attention(
         block_table,
         max_seqlen_q,
         max_seqlen_k,
+        strict=strict,
     )
 
     output_scratchpad = None
@@ -274,15 +269,15 @@ def varlen_attention(
 
     if metadata.num_kv_splits > 1:
         # Allocate additional memory for intermediate result (of shape (head_size,)) for each batch/kv split/query head
-        output_scratchpad = torch.zeros(
-            (metadata.total_num_q, metadata.num_kv_splits, metadata.num_query_heads, metadata.head_size),
+        output_scratchpad = torch.empty(
+            (metadata.num_kv_splits, metadata.total_num_q, metadata.num_query_heads, metadata.head_size),
             dtype=output.dtype,
             device=output.device,
         )
 
         # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/kv split/query head
-        lse_scratchpad = torch.zeros(
-            (metadata.total_num_q, metadata.num_kv_splits, metadata.num_query_heads),
+        lse_scratchpad = torch.empty(
+            (metadata.num_kv_splits, metadata.total_num_q, metadata.num_query_heads),
             dtype=output.dtype,
             device=output.device,
         )
@@ -305,6 +300,7 @@ def varlen_attention(
         kv_cache_dtype=kv_cache_dtype,
         k_scale=k_scale,
         v_scale=v_scale,
+        strict=strict,
     )
 
     return output

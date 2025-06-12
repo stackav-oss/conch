@@ -117,18 +117,18 @@ def _machete_quantize_and_pack(
     help="Flag for enabling running Machete (only on H100)",
 )
 @click.option(
-    "--num-iterations",
+    "--iteration-time-ms",
     required=False,
     type=int,
-    default=100,
-    help="Number of iterations",
+    default=10000,
+    help="Time in milliseconds to run benchmark",
 )
 @click.option(
-    "--num-warmup-iterations",
+    "--warmup-time-ms",
     required=False,
     type=int,
-    default=10,
-    help="Number of warmup iterations",
+    default=1000,
+    help="Time in milliseconds to warmup before recording times",
 )
 @click.option(
     "--verbose",
@@ -154,8 +154,8 @@ def main(
     input_dtype: str,
     weight_dtype: str,
     enable_machete: bool,
-    num_iterations: int,
-    num_warmup_iterations: int,
+    iteration_time_ms: int,
+    warmup_time_ms: int,
     verbose: bool,
     gpu: str,
     csv: bool,
@@ -169,8 +169,8 @@ def main(
         input_dtype: Data type of input matrices.
         weight_dtype: Data type of weight matrices.
         enable_machete: Enable running Machete kernel.
-        num_iterations: Number of iterations to record benchmark times for each impl.
-        num_warmup_iterations: Number of iterations to "warmup" each impl before recording benchmark times.
+        iteration_time_ms: Time in milliseconds to run the benchmark.
+        warmup_time_ms: Time in milliseconds to warmup before recording times.
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag for printing results in CSV format.
@@ -209,7 +209,7 @@ def main(
 
     output_ref = torch.matmul(a, w_ref)
 
-    triton_output = mixed_precision_gemm(
+    conch_output = mixed_precision_gemm(
         a, w_q, w_s, None, weight_dtype_vllm.size_bits, weight_dtype_vllm.bias, group_size
     )
 
@@ -234,13 +234,13 @@ def main(
                 print(f"Reference output: {output_ref}", file=sys.stderr)
                 print(f"Machete output: {machete_output}", file=sys.stderr)
 
-    if not torch.allclose(output_ref, triton_output, rtol=rtol, atol=atol):
-        print("WARNING: Reference and Triton results differ!", file=sys.stderr)
-        print(f"Output max diff: {(output_ref - triton_output).abs().max().item()}", file=sys.stderr)
+    if not torch.allclose(output_ref, conch_output, rtol=rtol, atol=atol):
+        print("WARNING: Reference and Conch results differ!", file=sys.stderr)
+        print(f"Output max diff: {(output_ref - conch_output).abs().max().item()}", file=sys.stderr)
 
         if verbose:
             print(f"Reference output: {output_ref}", file=sys.stderr)
-            print(f"Triton output: {triton_output}", file=sys.stderr)
+            print(f"Conch output: {conch_output}", file=sys.stderr)
     else:
         print("Results matched :)", file=sys.stderr)
 
@@ -255,27 +255,25 @@ def main(
             ),
             tag="Baseline",
             metadata=metadata,
-            num_iterations=num_iterations,
-            num_warmup_iterations=num_warmup_iterations,
-            device=device,
+            iteration_time_ms=iteration_time_ms,
+            warmup_time_ms=warmup_time_ms,
         )
     else:
         baseline_result = None
 
-    triton_result = benchmark_it(
+    conch_result = benchmark_it(
         lambda: mixed_precision_gemm(
             a, w_q, w_s, None, weight_dtype_vllm.size_bits, weight_dtype_vllm.bias, group_size
         ),
-        tag="Triton",
+        tag="Conch",
         metadata=metadata,
-        num_iterations=num_iterations,
-        num_warmup_iterations=num_warmup_iterations,
-        device=device,
+        iteration_time_ms=iteration_time_ms,
+        warmup_time_ms=warmup_time_ms,
     )
 
     # Print results
-    triton_result.print_parameters(csv=csv)
-    triton_result.print_results(csv=csv)
+    conch_result.print_parameters(csv=csv)
+    conch_result.print_results(csv=csv)
     if baseline_result is not None:
         baseline_result.print_results(csv=csv)
 

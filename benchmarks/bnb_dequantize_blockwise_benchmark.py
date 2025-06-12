@@ -10,8 +10,8 @@ import click
 import torch
 
 from conch import envs
-from conch.ops.quantization.bitsandbytes.functional import dequantize_4bit as triton_dequantize_4bit
-from conch.ops.quantization.bitsandbytes.functional import quantize_4bit as triton_quantize_4bit
+from conch.ops.quantization.bitsandbytes.functional import dequantize_4bit as conch_dequantize_4bit
+from conch.ops.quantization.bitsandbytes.functional import quantize_4bit as conch_quantize_4bit
 from conch.platforms import current_platform
 from conch.third_party.vllm.utils import seed_everything
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
@@ -80,18 +80,18 @@ def _to_torch_dtype(dtype_str: str) -> torch.dtype:
     help="Flag to enable BNB reference impl",
 )
 @click.option(
-    "--num-iterations",
+    "--iteration-time-ms",
     required=False,
     type=int,
-    default=100,
-    help="Number of iterations",
+    default=10000,
+    help="Time in milliseconds to run benchmark",
 )
 @click.option(
-    "--num-warmup-iterations",
+    "--warmup-time-ms",
     required=False,
     type=int,
-    default=10,
-    help="Number of warmup iterations",
+    default=1000,
+    help="Time in milliseconds to warmup before recording times",
 )
 @click.option(
     "--verbose",
@@ -118,13 +118,13 @@ def main(  # noqa: PLR0913
     quant_storage_dtype: str,
     compress_statistics: bool,
     enable_bnb: bool,
-    num_iterations: int,
-    num_warmup_iterations: int,
+    iteration_time_ms: int,
+    warmup_time_ms: int,
     verbose: bool,
     gpu: str,
     csv: bool,
 ) -> None:
-    """Benchmark Triton blockwise quantization kernel.
+    """Benchmark Conch blockwise quantization kernel.
 
     Args:
         blocksize: Size of quantized blocks.
@@ -134,8 +134,8 @@ def main(  # noqa: PLR0913
         quant_storage_dtype: Data type for storing quantized results.
         compress_statistics: Flag for double-quantization.
         enable_bnb: Flag to enable bitsandbytes reference implementation.
-        num_iterations: Number of iterations to record benchmark times for each impl.
-        num_warmup_iterations: Number of iterations to "warmup" each impl before recording benchmark times.
+        iteration_time_ms: Time in milliseconds to run benchmark.
+        warmup_time_ms: Time in milliseconds to warmup before recording times.
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag to indicate whether or not to print results in CSV format.
@@ -164,7 +164,7 @@ def main(  # noqa: PLR0913
         },
     )
 
-    triton_quantized, triton_state = triton_quantize_4bit(
+    conch_quantized, conch_state = conch_quantize_4bit(
         x,
         absmax=None,
         out=None,
@@ -174,9 +174,9 @@ def main(  # noqa: PLR0913
         quant_storage=quant_storage,
     )
 
-    triton_dequantized = triton_dequantize_4bit(
-        triton_quantized,
-        quant_state=triton_state,
+    conch_dequantized = conch_dequantize_4bit(
+        conch_quantized,
+        quant_state=conch_state,
         absmax=None,
         out=None,
         blocksize=blocksize,
@@ -201,13 +201,13 @@ def main(  # noqa: PLR0913
             quant_storage=quant_storage,
         )
 
-        if not torch.allclose(triton_quantized, bnb_quantized):
-            print("WARNING: Bitsandbytes and Triton results differ!", file=sys.stderr)
-            print(f"Output max diff: {(bnb_quantized - triton_quantized).abs().max().item()}", file=sys.stderr)
+        if not torch.allclose(conch_quantized, bnb_quantized):
+            print("WARNING: Bitsandbytes and Conch results differ!", file=sys.stderr)
+            print(f"Output max diff: {(bnb_quantized - conch_quantized).abs().max().item()}", file=sys.stderr)
 
             if verbose:
                 print(f"Torch output: {bnb_quantized}", file=sys.stderr)
-                print(f"Triton output: {triton_quantized}", file=sys.stderr)
+                print(f"Conch output: {conch_quantized}", file=sys.stderr)
 
         bnb_dequantized = bnb_dequantize_4bit(
             bnb_quantized,
@@ -218,13 +218,13 @@ def main(  # noqa: PLR0913
             quant_type=quant_type,
         )
 
-        if not torch.allclose(triton_dequantized, bnb_dequantized):
-            print("WARNING: Bitsandbytes and Triton results differ!", file=sys.stderr)
-            print(f"Output max diff: {(bnb_dequantized - triton_dequantized).abs().max().item()}", file=sys.stderr)
+        if not torch.allclose(conch_dequantized, bnb_dequantized):
+            print("WARNING: Bitsandbytes and Conch results differ!", file=sys.stderr)
+            print(f"Output max diff: {(bnb_dequantized - conch_dequantized).abs().max().item()}", file=sys.stderr)
 
             if verbose:
                 print(f"Torch output: {bnb_dequantized}", file=sys.stderr)
-                print(f"Triton output: {triton_dequantized}", file=sys.stderr)
+                print(f"Conch output: {conch_dequantized}", file=sys.stderr)
         else:
             print("Results matched :)", file=sys.stderr)
 
@@ -239,33 +239,31 @@ def main(  # noqa: PLR0913
             ),
             tag="Baseline",
             metadata=metadata,
-            num_iterations=num_iterations,
-            num_warmup_iterations=num_warmup_iterations,
-            device=device,
+            iteration_time_ms=iteration_time_ms,
+            warmup_time_ms=warmup_time_ms,
         )
     else:
         print("Skipping checking vs. reference bitsandbytes implementation...", file=sys.stderr)
         baseline_result = None
 
-    triton_result = benchmark_it(
-        lambda: triton_dequantize_4bit(
-            triton_quantized,
-            quant_state=triton_state,
+    conch_result = benchmark_it(
+        lambda: conch_dequantize_4bit(
+            conch_quantized,
+            quant_state=conch_state,
             absmax=None,
             out=None,
             blocksize=blocksize,
             quant_type=quant_type,
         ),
-        tag="Triton",
+        tag="Conch",
         metadata=metadata,
-        num_iterations=num_iterations,
-        num_warmup_iterations=num_warmup_iterations,
-        device=device,
+        iteration_time_ms=iteration_time_ms,
+        warmup_time_ms=warmup_time_ms,
     )
 
     # Print results
-    triton_result.print_parameters(csv=csv)
-    triton_result.print_results(csv=csv)
+    conch_result.print_parameters(csv=csv)
+    conch_result.print_results(csv=csv)
     if baseline_result is not None:
         baseline_result.print_results(csv=csv)
 

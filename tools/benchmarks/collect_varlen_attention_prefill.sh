@@ -3,25 +3,29 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Specify CONCH_BENCH_NO_CSV=1 to print results to stdout instead of file
+# Specify CONCH_ENABLE_VLLM=1 to compare against FlashAttnVarlenFunc
 
-# Need to enable vLLM to compare against vLLM CUDA implementation
-export CONCH_ENABLE_VLLM=1
+# Disable vLLM logging
 export VLLM_LOGGING_LEVEL=CRITICAL
 
 # Create output directory
-benchmark_name="reshape_and_cache"
+benchmark_name="varlen_attention_prefill"
 benchmark_dir="results/$benchmark_name"
 mkdir -p $benchmark_dir
 
-num_tokens=(
+sequence_lengths=(
   "32"
   "64"
   "128"
   "256"
   "512"
+  "1024"
+  "2048"
+  "4096"
+  "8192"
 )
 
-for tokens in ${num_tokens[@]}; do
+for seq_len in ${sequence_lengths[@]}; do
   output_file="$benchmark_dir/$seq_len.csv"
   csv_flag="--csv"
 
@@ -30,5 +34,6 @@ for tokens in ${num_tokens[@]}; do
     csv_flag=" "
   fi
 
-  python benchmarks/reshape_and_cache_benchmark.py $csv_flag --num-tokens $tokens > $output_file
+  # Llama-3.1-405B attention layer configuration
+  python benchmarks/varlen_attention_benchmark.py $csv_flag --batch-size 128 --num-query-heads 128 --num-kv-heads 8 --head-dim 128 --causal --seq-len $seq_len > $output_file
 done

@@ -1,7 +1,7 @@
 # Copyright 2025 Stack AV Co.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Triton silu_and_mul benchmark."""
+"""Conch silu_and_mul benchmark."""
 
 import sys
 from typing import Final
@@ -9,7 +9,7 @@ from typing import Final
 import click
 import torch
 
-from conch.ops.activation.silu_and_mul import silu_and_mul as silu_and_mul_triton
+from conch.ops.activation.silu_and_mul import silu_and_mul as silu_and_mul_conch
 from conch.platforms import current_platform
 from conch.reference.activation.silu_and_mul import silu_and_mul as silu_and_mul_reference
 from conch.third_party.vllm.utils import seed_everything
@@ -39,18 +39,18 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of tokens",
 )
 @click.option(
-    "--num-iterations",
+    "--iteration-time-ms",
     required=False,
     type=int,
-    default=100,
-    help="Number of iterations",
+    default=10000,
+    help="Time in milliseconds to run benchmark",
 )
 @click.option(
-    "--num-warmup-iterations",
+    "--warmup-time-ms",
     required=False,
     type=int,
-    default=10,
-    help="Number of warmup iterations",
+    default=1000,
+    help="Time in milliseconds to warmup before recording times",
 )
 @click.option(
     "--verbose",
@@ -73,20 +73,20 @@ def main(  # noqa: PLR0913
     dim: int,
     batch_size: int,
     num_tokens: int,
-    num_iterations: int,
-    num_warmup_iterations: int,
+    iteration_time_ms: int,
+    warmup_time_ms: int,
     verbose: bool,
     gpu: str,
     csv: bool,
 ) -> None:
-    """Benchmark Triton silu_and_mul op.
+    """Benchmark silu_and_mul op.
 
     Args:
         dim: Dimension of input/output.
         batch_size: Batch size.
         num_tokens: Number of tokens.
-        num_iterations: Number of iterations to record benchmark times for each impl
-        num_warmup_iterations: Number of iterations to "warmup" each impl before recording benchmark times
+        iteration_time_ms: Time in milliseconds to run benchmark.
+        warmup_time_ms: Time in milliseconds to warmup before recording times.
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag to indicate whether or not to print results in CSV format.
@@ -113,40 +113,38 @@ def main(  # noqa: PLR0913
     x = torch.randn(x_shape, dtype=dtype, device=device)
 
     ref_output = silu_and_mul_reference(x)
-    triton_output = silu_and_mul_triton(x)
+    conch_output = silu_and_mul_conch(x)
 
-    if not torch.allclose(ref_output, triton_output, atol=tolerance, rtol=tolerance):
-        print(f"WARNING: Reference and Triton results differ! (atol={tolerance}, rtol={tolerance})", file=sys.stderr)
-        print(f"Output max diff: {(ref_output - triton_output).abs().max().item()}", file=sys.stderr)
+    if not torch.allclose(ref_output, conch_output, atol=tolerance, rtol=tolerance):
+        print(f"WARNING: Reference and conch results differ! (atol={tolerance}, rtol={tolerance})", file=sys.stderr)
+        print(f"Output max diff: {(ref_output - conch_output).abs().max().item()}", file=sys.stderr)
 
         if verbose:
             print(f"Reference output: {ref_output}", file=sys.stderr)
-            print(f"Triton output: {triton_output}", file=sys.stderr)
+            print(f"Conch output: {conch_output}", file=sys.stderr)
     else:
         print(f"Results matched with atol={tolerance} and rtol={tolerance} :)", file=sys.stderr)
 
-    # Benchmark Reference vs. Triton implementations
+    # Benchmark Reference vs. conch implementations
     baseline_result = benchmark_it(
         lambda: silu_and_mul_reference(x),
         tag="Baseline",
         metadata=metadata,
-        num_iterations=num_iterations,
-        num_warmup_iterations=num_warmup_iterations,
-        device=device,
+        iteration_time_ms=iteration_time_ms,
+        warmup_time_ms=warmup_time_ms,
     )
 
-    triton_result = benchmark_it(
-        lambda: silu_and_mul_triton(x),
-        tag="Triton",
+    conch_result = benchmark_it(
+        lambda: silu_and_mul_conch(x),
+        tag="Conch",
         metadata=metadata,
-        num_iterations=num_iterations,
-        num_warmup_iterations=num_warmup_iterations,
-        device=device,
+        iteration_time_ms=iteration_time_ms,
+        warmup_time_ms=warmup_time_ms,
     )
 
     # Print results
-    triton_result.print_parameters(csv=csv)
-    triton_result.print_results(csv=csv)
+    conch_result.print_parameters(csv=csv)
+    conch_result.print_results(csv=csv)
     baseline_result.print_results(csv=csv)
 
 

@@ -1,7 +1,7 @@
 # Copyright 2025 Stack AV Co.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Triton rotary_embedding benchmark."""
+"""Conch rotary_embedding benchmark."""
 
 import sys
 from typing import Final
@@ -9,7 +9,7 @@ from typing import Final
 import click
 import torch
 
-from conch.ops.embedding.rotary_embedding import rotary_embedding as rotary_embedding_triton
+from conch.ops.embedding.rotary_embedding import rotary_embedding as rotary_embedding_conch
 from conch.platforms import current_platform
 from conch.reference.embedding.rotary_embedding import compute_cos_sin_cache
 from conch.reference.embedding.rotary_embedding import rotary_embedding as rotary_embedding_reference
@@ -39,18 +39,18 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of tokens",
 )
 @click.option(
-    "--num-iterations",
+    "--iteration-time-ms",
     required=False,
     type=int,
-    default=100,
-    help="Number of iterations",
+    default=10000,
+    help="Time in milliseconds to run benchmark",
 )
 @click.option(
-    "--num-warmup-iterations",
+    "--warmup-time-ms",
     required=False,
     type=int,
-    default=10,
-    help="Number of warmup iterations",
+    default=1000,
+    help="Time in milliseconds to warmup before recording times",
 )
 @click.option(
     "--absolute-tolerance",
@@ -80,22 +80,22 @@ def main(
     head_size: int,
     num_heads: int,
     num_tokens: int,
-    num_iterations: int,
-    num_warmup_iterations: int,
+    iteration_time_ms: int,
+    warmup_time_ms: int,
     absolute_tolerance: float,
     verbose: bool,
     gpu: str,
     csv: bool,
 ) -> None:
-    """Benchmark Triton RotaryEmbedding op.
+    """Benchmark Conch RotaryEmbedding op.
 
     Args:
         head_size: Head size.
         num_heads: Number of heads.
         num_tokens: Number of tokens.
-        num_iterations: Number of iterations to record benchmark times for each impl.
-        num_warmup_iterations: Number of iterations to "warmup" each impl before recording benchmark times.
-        absolute_tolerance: Absolute tolerance used to check accuracy of PyTorch vs. Triton.
+        iteration_time_ms: Time in milliseconds to run benchmark.
+        warmup_time_ms: Time in milliseconds to warmup before recording times.
+        absolute_tolerance: Absolute tolerance used to check accuracy of PyTorch vs. Conch.
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag for printing results in CSV format.
@@ -139,7 +139,7 @@ def main(
         is_neox_style=is_neox_style,
     )
 
-    query_triton, key_triton = rotary_embedding_triton(
+    query_conch, key_conch = rotary_embedding_conch(
         positions,
         query,
         key,
@@ -148,23 +148,23 @@ def main(
         is_neox=is_neox_style,
     )
 
-    if not torch.allclose(query_ref, query_triton, atol=absolute_tolerance):
-        print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)
-        print(f"Output max diff: {(query_triton - query_ref).abs().max().item()}", file=sys.stderr)
+    if not torch.allclose(query_ref, query_conch, atol=absolute_tolerance):
+        print(f"WARNING: Reference and Conch results differ! (atol={absolute_tolerance})", file=sys.stderr)
+        print(f"Output max diff: {(query_conch - query_ref).abs().max().item()}", file=sys.stderr)
 
         if verbose:
             print(f"Reference output: {query_ref}", file=sys.stderr)
-            print(f"Triton output: {query_triton}", file=sys.stderr)
+            print(f"Conch output: {query_conch}", file=sys.stderr)
     else:
         print(f"Query matched with atol={absolute_tolerance} :)", file=sys.stderr)
 
-    if not torch.allclose(key_ref, key_triton, atol=absolute_tolerance):
-        print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)
-        print(f"Output max diff: {(key_triton - key_ref).abs().max().item()}", file=sys.stderr)
+    if not torch.allclose(key_ref, key_conch, atol=absolute_tolerance):
+        print(f"WARNING: Reference and Conch results differ! (atol={absolute_tolerance})", file=sys.stderr)
+        print(f"Output max diff: {(key_conch - key_ref).abs().max().item()}", file=sys.stderr)
 
         if verbose:
             print(f"Reference output: {key_ref}", file=sys.stderr)
-            print(f"Triton output: {key_triton}", file=sys.stderr)
+            print(f"Conch output: {key_conch}", file=sys.stderr)
     else:
         print(f"Key matched with atol={absolute_tolerance} :)", file=sys.stderr)
 
@@ -180,12 +180,11 @@ def main(
         ),
         tag="Baseline",
         metadata=metadata,
-        num_iterations=num_iterations,
-        num_warmup_iterations=num_warmup_iterations,
-        device=device,
+        iteration_time_ms=iteration_time_ms,
+        warmup_time_ms=warmup_time_ms,
     )
-    triton_result = benchmark_it(
-        lambda: rotary_embedding_triton(
+    conch_result = benchmark_it(
+        lambda: rotary_embedding_conch(
             positions,
             query,
             key,
@@ -193,16 +192,15 @@ def main(
             cos_sin_cache,
             is_neox=is_neox_style,
         ),
-        tag="Triton",
+        tag="Conch",
         metadata=metadata,
-        num_iterations=num_iterations,
-        num_warmup_iterations=num_warmup_iterations,
-        device=device,
+        iteration_time_ms=iteration_time_ms,
+        warmup_time_ms=warmup_time_ms,
     )
 
     # Print results
-    triton_result.print_parameters(csv=csv)
-    triton_result.print_results(csv=csv)
+    conch_result.print_parameters(csv=csv)
+    conch_result.print_results(csv=csv)
     baseline_result.print_results(csv=csv)
 
 

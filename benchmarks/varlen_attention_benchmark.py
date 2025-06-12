@@ -1,7 +1,7 @@
 # Copyright 2025 Stack AV Co.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Triton varlen attention vs. FlashAttnVarlen benchmark."""
+"""Conch varlen attention vs. FlashAttnVarlen benchmark."""
 
 import sys
 from typing import Final
@@ -76,18 +76,18 @@ else:
     help="Flag for making all q_seqlens == 1",
 )
 @click.option(
-    "--num-iterations",
+    "--iteration-time-ms",
     required=False,
     type=int,
-    default=100,
-    help="Number of iterations",
+    default=10000,
+    help="Time in milliseconds to run benchmark",
 )
 @click.option(
-    "--num-warmup-iterations",
+    "--warmup-time-ms",
     required=False,
     type=int,
-    default=10,
-    help="Number of warmup iterations",
+    default=1000,
+    help="Time in milliseconds to warmup before recording times",
 )
 @click.option(
     "--absolute-tolerance",
@@ -122,14 +122,14 @@ def main(
     num_kv_heads: int,
     causal: bool,
     pure_decode: bool,
-    num_iterations: int,
-    num_warmup_iterations: int,
+    iteration_time_ms: int,
+    warmup_time_ms: int,
     absolute_tolerance: float,
     verbose: bool,
     gpu: str,
     csv: bool,
 ) -> None:
-    """Benchmark Triton PagedAttention.
+    """Benchmark VarlenAttention.
 
     Args:
         head_dim: Head dimension of input tensors.
@@ -140,9 +140,9 @@ def main(
         num_kv_heads: Number of attention kv heads.
         causal: Flag to toggle causal/non-causal attention.
         pure_decode: Flag for making all q_seqlens == 1.
-        num_iterations: Number of iterations to record benchmark times for each impl.
-        num_warmup_iterations: Number of iterations to "warmup" each impl before recording benchmark times.
-        absolute_tolerance: Absolute tolerance used to check accuracy of PyTorch vs. Triton.
+        iteration_time_ms: Time in milliseconds to run benchmark.
+        warmup_time_ms: Time in milliseconds to warmup before recording times.
+        absolute_tolerance: Absolute tolerance used to check accuracy of Conch.
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag to indicate whether or not to print results in CSV format.
@@ -235,12 +235,12 @@ def main(
         )
 
         if not torch.allclose(output_vllm, output_conch, atol=absolute_tolerance):
-            print(f"WARNING: Reference and Triton results differ! (atol={absolute_tolerance})", file=sys.stderr)
+            print(f"WARNING: Reference and Conch results differ! (atol={absolute_tolerance})", file=sys.stderr)
             print(f"Output max diff: {(output_conch - output_vllm).abs().max().item()}", file=sys.stderr)
 
             if verbose:
                 print(f"Reference output: {output_vllm}", file=sys.stderr)
-                print(f"Triton output: {output_conch}", file=sys.stderr)
+                print(f"Conch output: {output_conch}", file=sys.stderr)
         else:
             print(f"Results matched with atol={absolute_tolerance} :)", file=sys.stderr)
 
@@ -259,9 +259,8 @@ def main(
             ),
             tag="Baseline",
             metadata=metadata,
-            num_iterations=num_iterations,
-            num_warmup_iterations=num_warmup_iterations,
-            device=query.device,
+            iteration_time_ms=iteration_time_ms,
+            warmup_time_ms=warmup_time_ms,
         )
     else:
         print("Skipping checking vs. reference vLLM implementation...", file=sys.stderr)
@@ -291,14 +290,13 @@ def main(
             ),
             tag="vLLM Triton",
             metadata=metadata,
-            num_iterations=num_iterations,
-            num_warmup_iterations=num_warmup_iterations,
-            device=query.device,
+            iteration_time_ms=iteration_time_ms,
+            warmup_time_ms=warmup_time_ms,
         )
     else:
         vllm_triton_result = None
 
-    triton_result = benchmark_it(
+    conch_result = benchmark_it(
         lambda: varlen_attention(
             query=query,
             key_cache=key_cache,
@@ -312,16 +310,15 @@ def main(
             scale=scale,
             causal=causal,
         ),
-        tag="Triton",
+        tag="Conch",
         metadata=metadata,
-        num_iterations=num_iterations,
-        num_warmup_iterations=num_warmup_iterations,
-        device=query.device,
+        iteration_time_ms=iteration_time_ms,
+        warmup_time_ms=warmup_time_ms,
     )
 
     # Print results
-    triton_result.print_parameters(csv=csv)
-    triton_result.print_results(csv=csv)
+    conch_result.print_parameters(csv=csv)
+    conch_result.print_results(csv=csv)
     if baseline_result is not None:
         baseline_result.print_results(csv=csv)
     if vllm_triton_result is not None:

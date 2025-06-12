@@ -23,14 +23,14 @@ def _reshape_and_cache_kernel(
     # Strides of relevant tensors
     k_token_stride: int,
     k_head_stride: int,
-    k_head_element_stride: int,
+    k_head_element_stride: tl.constexpr,
     v_token_stride: int,
     v_head_stride: int,
-    v_head_element_stride: int,
+    v_head_element_stride: tl.constexpr,
     kv_cache_page_stride: int,
     kv_cache_block_stride: int,
     kv_cache_head_stride: int,
-    kv_cache_head_element_stride: int,
+    kv_cache_head_element_stride: tl.constexpr,
     # Scalars
     cache_block_size: int,
     # Constexprs
@@ -65,8 +65,6 @@ def _reshape_and_cache_kernel(
     """
     # What token is this program processing?
     token_index = tl.program_id(0)
-    # What head is this program processing?
-    head_index = tl.program_id(1)
 
     # Get index of slot for this token from mapping tensor
     slot_index = tl.load(slot_mapping_ptr + token_index)
@@ -75,10 +73,8 @@ def _reshape_and_cache_kernel(
     if slot_index < 0:
         return
 
-    # Calculate index of page (value in range(0, num_pages))
-    page_index = slot_index // cache_block_size
-    # Calculate entry index inside of a cache block/page for this slot (value in range(0, cache_block_size))
-    entry_index = slot_index % cache_block_size
+    # What head is this program processing?
+    head_index = tl.program_id(1)
 
     # Calculate offset into key/value tensors to get to the token for this program
     k_token_offset = token_index * k_token_stride
@@ -111,6 +107,11 @@ def _reshape_and_cache_kernel(
         key = key.to(fp8_dtype).to(key_cache_ptr.dtype.element_ty, bitcast=True)
         value = value.to(fp8_dtype).to(value_cache_ptr.dtype.element_ty, bitcast=True)
 
+    # Calculate index of page (value in range(0, num_pages))
+    page_index = slot_index // cache_block_size
+    # Calculate entry index inside of a cache block/page for this slot (value in range(0, cache_block_size))
+    entry_index = slot_index % cache_block_size
+
     # Calculate offset into key/value cache tensors to get to the cache block we're copying into
     kv_page_offset = page_index * kv_cache_page_stride
     # Calculate offset in a cache block to get to the entry for we're copying into
@@ -135,6 +136,7 @@ def reshape_and_cache_launcher(
     kv_cache_dtype: str = "auto",
     k_scale: torch.Tensor | None = None,
     v_scale: torch.Tensor | None = None,
+    strict: bool = False,
 ) -> None:
     """Launch reshape_and_cache kernel.
 
@@ -148,29 +150,30 @@ def reshape_and_cache_launcher(
         k_scale: Fp8 scaling factor for k.
         v_scale: Fp8 scaling factor for v.
     """
-    # Assume sizes already checked if calling launcher. For interface with strict size checking, call `reshape_and_cache()`.
+    # Assume sizes already checked if calling launcher. For interface with strict size checking, call `ops.reshape_and_cache()` with `strict=True`.
     _, num_kv_heads, head_size = key.shape
     num_pages, cache_block_size, _, _ = key_cache.shape
 
     # Note: In vLLM v1, slot_mapping is the only tensor that can be trusted to tell the correct number of tokens
     num_tokens = slot_mapping.size(0)
 
-    assert key.shape == value.shape  # noqa: S101
-    assert key_cache.shape == value_cache.shape  # noqa: S101
+    if strict:
+        assert key.shape == value.shape  # noqa: S101
+        assert key_cache.shape == value_cache.shape  # noqa: S101
 
-    assert key_cache.stride(0) == value_cache.stride(0)  # noqa: S101
-    assert key_cache.stride(1) == value_cache.stride(1)  # noqa: S101
-    assert key_cache.stride(2) == value_cache.stride(2)  # noqa: S101
-    assert key_cache.stride(3) == value_cache.stride(3)  # noqa: S101
-    assert key_cache.stride(3) == 1  # noqa: S101
+        assert key_cache.stride(0) == value_cache.stride(0)  # noqa: S101
+        assert key_cache.stride(1) == value_cache.stride(1)  # noqa: S101
+        assert key_cache.stride(2) == value_cache.stride(2)  # noqa: S101
+        assert key_cache.stride(3) == value_cache.stride(3)  # noqa: S101
+        assert key_cache.stride(3) == 1  # noqa: S101
 
-    assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"  # noqa: S101
-    assert head_size == triton.next_power_of_2(head_size), "Head size must be a power of two!"  # noqa: S101
+        assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"  # noqa: S101
+        assert head_size == triton.next_power_of_2(head_size), "Head size must be a power of two!"  # noqa: S101
 
     is_rocm: tl.constexpr = current_platform.is_amd()
     apply_fp8_scaling: tl.constexpr = kv_cache_dtype == "fp8" or kv_cache_dtype == "fp8_e4m3"
 
-    if apply_fp8_scaling:
+    if strict and apply_fp8_scaling:
         assert k_scale is not None  # noqa: S101
         assert v_scale is not None  # noqa: S101
         assert k_scale.numel() == 1  # noqa: S101
