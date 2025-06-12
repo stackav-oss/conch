@@ -53,6 +53,7 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     cxpr_is_softcap: tl.constexpr,
     cxpr_apply_fp8_scaling: tl.constexpr,
     cxpr_is_rocm: tl.constexpr,
+    cxpr_split_kv: tl.constexpr,
 ) -> None:
     """PagedAttention kernel: compute attention for a split block.
 
@@ -91,11 +92,11 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         cxpr_is_rocm: Whether or not we're on AMD.
     """
     # What batch is this program processing?
-    batch_index = tl.program_id(0)
+    batch_index = tl.program_id(2)
     # What "split" of the overall data (between 1 and N cache blocks) is this program processing?
-    split_index = tl.program_id(1)
+    split_index = tl.program_id(0)
     # What KV head is this program processing?
-    kv_head_index = tl.program_id(2)
+    kv_head_index = tl.program_id(1)
 
     # Get type that we should be using for accumulating results/intermediate calculations
     dtype = output_scratchpad_ptr.dtype.element_ty
@@ -264,8 +265,10 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     output /= l_i[:, None]
 
     # Calculate offsets to store the output for this head/batch/split
-    output_batch_index_offset = batch_index * output_scratchpad_batch_stride
-    output_split_index_offset = split_index * output_scratchpad_cache_block_stride
+    # output_batch_index_offset = batch_index * output_scratchpad_batch_stride
+    # output_split_index_offset = split_index * output_scratchpad_cache_block_stride
+    output_batch_index_offset = batch_index * output_scratchpad_cache_block_stride
+    output_split_index_offset = split_index * output_scratchpad_batch_stride
     output_head_index_offset = (kv_head_index * query_group_size) * output_scratchpad_head_stride
 
     # 2D block of shape (query_group_size_padded, head_size_padded)
@@ -275,23 +278,26 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Store output scratchpad results
     tl.store(output_scratchpad_ptr + output_offsets, output, mask=query_mask)
 
-    # Calculate scratchpad log(sum(exp))
-    # Note: log() only accepts fp32/fp64 arguments
-    lse = m_i + tl.log(l_i.to(tl.float32)).to(dtype)
+    if cxpr_split_kv:
+        # Calculate scratchpad log(sum(exp))
+        # Note: log() only accepts fp32/fp64 arguments
+        lse = m_i + tl.log(l_i.to(tl.float32)).to(dtype)
 
-    # Calculate offsets to store log-sum-exp for this head/batch/split
-    lse_scratch_batch_index_offset = batch_index * lse_scratchpad_batch_stride
-    lse_scratch_split_index_offset = split_index * lse_scratchpad_cache_block_stride
-    lse_scratch_head_index_offsets = kv_head_index * query_group_size
-    lse_scratch_offsets = (
-        lse_scratch_batch_index_offset
-        + lse_scratch_split_index_offset
-        + lse_scratch_head_index_offsets
-        + query_group_offsets
-    )
+        # Calculate offsets to store log-sum-exp for this head/batch/split
+        # lse_scratch_batch_index_offset = batch_index * lse_scratchpad_batch_stride
+        # lse_scratch_split_index_offset = split_index * lse_scratchpad_cache_block_stride
+        lse_scratch_batch_index_offset = batch_index * lse_scratchpad_cache_block_stride
+        lse_scratch_split_index_offset = split_index * lse_scratchpad_batch_stride
+        lse_scratch_head_index_offsets = kv_head_index * query_group_size
+        lse_scratch_offsets = (
+            lse_scratch_batch_index_offset
+            + lse_scratch_split_index_offset
+            + lse_scratch_head_index_offsets
+            + query_group_offsets
+        )
 
-    # Store lse scratchpad results
-    tl.store(lse_scratchpad_ptr + lse_scratch_offsets, lse, mask=query_group_mask)
+        # Store lse scratchpad results
+        tl.store(lse_scratchpad_ptr + lse_scratch_offsets, lse, mask=query_group_mask)
 
 
 @triton.jit  # type: ignore[misc]
@@ -337,9 +343,9 @@ def _paged_attention_reduce_splits_kernel(  # noqa: PLR0913
         cxpr_head_size_padded: The head size of the attention layer padded to the next power of two.
     """
     # What batch is this program processing?
-    batch_index = tl.program_id(0)
+    batch_index = tl.program_id(1)
     # What head is this program processing?
-    head_index = tl.program_id(1)
+    head_index = tl.program_id(0)
 
     # Get type that we should be using for accumulating results/intermediate calculations
     dtype = output_ptr.dtype.element_ty
@@ -369,8 +375,10 @@ def _paged_attention_reduce_splits_kernel(  # noqa: PLR0913
     # Iterate through every cache block for the current sequence
     for split_index in range(num_splits_this_seq):
         # Calculate offsets to load the output scratchpad for this head/batch/cache block
-        output_scratchpad_batch_index_offset = batch_index * output_scratchpad_batch_stride
-        output_scratchpad_split_index_offset = split_index * output_scratchpad_split_stride
+        # output_scratchpad_batch_index_offset = batch_index * output_scratchpad_batch_stride
+        # output_scratchpad_split_index_offset = split_index * output_scratchpad_split_stride
+        output_scratchpad_split_index_offset = split_index * output_scratchpad_batch_stride
+        output_scratchpad_batch_index_offset = batch_index * output_scratchpad_split_stride
         output_scratchpad_head_index_offset = head_index * output_scratchpad_head_stride
         output_scratchpad_offsets = (
             output_scratchpad_batch_index_offset
@@ -383,8 +391,10 @@ def _paged_attention_reduce_splits_kernel(  # noqa: PLR0913
         block_output = tl.load(output_scratchpad_ptr + output_scratchpad_offsets, mask=head_mask, other=0.0)
 
         # Calculate offsets to store log-sum-exp for this head/batch/cache block
-        lse_scratch_batch_index_offset = batch_index * lse_scratchpad_batch_stride
-        lse_scratch_split_index_offset = split_index * lse_scratchpad_split_stride
+        # lse_scratch_batch_index_offset = batch_index * lse_scratchpad_batch_stride
+        # lse_scratch_split_index_offset = split_index * lse_scratchpad_split_stride
+        lse_scratch_batch_index_offset = batch_index * lse_scratchpad_split_stride
+        lse_scratch_split_index_offset = split_index * lse_scratchpad_batch_stride
         # Load log-sum-exp for this cache block, shape -> scalar
         block_lse = tl.load(
             lse_scratchpad_ptr + lse_scratch_batch_index_offset + lse_scratch_split_index_offset + head_index
@@ -426,8 +436,8 @@ def paged_attention_launcher(  # noqa: PLR0913
     query: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
-    output_scratchpad: torch.Tensor,
-    lse_scratchpad: torch.Tensor,
+    output_scratchpad: torch.Tensor | None,
+    lse_scratchpad: torch.Tensor | None,
     block_table: torch.Tensor,
     seq_lens: torch.Tensor,
     scale: float | None = None,
@@ -435,6 +445,7 @@ def paged_attention_launcher(  # noqa: PLR0913
     kv_cache_dtype: str = "auto",
     k_scale: torch.Tensor | None = None,
     v_scale: torch.Tensor | None = None,
+    strict: bool = False,
 ) -> None:
     """PagedAttention kernel launcher.
 
@@ -453,28 +464,31 @@ def paged_attention_launcher(  # noqa: PLR0913
         k_scale: Fp8 scaling factor for k.
         v_scale: Fp8 scaling factor for v.
     """
-    assert query.shape == out.shape  # noqa: S101
-    assert key_cache.shape == value_cache.shape  # noqa: S101
-    assert key_cache.stride(0) == value_cache.stride(0)  # noqa: S101
-    assert key_cache.stride(1) == value_cache.stride(1)  # noqa: S101
-    assert key_cache.stride(2) == value_cache.stride(2)  # noqa: S101
-    assert key_cache.stride(3) == value_cache.stride(3)  # noqa: S101
-    assert key_cache.stride(3) == 1  # noqa: S101
-    assert softcap >= 0.0  # noqa: S101
+    if strict:
+        assert query.shape == out.shape  # noqa: S101
+        assert key_cache.shape == value_cache.shape  # noqa: S101
+        assert key_cache.stride(0) == value_cache.stride(0)  # noqa: S101
+        assert key_cache.stride(1) == value_cache.stride(1)  # noqa: S101
+        assert key_cache.stride(2) == value_cache.stride(2)  # noqa: S101
+        assert key_cache.stride(3) == value_cache.stride(3)  # noqa: S101
+        assert key_cache.stride(3) == 1  # noqa: S101
+        assert softcap >= 0.0  # noqa: S101
 
-    allowed_in_out_dtypes = [torch.float32, torch.float16, torch.bfloat16]
-    assert query.dtype in allowed_in_out_dtypes  # noqa: S101
-    assert out.dtype == query.dtype  # noqa: S101
-    assert output_scratchpad.dtype == query.dtype  # noqa: S101
-    assert lse_scratchpad.dtype == query.dtype  # noqa: S101
+        allowed_in_out_dtypes = [torch.float32, torch.float16, torch.bfloat16]
+        assert query.dtype in allowed_in_out_dtypes  # noqa: S101
+        assert out.dtype == query.dtype  # noqa: S101
+        assert output_scratchpad.dtype == query.dtype  # noqa: S101
+        assert lse_scratchpad.dtype == query.dtype  # noqa: S101
 
     # Perform unchecked size accesses, assume has already been checked
     batch_size, num_query_heads, head_size = out.shape
     num_cache_blocks, cache_block_size, num_kv_heads, _ = key_cache.shape
     _, max_num_blocks_per_sequence = block_table.shape
-    _, max_num_splits, _, _ = output_scratchpad.shape
+    max_num_splits = output_scratchpad.size(1) if output_scratchpad is not None else 1
+    # _, max_num_splits, _, _ = output_scratchpad.shape
 
-    assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"  # noqa: S101
+    if strict:
+        assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"  # noqa: S101
 
     # Need sizes to be constexpr in order to reshape tensors in kernel
     cxpr_cache_block_size: tl.constexpr = cache_block_size
@@ -504,7 +518,7 @@ def paged_attention_launcher(  # noqa: PLR0913
     if scale is None:
         scale = float(1.0 / (head_size**0.5))
 
-    if cxpr_apply_fp8_scaling:
+    if strict and cxpr_apply_fp8_scaling:
         assert k_scale is not None  # noqa: S101
         assert v_scale is not None  # noqa: S101
         assert k_scale.numel() == 1  # noqa: S101
@@ -513,12 +527,13 @@ def paged_attention_launcher(  # noqa: PLR0913
     # For computing attention for split block (stage 1): parallelize over batches, cache blocks, and KV heads.
     # Note: if the number of cache blocks in a sequence is very large, it is more efficient to handle multiple blocks
     # in one launch of the stage 1 kernel to reduce the overhead of reduction
-    stage1_grid = (batch_size, num_splits, num_kv_heads)
+    # stage1_grid = (batch_size, num_splits, num_kv_heads)
+    stage1_grid = (num_splits, num_kv_heads, batch_size)
 
     # Launch stage 1 kernel
     _paged_attention_compute_splits_kernel[stage1_grid](
         # Relevant tensors
-        output_scratchpad,
+        output_scratchpad if num_splits > 1 else output,
         lse_scratchpad,
         query,
         key_cache,
@@ -535,11 +550,11 @@ def paged_attention_launcher(  # noqa: PLR0913
         head_size,
         query_group_size,
         # Strides of relevant tensors
-        output_scratchpad.stride(0),
-        output_scratchpad.stride(1),
-        output_scratchpad.stride(2),
-        lse_scratchpad.stride(0),
-        lse_scratchpad.stride(1),
+        output_scratchpad.stride(0) if num_splits > 1 else output.stride(0),
+        output_scratchpad.stride(1) if num_splits > 1 else output.stride(1),
+        output_scratchpad.stride(2) if num_splits > 1 else output.stride(2),
+        lse_scratchpad.stride(0) if num_splits > 1 else 1,
+        lse_scratchpad.stride(1) if num_splits > 1 else 1,
         query.stride(0),
         query.stride(1),
         key_cache.stride(0),
@@ -554,31 +569,34 @@ def paged_attention_launcher(  # noqa: PLR0913
         cxpr_is_softcap,
         cxpr_apply_fp8_scaling,
         cxpr_is_rocm,
+        cxpr_split_kv=(num_splits > 1),
     )
 
-    # For reducing over splits (stage 2): parallelize over batches and query heads
-    stage2_grid = (batch_size, num_query_heads)
+    if num_splits > 1:
+        # For reducing over splits (stage 2): parallelize over batches and query heads
+        # stage2_grid = (batch_size, num_query_heads)
+        stage2_grid = (num_query_heads, batch_size)
 
-    # Launch stage 2 kernel
-    _paged_attention_reduce_splits_kernel[stage2_grid](
-        # Relevant tensors
-        out,
-        output_scratchpad,
-        lse_scratchpad,
-        seq_lens,
-        # Scalars
-        num_cache_blocks_per_split,
-        # Sizes of relevant tensors
-        head_size,
-        # Strides of relevant tensors
-        out.stride(0),
-        out.stride(1),
-        output_scratchpad.stride(0),
-        output_scratchpad.stride(1),
-        output_scratchpad.stride(2),
-        lse_scratchpad.stride(0),
-        lse_scratchpad.stride(1),
-        # Constexpr sizes
-        cxpr_cache_block_size,
-        cxpr_head_size_padded,
-    )
+        # Launch stage 2 kernel
+        _paged_attention_reduce_splits_kernel[stage2_grid](
+            # Relevant tensors
+            out,
+            output_scratchpad,
+            lse_scratchpad,
+            seq_lens,
+            # Scalars
+            num_cache_blocks_per_split,
+            # Sizes of relevant tensors
+            head_size,
+            # Strides of relevant tensors
+            out.stride(0),
+            out.stride(1),
+            output_scratchpad.stride(0),
+            output_scratchpad.stride(1),
+            output_scratchpad.stride(2),
+            lse_scratchpad.stride(0),
+            lse_scratchpad.stride(1),
+            # Constexpr sizes
+            cxpr_cache_block_size,
+            cxpr_head_size_padded,
+        )

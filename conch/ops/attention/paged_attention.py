@@ -102,23 +102,25 @@ def _check_block_table_size_compatibility(block_table: torch.Tensor, batch_size:
 
 def _determine_max_num_kv_splits(max_seqlen_k: int) -> int:
     # Note: this is a pretty basic heuristic, we could try and do something more sophisticated in the future
-    if max_seqlen_k > 8192:
-        return 64
+    # if max_seqlen_k > 8192:
+    #     return 64
 
-    if max_seqlen_k > 2048:
+    # if max_seqlen_k > 2048:
+    #     return 32
+
+    # if max_seqlen_k > 1024:
+    #     return 16
+
+    # if max_seqlen_k > 512:
+    #     return 8
+
+    # if max_seqlen_k > 256:
+    #     return 4
+
+    # if max_seqlen_k > 128:
+    #     return 2
+    if max_seqlen_k >= 2048:
         return 32
-
-    if max_seqlen_k > 1024:
-        return 16
-
-    if max_seqlen_k > 512:
-        return 8
-
-    if max_seqlen_k > 256:
-        return 4
-
-    if max_seqlen_k > 128:
-        return 2
 
     return 1
 
@@ -129,6 +131,7 @@ def _check_size_compatibility(
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
     block_table: torch.Tensor,
+    strict: bool = False,
 ) -> PagedAttentionMetadata:
     """Check size compatibility of tensors for PagedAttention and return Metadata if successful.
 
@@ -145,13 +148,16 @@ def _check_size_compatibility(
     Returns:
         Metadata dataclass holding information about tensor sizes.
     """
-    _check_output_query_size_compatibility(out, query)
+    if strict:
+        _check_output_query_size_compatibility(out, query)
+
     batch_size, num_query_heads, head_size = out.shape
 
-    _check_kv_cache_size_compatibility(key_cache, value_cache, head_size)
-    num_cache_blocks, cache_block_size, num_kv_heads, _ = key_cache.shape
+    if strict:
+        _check_kv_cache_size_compatibility(key_cache, value_cache, head_size)
+        _check_block_table_size_compatibility(block_table, batch_size)
 
-    _check_block_table_size_compatibility(block_table, batch_size)
+    num_cache_blocks, cache_block_size, num_kv_heads, _ = key_cache.shape
     _, max_num_blocks_per_sequence = block_table.shape
 
     return PagedAttentionMetadata(
@@ -177,6 +183,7 @@ def paged_attention(
     kv_cache_dtype: str = "auto",
     k_scale: torch.Tensor | None = None,
     v_scale: torch.Tensor | None = None,
+    strict: bool = False,
 ) -> torch.Tensor:
     """PagedAttention interface to verify sizes and launch kernel.
 
@@ -198,23 +205,27 @@ def paged_attention(
         output = torch.zeros_like(query, device=query.device, dtype=query.dtype)
 
     # Check sizes of input tensors
-    metadata = _check_size_compatibility(output, query, key_cache, value_cache, block_table)
+    metadata = _check_size_compatibility(output, query, key_cache, value_cache, block_table, strict=strict)
 
-    # Note: we could allocate this scratch outside of this function so that we could reuse it. vLLM allocates the scratch memory inline like this
+    output_scratchpad = None
+    lse_scratchpad = None
 
-    # Allocate additional memory for intermediate result (of shape (head_size,)) for each batch/query head/cache block
-    output_scratchpad = torch.zeros(
-        (metadata.batch_size, metadata.max_num_splits, metadata.num_query_heads, metadata.head_size),
-        dtype=output.dtype,
-        device=output.device,
-    )
+    if metadata.max_num_splits > 1:
+        # Note: we could allocate this scratch outside of this function so that we could reuse it. vLLM allocates the scratch memory inline like this
 
-    # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/query head/cache block
-    lse_scratchpad = torch.zeros(
-        (metadata.batch_size, metadata.max_num_splits, metadata.num_query_heads),
-        dtype=output.dtype,
-        device=output.device,
-    )
+        # Allocate additional memory for intermediate result (of shape (head_size,)) for each batch/query head/cache block
+        output_scratchpad = torch.empty(
+            (metadata.max_num_splits, metadata.batch_size, metadata.num_query_heads, metadata.head_size),
+            dtype=output.dtype,
+            device=output.device,
+        )
+
+        # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/query head/cache block
+        lse_scratchpad = torch.empty(
+            (metadata.max_num_splits, metadata.batch_size, metadata.num_query_heads),
+            dtype=output.dtype,
+            device=output.device,
+        )
 
     paged_attention_launcher(
         output,
@@ -230,6 +241,7 @@ def paged_attention(
         kv_cache_dtype,
         k_scale,
         v_scale,
+        strict=strict,
     )
 
     return output
