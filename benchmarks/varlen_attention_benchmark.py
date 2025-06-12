@@ -27,14 +27,14 @@ else:
     "--head-dim",
     required=True,
     type=int,
-    default=256,
+    default=128,
     help="Head dimension",
 )
 @click.option(
     "--seq-len",
     required=True,
     type=int,
-    default=1024,
+    default=512,
     help="Sequence length (for k/v)",
 )
 @click.option(
@@ -48,21 +48,21 @@ else:
     "--batch-size",
     required=False,
     type=int,
-    default=10,
+    default=64,
     help="Batch size",
 )
 @click.option(
     "--num-query-heads",
     required=False,
     type=int,
-    default=8,
+    default=32,
     help="Number of query heads",
 )
 @click.option(
     "--num-kv-heads",
     required=False,
     type=int,
-    default=4,
+    default=8,
     help="Number of kv heads",
 )
 @click.option(

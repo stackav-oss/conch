@@ -24,6 +24,7 @@ _TABLE_OP_NAME_TO_BENCHMARK: Final = {
     "GeLU, Tanh, and Mul": "gelu_tanh_and_mul_benchmark",
     "SiLU and Mul": "silu_and_mul_benchmark",
     "Paged Attention": "paged_attention_vs_flash_benchmark",
+    "Varlen Attention": "varlen_attention_benchmark",
     "Rotary Embedding": "rotary_embedding_benchmark",
     "RMS Norm (Gemma-style)": "gemma_rms_norm_benchmark",
     "RMS Norm (Llama-style)": "rms_norm_benchmark",
@@ -43,6 +44,11 @@ _DEVICE_SPECIFIC_BLACKLIST: Final = {
         "mixed_precision_gemm_benchmark",
     ],
     "unknown": [],
+}
+
+# Add any extra flags for each benchmark here
+_EXTRA_BENCHMARK_FLAGS: Final = {
+    "varlen_attention_benchmark": ["--causal"],
 }
 
 
@@ -90,9 +96,12 @@ def main(results_directory: Path, use_cached_results: bool) -> None:
             # Run benchmark and redirect output
             print(f"Running benchmark for {op_name}...")
 
+            # Some benchmark args are flags to enable things that default false, so we add any per-benchmark here
+            extra_flags = _EXTRA_BENCHMARK_FLAGS[benchmark_name] if benchmark_name in _EXTRA_BENCHMARK_FLAGS else []
+
             with results_csv.open("w") as results_file:
                 run(
-                    ["python", f"benchmarks/{benchmark_name}.py", "--csv"],
+                    ["python", f"benchmarks/{benchmark_name}.py", "--csv"] + extra_flags,
                     check=True,
                     stdout=results_file,
                     env=os.environ,

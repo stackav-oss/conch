@@ -26,7 +26,7 @@ else:
     "--head-dim",
     required=True,
     type=int,
-    default=256,
+    default=128,
     help="Head dimension",
 )
 @click.option(
@@ -47,14 +47,14 @@ else:
     "--batch-size",
     required=False,
     type=int,
-    default=4,
+    default=128,
     help="Batch size",
 )
 @click.option(
     "--num-query-heads",
     required=False,
     type=int,
-    default=8,
+    default=32,
     help="Number of query heads",
 )
 @click.option(
