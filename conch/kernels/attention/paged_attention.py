@@ -17,8 +17,8 @@ from conch.platforms import current_platform
 @triton.jit  # type: ignore[misc]
 def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Pointers to tensors
-    output_scratchpad_ptr: tl.tensor,  # (batch_size, max_num_blocks_per_sequence, num_query_heads, head_size)
-    lse_scratchpad_ptr: tl.tensor,  # (batch_size, max_num_blocks_per_sequence, num_query_heads)
+    output_scratchpad_ptr: tl.tensor,  # (max_num_splits, batch_size, num_query_heads, head_size)
+    lse_scratchpad_ptr: tl.tensor,  # (max_num_splits, batch_size, num_query_heads)
     query_ptr: tl.tensor,  # (batch_size, num_query_heads, head_size)
     key_cache_ptr: tl.tensor,  # (num_cache_blocks, cache_block_size, num_kv_heads, head_size)
     value_cache_ptr: tl.tensor,  # (num_cache_blocks, cache_block_size, num_kv_heads, head_size)
@@ -34,11 +34,11 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     head_size: int,  # output.shape[3]
     query_group_size: int,  # num_query_heads // num_kv_heads
     # Strides for tensors above
-    output_scratchpad_batch_stride: int,  # output_scratchpad.stride(0)
-    output_scratchpad_cache_block_stride: int,  # output_scratchpad.stride(1)
+    output_scratchpad_split_stride: int,  # output_scratchpad.stride(0)
+    output_scratchpad_batch_stride: int,  # output_scratchpad.stride(1)
     output_scratchpad_head_stride: int,  # output_scratchpad.stride(2)
-    lse_scratchpad_batch_stride: int,  # lse_scratchpad.stride(0)
-    lse_scratchpad_cache_block_stride: int,  # lse_scratchpad.stride(1)
+    lse_scratchpad_split_stride: int,  # lse_scratchpad.stride(0)
+    lse_scratchpad_batch_stride: int,  # lse_scratchpad.stride(1)
     query_batch_stride: int,  # query.stride(0)
     query_head_stride: int,  # query.stride(1)
     kv_page_stride: int,  # key_cache.stride(0), same for key and value
@@ -58,8 +58,8 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     """PagedAttention kernel: compute attention for a split block.
 
     Args:
-        output_scratchpad_ptr: Pointer to tensor as scratchpad for output of each cache block, shape: (batch_size, max_num_blocks_per_sequence, num_query_heads, head_size).
-        lse_scratchpad_ptr: Pointer to tensor as scratchpad for log-sum-exp of each cache block, shape: (batch_size, max_num_blocks_per_sequence, num_query_heads).
+        output_scratchpad_ptr: Pointer to tensor as scratchpad for output of each cache block, shape: (max_num_splits, batch_size, num_query_heads, head_size).
+        lse_scratchpad_ptr: Pointer to tensor as scratchpad for log-sum-exp of each cache block, shape: (max_num_splits, batch_size, num_query_heads).
         query_ptr: Pointer to tensor storing the query, shape: (batch_size, num_query_heads, head_size).
         key_cache_ptr: Tensor with cached K values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
         value_cache_ptr: Tensor with cached V values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
@@ -72,11 +72,11 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         softcap: Logits softcap to apply.
         head_size: Actual head dim, not padded to power-of-two.
         query_group_size: The number of query heads to group together, not padded to power-of-two.
-        output_scratchpad_batch_stride: Stride of the output scratchpad tensor in the 0th dimension.
-        output_scratchpad_cache_block_stride: Stride of the output scratchpad tensor in the 1st dimension.
+        output_scratchpad_split_stride: Stride of the output scratchpad tensor in the 0th dimension.
+        output_scratchpad_batch_stride: Stride of the output scratchpad tensor in the 1st dimension.
         output_scratchpad_head_stride: Stride of the output scratchpad tensor in the 2nd dimension.
-        lse_scratchpad_batch_stride: Stride of the log-sum-exp scratchpad tensor in the 0th dimension.
-        lse_scratchpad_cache_block_stride: Stride of the log-sum-exp scratchpad tensor in the 1st dimension.
+        lse_scratchpad_split_stride: Stride of the log-sum-exp scratchpad tensor in the 0th dimension.
+        lse_scratchpad_batch_stride: Stride of the log-sum-exp scratchpad tensor in the 1st dimension.
         query_batch_stride: Stride of the query tensor in the 0th dimension.
         query_head_stride: Stride of the query tensor in the 1st dimension.
         kv_page_stride: Stride of the k/v tensors in the 0th dimension.
@@ -91,12 +91,12 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         cxpr_apply_fp8_scaling: Whether or not to apply FP8 scaling.
         cxpr_is_rocm: Whether or not we're on AMD.
     """
-    # What batch is this program processing?
-    batch_index = tl.program_id(2)
     # What "split" of the overall data (between 1 and N cache blocks) is this program processing?
     split_index = tl.program_id(0)
     # What KV head is this program processing?
     kv_head_index = tl.program_id(1)
+    # What batch is this program processing?
+    batch_index = tl.program_id(2)
 
     # Get type that we should be using for accumulating results/intermediate calculations
     dtype = output_scratchpad_ptr.dtype.element_ty
@@ -267,13 +267,13 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Calculate offsets to store the output for this head/batch/split
     # output_batch_index_offset = batch_index * output_scratchpad_batch_stride
     # output_split_index_offset = split_index * output_scratchpad_cache_block_stride
-    output_batch_index_offset = batch_index * output_scratchpad_cache_block_stride
-    output_split_index_offset = split_index * output_scratchpad_batch_stride
+    output_split_index_offset = split_index * output_scratchpad_split_stride
+    output_batch_index_offset = batch_index * output_scratchpad_batch_stride
     output_head_index_offset = (kv_head_index * query_group_size) * output_scratchpad_head_stride
 
     # 2D block of shape (query_group_size_padded, head_size_padded)
     scratch_offsets = query_group_offsets[:, None] * output_scratchpad_head_stride + head_offsets[None, :]
-    output_offsets = output_batch_index_offset + output_split_index_offset + output_head_index_offset + scratch_offsets
+    output_offsets = output_split_index_offset + output_batch_index_offset + output_head_index_offset + scratch_offsets
 
     # Store output scratchpad results
     tl.store(output_scratchpad_ptr + output_offsets, output, mask=query_mask)
@@ -286,12 +286,12 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         # Calculate offsets to store log-sum-exp for this head/batch/split
         # lse_scratch_batch_index_offset = batch_index * lse_scratchpad_batch_stride
         # lse_scratch_split_index_offset = split_index * lse_scratchpad_cache_block_stride
-        lse_scratch_batch_index_offset = batch_index * lse_scratchpad_cache_block_stride
-        lse_scratch_split_index_offset = split_index * lse_scratchpad_batch_stride
+        lse_scratch_split_index_offset = split_index * lse_scratchpad_split_stride
+        lse_scratch_batch_index_offset = batch_index * lse_scratchpad_batch_stride
         lse_scratch_head_index_offsets = kv_head_index * query_group_size
         lse_scratch_offsets = (
-            lse_scratch_batch_index_offset
-            + lse_scratch_split_index_offset
+            lse_scratch_split_index_offset
+            + lse_scratch_batch_index_offset
             + lse_scratch_head_index_offsets
             + query_group_offsets
         )
@@ -304,8 +304,8 @@ def _paged_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 def _paged_attention_reduce_splits_kernel(  # noqa: PLR0913
     # Pointers to tensors
     output_ptr: tl.tensor,  # (batch_size, num_query_heads, head_size)
-    output_scratchpad_ptr: tl.tensor,  # (batch_size, max_num_blocks_per_sequence, num_query_heads, head_size)
-    lse_scratchpad_ptr: tl.tensor,  # (batch_size, max_num_blocks_per_sequence, num_query_heads)
+    output_scratchpad_ptr: tl.tensor,  # (max_num_splits, batch_size, num_query_heads, head_size)
+    lse_scratchpad_ptr: tl.tensor,  # (max_num_splits, batch_size, num_query_heads)
     seq_lens_ptr: tl.tensor,  # (batch_size, )
     # Scalars
     num_cache_blocks_per_split: int,
@@ -314,11 +314,11 @@ def _paged_attention_reduce_splits_kernel(  # noqa: PLR0913
     # Strides for tensors above
     output_batch_stride: int,  # output.stride(0)
     output_head_stride: int,  # output.stride(1)
-    output_scratchpad_batch_stride: int,  # output_scratchpad.stride(0)
-    output_scratchpad_split_stride: int,  # output_scratchpad.stride(1)
+    output_scratchpad_split_stride: int,  # output_scratchpad.stride(0)
+    output_scratchpad_batch_stride: int,  # output_scratchpad.stride(1)
     output_scratchpad_head_stride: int,  # output_scratchpad.stride(2)
-    lse_scratchpad_batch_stride: int,  # lse_scratchpad.stride(0)
-    lse_scratchpad_split_stride: int,  # lse_scratchpad.stride(1)
+    lse_scratchpad_split_stride: int,  # lse_scratchpad.stride(0)
+    lse_scratchpad_batch_stride: int,  # lse_scratchpad.stride(1)
     # Constexprs
     cxpr_cache_block_size: tl.constexpr,
     cxpr_head_size_padded: tl.constexpr,
@@ -327,25 +327,25 @@ def _paged_attention_reduce_splits_kernel(  # noqa: PLR0913
 
     Args:
         output_ptr: Pointer to tensor for final output, shape: (batch_size, num_query_heads, head_size).
-        output_scratchpad_ptr: Pointer to tensor as scratchpad for output of each cache block, shape: (batch_size, max_num_blocks_per_sequence, num_query_heads, head_size).
-        lse_scratchpad_ptr: Pointer to tensor as scratchpad for log-sum-exp of each cache block, shape: (batch_size, max_num_blocks_per_sequence, num_query_heads).
+        output_scratchpad_ptr: Pointer to tensor as scratchpad for output of each cache block, shape: (max_num_splits, batch_size, num_query_heads, head_size).
+        lse_scratchpad_ptr: Pointer to tensor as scratchpad for log-sum-exp of each cache block, shape: (max_num_splits, batch_size, num_query_heads).
         seq_lens_ptr: Pointer to tensor holding the current sequence length for each sequence in the batch, shape: (batch_size, ).
         num_cache_blocks_per_split: The maximum number of cache blocks each split will process.
         head_size: Actual head dim, not padded to power-of-two.
         output_batch_stride: Stride of the output tensor in the 0th dimension.
         output_head_stride: Stride of the output tensor in the 1st dimension.
-        output_scratchpad_batch_stride: Stride of the output scratchpad tensor in the 0th dimension.
-        output_scratchpad_split_stride: Stride of the output scratchpad tensor in the 1st dimension.
+        output_scratchpad_split_stride: Stride of the output scratchpad tensor in the 0th dimension.
+        output_scratchpad_batch_stride: Stride of the output scratchpad tensor in the 1st dimension.
         output_scratchpad_head_stride: Stride of the output scratchpad tensor in the 2nd dimension.
-        lse_scratchpad_batch_stride: Stride of the log-sum-exp scratchpad tensor in the 0th dimension.
-        lse_scratchpad_split_stride: Stride of the log-sum-exp scratchpad tensor in the 1st dimension.
+        lse_scratchpad_split_stride: Stride of the log-sum-exp scratchpad tensor in the 0th dimension.
+        lse_scratchpad_batch_stride: Stride of the log-sum-exp scratchpad tensor in the 1st dimension.
         cxpr_cache_block_size: The size of the cache blocks (must be power of two!), as constexpr so that we can use for reshaping tensors.
         cxpr_head_size_padded: The head size of the attention layer padded to the next power of two.
     """
-    # What batch is this program processing?
-    batch_index = tl.program_id(1)
     # What head is this program processing?
     head_index = tl.program_id(0)
+    # What batch is this program processing?
+    batch_index = tl.program_id(1)
 
     # Get type that we should be using for accumulating results/intermediate calculations
     dtype = output_ptr.dtype.element_ty
@@ -375,14 +375,12 @@ def _paged_attention_reduce_splits_kernel(  # noqa: PLR0913
     # Iterate through every cache block for the current sequence
     for split_index in range(num_splits_this_seq):
         # Calculate offsets to load the output scratchpad for this head/batch/cache block
-        # output_scratchpad_batch_index_offset = batch_index * output_scratchpad_batch_stride
-        # output_scratchpad_split_index_offset = split_index * output_scratchpad_split_stride
-        output_scratchpad_split_index_offset = split_index * output_scratchpad_batch_stride
-        output_scratchpad_batch_index_offset = batch_index * output_scratchpad_split_stride
+        output_scratchpad_split_index_offset = split_index * output_scratchpad_split_stride
+        output_scratchpad_batch_index_offset = batch_index * output_scratchpad_batch_stride
         output_scratchpad_head_index_offset = head_index * output_scratchpad_head_stride
         output_scratchpad_offsets = (
-            output_scratchpad_batch_index_offset
-            + output_scratchpad_split_index_offset
+            output_scratchpad_split_index_offset
+            + output_scratchpad_batch_index_offset
             + output_scratchpad_head_index_offset
             + head_offsets
         )
@@ -391,13 +389,11 @@ def _paged_attention_reduce_splits_kernel(  # noqa: PLR0913
         block_output = tl.load(output_scratchpad_ptr + output_scratchpad_offsets, mask=head_mask, other=0.0)
 
         # Calculate offsets to store log-sum-exp for this head/batch/cache block
-        # lse_scratch_batch_index_offset = batch_index * lse_scratchpad_batch_stride
-        # lse_scratch_split_index_offset = split_index * lse_scratchpad_split_stride
-        lse_scratch_batch_index_offset = batch_index * lse_scratchpad_split_stride
-        lse_scratch_split_index_offset = split_index * lse_scratchpad_batch_stride
+        lse_scratch_split_index_offset = split_index * lse_scratchpad_split_stride
+        lse_scratch_batch_index_offset = batch_index * lse_scratchpad_batch_stride
         # Load log-sum-exp for this cache block, shape -> scalar
         block_lse = tl.load(
-            lse_scratchpad_ptr + lse_scratch_batch_index_offset + lse_scratch_split_index_offset + head_index
+            lse_scratchpad_ptr + lse_scratch_split_index_offset + lse_scratch_batch_index_offset + head_index
         )
 
         # Reduce running max lse
@@ -454,8 +450,8 @@ def paged_attention_launcher(  # noqa: PLR0913
         query: Query tensor, shape: (batch_size, num_heads, head_size).
         key_cache: Tensor with cached K values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
         value_cache: Tensor with cached V values, shape: (num_blocks, cache_block_size, num_kv_heads, head_size).
-        output_scratchpad: Tensor used as scratchpad to share cache block outputs between two stages, shape: (batch_size, max_num_blocks_per_sequence, num_query_heads, head_size)
-        lse_scratchpad: Tensor used as scratchpad to share cache block log-sum-exp between two stages, shape: (batch_size, max_num_blocks_per_sequence, num_query_heads)
+        output_scratchpad: Tensor used as scratchpad to share cache block outputs between two stages, shape: (max_num_splits, batch_size, num_query_heads, head_size)
+        lse_scratchpad: Tensor used as scratchpad to share cache block log-sum-exp between two stages, shape: (max_num_splits, batch_size, num_query_heads)
         block_table: Tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
         seq_lens: Tensor with the sequence length of each index in the batch, shape: (batch_size, ).
         scale: Scaling factor, 1/sqrt(head_size).
@@ -484,7 +480,7 @@ def paged_attention_launcher(  # noqa: PLR0913
     batch_size, num_query_heads, head_size = out.shape
     num_cache_blocks, cache_block_size, num_kv_heads, _ = key_cache.shape
     _, max_num_blocks_per_sequence = block_table.shape
-    max_num_splits = output_scratchpad.size(1) if output_scratchpad is not None else 1
+    max_num_splits = output_scratchpad.size(0) if output_scratchpad is not None else 1
     # _, max_num_splits, _, _ = output_scratchpad.shape
 
     if strict:
@@ -533,7 +529,7 @@ def paged_attention_launcher(  # noqa: PLR0913
     # Launch stage 1 kernel
     _paged_attention_compute_splits_kernel[stage1_grid](
         # Relevant tensors
-        output_scratchpad if num_splits > 1 else output,
+        output_scratchpad if num_splits > 1 else out,
         lse_scratchpad,
         query,
         key_cache,
@@ -550,11 +546,11 @@ def paged_attention_launcher(  # noqa: PLR0913
         head_size,
         query_group_size,
         # Strides of relevant tensors
-        output_scratchpad.stride(0) if num_splits > 1 else output.stride(0),
-        output_scratchpad.stride(1) if num_splits > 1 else output.stride(1),
-        output_scratchpad.stride(2) if num_splits > 1 else output.stride(2),
-        lse_scratchpad.stride(0) if num_splits > 1 else 1,
-        lse_scratchpad.stride(1) if num_splits > 1 else 1,
+        output_scratchpad.stride(0) if num_splits > 1 else 0,
+        output_scratchpad.stride(1) if num_splits > 1 else out.stride(0),
+        output_scratchpad.stride(2) if num_splits > 1 else out.stride(1),
+        lse_scratchpad.stride(0) if num_splits > 1 else 0,
+        lse_scratchpad.stride(1) if num_splits > 1 else 0,
         query.stride(0),
         query.stride(1),
         key_cache.stride(0),
