@@ -43,27 +43,30 @@ The goal of Conch is not to claim that our operations are faster than CUDA imple
 Our goal is to write Triton operations that are _as fast as_ the state-of-the-art CUDA implementations.
 This allows developers on any hardware platform (Nvidia, AMD, etc.) access to the same, performant kernels.
 
-Below is a table comparing the relative performance of our Triton kernels to CUDA baselines (on NVIDIA A10).
+Below is a table comparing the relative performance of our Triton kernels to CUDA baselines (on NVIDIA H100).
 The listed runtime is the median runtime from 10,000 iterations on our microbenchmarks.
 **Note**: it's difficult to express the performance of a kernel with a single number (performance will vary with input sizes, data types, etc.).
 We tried our best to choose representative parameters for a fair comparison.
 Most relevant parameters are specified via CLI parameters to the microbenchmarks (`benchmarks/`), so feel free to collect your own results based on your use case.
-CUDA runtimes collected via vLLM and bitsandbytes (`vllm==0.8.5` and `bitsandbytes==0.45.5`).
+CUDA runtimes collected via vLLM and bitsandbytes (`vllm==0.9.1` and `bitsandbytes==0.46.0`).
 
 | Operation | CUDA Runtime | Triton Runtime | Triton Speedup |
 | --- | --- | --- | --- |
-| GeLU, Tanh, and Mul | 2.835 ms | 2.851 ms | 0.99 |
-| SiLU and Mul | 0.260 ms | 0.209 ms | 1.24 |
-| Paged Attention | 0.374 ms | 0.344 ms | 1.09 |
-| Rotary Embedding | 0.579 ms | 0.600 ms | 0.96 |
-| RMS Norm (Gemma-style) | 1.392 ms | 0.141 ms | 9.87 |
-| RMS Norm (Llama-style) | 0.117 ms | 0.072 ms | 1.63 |
-| bitsandbytes: Dequantize | 0.175 ms | 10.950 ms | 0.02 |
-| bitsandbytes: Quantize | 0.671 ms | 12.667 ms | 0.05 |
-| Int8 Static Quantization | 0.167 ms | 0.164 ms | 1.02 |
-| Scaled GEMM [Int8 x BF16] | 2.130 ms | 4.441 ms | 0.48 |
-| vLLM: Copy Blocks | 8.550 ms | 9.933 ms | 0.86 |
-| vLLM: Reshape and Cache | 0.245 ms | 0.024 ms | 10.21 |
+| GeLU, Tanh, and Mul | 0.722 ms | 0.465 ms | 1.55 |
+| SiLU and Mul | 0.710 ms | 0.046 ms | 15.43 |
+| Paged Attention | 0.740 ms | 0.803 ms | 0.92 |
+| Varlen Attention | 0.360 ms | 0.735 ms | 0.49 |
+| Rotary Embedding | 0.107 ms | 0.103 ms | 1.04 |
+| RMS Norm (Gemma-style) | 2.320 ms | 0.029 ms | 80.00 |
+| RMS Norm (Llama-style) | 0.042 ms | 0.017 ms | 2.47 |
+| bitsandbytes: Dequantize | 0.073 ms | 5.373 ms | 0.01 |
+| bitsandbytes: Quantize | 0.569 ms | 5.511 ms | 0.10 |
+| FP8 Static Quantization | 0.025 ms | 0.033 ms | 0.76 |
+| Int8 Static Quantization | 0.056 ms | 0.033 ms | 1.70 |
+| Mixed-precision GEMM [Int4 x FP16] | 0.500 ms | 1.656 ms | 0.30 |
+| Scaled GEMM [Int8 x BF16] | 0.206 ms | 0.273 ms | 0.75 |
+| vLLM: Copy Blocks | 2.249 ms | 1.818 ms | 1.24 |
+| vLLM: Reshape and Cache | 0.056 ms | 0.021 ms | 2.67 |
 
 For additional analysis of kernel performance, check out our [performance docs](./docs/performance/).
 
