@@ -37,10 +37,8 @@ def _reshape_and_cache_pytorch_ref(
         block_idx = block_indicies_lst[i]
         block_offset = block_offsets_lst[i]
         if kv_cache_dtype == "fp8":
-            key_cache[block_idx, :, :, block_offset, :] = (
-                (reshaped_key[i] * k_scale_scalar).to(fp8_dtype).view(torch.uint8)
-            )
-            value_cache[block_idx, :, :, block_offset] = (value[i] * v_scale_scalar).to(fp8_dtype).view(torch.uint8)
+            key_cache[block_idx, :, :, block_offset, :] = (reshaped_key[i] * k_scale_scalar).to(fp8_dtype)
+            value_cache[block_idx, :, :, block_offset] = (value[i] * v_scale_scalar).to(fp8_dtype)
         else:
             key_cache[block_idx, :, :, block_offset, :] = reshaped_key[i]
             value_cache[block_idx, :, :, block_offset] = value[i]

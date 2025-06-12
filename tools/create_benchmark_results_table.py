@@ -92,14 +92,15 @@ def main(results_directory: Path, use_cached_results: bool) -> None:
 
             with results_csv.open("w") as results_file:
                 run(
-                    ["python", f"benchmarks/{benchmark_name}.py", "--csv", "--num-iterations", "10000"],
+                    ["python", f"benchmarks/{benchmark_name}.py", "--csv"],
                     check=True,
                     stdout=results_file,
+                    env=os.environ,
                 )
 
         # Read the CSV file
         df = pd.read_csv(results_csv)
-        triton_df = df[df["tag"] == "Triton"]
+        triton_df = df[df["tag"] == "Conch"]
         baseline_df = df[df["tag"] == "Baseline"]
 
         # Calculate speedup

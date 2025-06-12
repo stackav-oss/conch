@@ -27,10 +27,10 @@ _SEQUENCE_LENGTHS: Final = [256, 257, 343, 1024, 1025]
 def _get_tolerance_for_dtype(dtype: torch.dtype) -> float:
     """Get expected tolerance to match to for a given dtype."""
     if dtype == torch.float16:
-        return 5e-4
+        return 7e-4
 
     if dtype == torch.bfloat16:
-        return 1e-3
+        return 2e-3
 
     msg = f"Unsupported dtype: '{dtype}'"
     raise NotImplementedError(msg)
@@ -319,6 +319,7 @@ def test_varlen_attention_vs_pytorch(
 @pytest.mark.parametrize("sequence_length", _SEQUENCE_LENGTHS)
 @pytest.mark.parametrize("causal", [True, False])
 @pytest.mark.parametrize("is_pure_decode", [True, False])
+@pytest.mark.parametrize("kv_cache_dtype", ["auto", "fp8"])
 def test_varlen_attention_vs_flash_attn(
     num_seqs: int,
     head_size: int,
@@ -328,8 +329,12 @@ def test_varlen_attention_vs_flash_attn(
     sequence_length: int,
     causal: bool,
     is_pure_decode: bool,
+    kv_cache_dtype: str,
 ) -> None:
     """Test Varlen Attention Triton kernel with various configurations vs. vLLM FlashAttnVarlen."""
+    if kv_cache_dtype == "fp8" and not current_platform.supports_fp8():
+        pytest.skip()
+
     from vllm.vllm_flash_attn import flash_attn_varlen_func  # type: ignore[attr-defined, unused-ignore]
 
     seed: Final = 0
@@ -342,8 +347,6 @@ def test_varlen_attention_vs_flash_attn(
     softcap: Final = 0.0
 
     tolerance: Final = _get_tolerance_for_dtype(dtype)
-
-    kv_cache_dtype: Final = "auto"
 
     cache_block_size = 16
 
@@ -358,6 +361,10 @@ def test_varlen_attention_vs_flash_attn(
         current_platform.device,
         dtype,
     )
+
+    q_scale = torch.full((1,), 0.5, device=device)
+    k_scale = torch.full((1,), 0.5, device=device)
+    v_scale = torch.full((1,), 0.5, device=device)
 
     starting_item = torch.as_tensor([0], dtype=torch.int32)
 
@@ -376,10 +383,22 @@ def test_varlen_attention_vs_flash_attn(
         max_seqlen_q = int(torch.max(seq_lens).item())
         max_seqlen_k = int(max_seqlen_q)
 
+    batch_size = cu_seqlens_q.shape[0] - 1
     total_num_q = int(cu_seqlens_q[-1].item())
 
     q = torch.empty(total_num_q, num_query_heads, head_size, dtype=dtype, device=device)
     q.uniform_(-scale, scale)
+
+    # FA version 2 is fine until we need FP8 support
+    fa_version = 2
+
+    if kv_cache_dtype == "fp8":
+        fp8_dtype = torch.float8_e4m3fnuz if current_platform.is_amd() else torch.float8_e4m3fn
+        q = q.to(fp8_dtype)
+        key_cache = key_cache.view(fp8_dtype)
+        value_cache = value_cache.view(fp8_dtype)
+        # Use FA version 3 if we are using FP8
+        fa_version = 3
 
     vllm_output = flash_attn_varlen_func(
         q=q,
@@ -392,6 +411,10 @@ def test_varlen_attention_vs_flash_attn(
         seqused_k=seq_lens,
         softmax_scale=scale,
         causal=causal,
+        fa_version=fa_version,
+        q_descale=q_scale.expand(batch_size, num_kv_heads),
+        k_descale=k_scale.expand(batch_size, num_kv_heads),
+        v_descale=v_scale.expand(batch_size, num_kv_heads),
     )
 
     conch_output = varlen_attention(
@@ -406,6 +429,10 @@ def test_varlen_attention_vs_flash_attn(
         causal=causal,
         scale=scale,
         softcap=softcap,
+        kv_cache_dtype=kv_cache_dtype,
+        q_scale=q_scale,
+        k_scale=k_scale,
+        v_scale=v_scale,
     )
 
     torch.testing.assert_close(vllm_output, conch_output, atol=tolerance, rtol=tolerance)

@@ -75,6 +75,12 @@ def test_reshape_and_cache(
     )
 
     key_cache_vllm, value_cache_vllm = key_caches_vllm[0], value_caches_vllm[0]
+
+    if "fp8" in kv_cache_dtype:
+        fp8_dtype = torch.float8_e4m3fnuz if current_platform.is_amd() else torch.float8_e4m3fn
+        key_cache_vllm = key_cache_vllm.view(fp8_dtype)
+        value_cache_vllm = value_cache_vllm.view(fp8_dtype)
+
     key_cache_conch, value_cache_conch = reshape_vllm_kvcache(key_cache_vllm, value_cache_vllm)
 
     # Run the reference implementation.
@@ -89,6 +95,13 @@ def test_reshape_and_cache(
 
     # Reshape vLLM key/value caches
     key_cache_vllm, value_cache_vllm = reshape_vllm_kvcache(key_cache_vllm, value_cache_vllm)
+
+    # Can't compare FP8 directly, so bitcast to uint8
+    if "fp8" in kv_cache_dtype:
+        key_cache_vllm = key_cache_vllm.view(torch.uint8)
+        value_cache_vllm = value_cache_vllm.view(torch.uint8)
+        key_cache_conch = key_cache_conch.view(torch.uint8)
+        value_cache_conch = value_cache_conch.view(torch.uint8)
 
     # Compare the results.
     torch.testing.assert_close(key_cache_conch, key_cache_vllm)

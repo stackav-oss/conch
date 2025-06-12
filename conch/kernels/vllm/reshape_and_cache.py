@@ -7,8 +7,6 @@ import torch
 import triton
 import triton.language as tl
 
-from conch.platforms import current_platform
-
 
 @triton.jit  # type: ignore[misc]
 def _reshape_and_cache_kernel(
@@ -36,7 +34,6 @@ def _reshape_and_cache_kernel(
     # Constexprs
     cxpr_head_size: tl.constexpr,
     cxpr_apply_fp8_scaling: tl.constexpr,
-    cxpr_is_rocm: tl.constexpr,
 ) -> None:
     """Implementation of reshape_and_cache kernel.
 
@@ -61,7 +58,6 @@ def _reshape_and_cache_kernel(
         cache_block_size: Size of each cache block / page in the KV cache.
         cxpr_head_size: Head size / dimension for the attention head (must be power of two!).
         cxpr_apply_fp8_scaling: Whether or not to apply FP8 scaling.
-        cxpr_is_rocm: Whether or not we're on AMD.
     """
     # What token is this program processing?
     token_index = tl.program_id(0)
@@ -100,12 +96,8 @@ def _reshape_and_cache_kernel(
         v_scale = 1.0 / v_scale
         value *= v_scale
 
-        fp8_dtype = tl.float8e4b8 if cxpr_is_rocm else tl.float8e4nv
-
-        # First, cast to the lower-precision floating point type, then bitcast the fp8 representation
-        # to uint8 to match the dtype of the cache
-        key = key.to(fp8_dtype).to(key_cache_ptr.dtype.element_ty, bitcast=True)
-        value = value.to(fp8_dtype).to(value_cache_ptr.dtype.element_ty, bitcast=True)
+        key = key.to(key_cache_ptr.dtype.element_ty)
+        value = value.to(value_cache_ptr.dtype.element_ty)
 
     # Calculate index of page (value in range(0, num_pages))
     page_index = slot_index // cache_block_size
@@ -158,26 +150,25 @@ def reshape_and_cache_launcher(
     num_tokens = slot_mapping.size(0)
 
     if strict:
-        assert key.shape == value.shape  # noqa: S101
-        assert key_cache.shape == value_cache.shape  # noqa: S101
+        assert key.shape == value.shape
+        assert key_cache.shape == value_cache.shape
 
-        assert key_cache.stride(0) == value_cache.stride(0)  # noqa: S101
-        assert key_cache.stride(1) == value_cache.stride(1)  # noqa: S101
-        assert key_cache.stride(2) == value_cache.stride(2)  # noqa: S101
-        assert key_cache.stride(3) == value_cache.stride(3)  # noqa: S101
-        assert key_cache.stride(3) == 1  # noqa: S101
+        assert key_cache.stride(0) == value_cache.stride(0)
+        assert key_cache.stride(1) == value_cache.stride(1)
+        assert key_cache.stride(2) == value_cache.stride(2)
+        assert key_cache.stride(3) == value_cache.stride(3)
+        assert key_cache.stride(3) == 1
 
-        assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"  # noqa: S101
-        assert head_size == triton.next_power_of_2(head_size), "Head size must be a power of two!"  # noqa: S101
+        assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"
+        assert head_size == triton.next_power_of_2(head_size), "Head size must be a power of two!"
 
-    is_rocm: tl.constexpr = current_platform.is_amd()
-    apply_fp8_scaling: tl.constexpr = kv_cache_dtype == "fp8" or kv_cache_dtype == "fp8_e4m3"
+    apply_fp8_scaling: tl.constexpr = "fp8" in kv_cache_dtype
 
     if strict and apply_fp8_scaling:
-        assert k_scale is not None  # noqa: S101
-        assert v_scale is not None  # noqa: S101
-        assert k_scale.numel() == 1  # noqa: S101
-        assert v_scale.numel() == 1  # noqa: S101
+        assert k_scale is not None
+        assert v_scale is not None
+        assert k_scale.numel() == 1
+        assert v_scale.numel() == 1
 
     # Parallelize over the number of tokens and number of kv heads
     grid = (num_tokens, num_kv_heads)
@@ -208,5 +199,4 @@ def reshape_and_cache_launcher(
         # Constexprs
         head_size,
         apply_fp8_scaling,
-        is_rocm,
     )
