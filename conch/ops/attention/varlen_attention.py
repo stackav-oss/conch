@@ -9,7 +9,7 @@ from typing import Final
 import torch
 import triton
 
-from conch.kernels.attention.varlen_attention import varlen_attention_launcher
+from conch.kernels.attention.varlen_attention import _FP8_DTYPES, varlen_attention_launcher
 
 
 @dataclass
@@ -222,6 +222,7 @@ def varlen_attention(
     scale: float | None = None,
     softcap: float = 0.0,
     kv_cache_dtype: str = "auto",
+    q_scale: torch.Tensor | None = None,
     k_scale: torch.Tensor | None = None,
     v_scale: torch.Tensor | None = None,
     strict: bool = False,
@@ -242,13 +243,15 @@ def varlen_attention(
         scale: (Optional), Scaling factor, 1/sqrt(head_size).
         softcap: (Optional), Logit softcap to apply (0.0 means no softcap will be applied).
         kv_cache_dtype: (Optional), String datatype of KV-cache.
+        q_scale: (Optional), Scaling factor for Q values.
         k_scale: (Optional), Scaling factor for K values.
         v_scale: (Optional), Scaling factor for V values.
         strict: (Optional), Enable strict checking of tensor sizes.
     """
     # Allocate output tensor if not provided
     if output is None:
-        output = torch.zeros_like(query, device=query.device, dtype=query.dtype)
+        output_dtype = torch.bfloat16 if query.dtype in _FP8_DTYPES else query.dtype
+        output = torch.zeros_like(query, device=query.device, dtype=output_dtype)
 
     # Check sizes of input tensors
     metadata = _create_varlen_metadata(
@@ -298,6 +301,7 @@ def varlen_attention(
         scale=scale,
         softcap=softcap,
         kv_cache_dtype=kv_cache_dtype,
+        q_scale=q_scale,
         k_scale=k_scale,
         v_scale=v_scale,
         strict=strict,

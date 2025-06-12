@@ -13,9 +13,10 @@ import triton
 import triton.language as tl
 from triton.language.extra import libdevice  # type: ignore[attr-defined]
 
-from conch.platforms import current_platform
-
 # Note: adding `bool` or `str` type annotations to these load/store helper functions doesn't work
+
+# FP8 representation on CUDA and ROCm
+_FP8_DTYPES: Final = [torch.float8_e4m3fn, torch.float8_e4m3fnuz]
 
 
 @triton.jit  # type: ignore[misc]
@@ -87,6 +88,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     block_table_ptr: tl.tensor,  # (batch_size, max_num_blocks_per_sequence)
     seq_lens_ptr: tl.tensor,  # (batch_size, )
     cu_seqlens_q_ptr: tl.tensor,  # (batch_size + 1, )
+    q_scale_ptr: tl.tensor,  # (1,)
     k_scale_ptr: tl.tensor,  # (1,)
     v_scale_ptr: tl.tensor,  # (1,)
     # Scalar arguments
@@ -117,7 +119,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     cxpr_head_size_padded: tl.constexpr,
     cxpr_is_softcap: tl.constexpr,
     cxpr_apply_fp8_scaling: tl.constexpr,
-    cxpr_is_rocm: tl.constexpr,
     cxpr_is_causal: tl.constexpr,
     cxpr_split_kv: tl.constexpr,
 ) -> None:
@@ -132,6 +133,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         block_table_ptr: Pointer to tensor storing the mapping from batch to cache blocks, shape: (batch_size, max_num_blocks_per_sequence).
         seq_lens_ptr: Pointer to tensor holding the current sequence length for each sequence in the batch, shape: (batch_size, ).
         cu_seqlens_q_ptr: Pointer to tensor holding the cumulative sequence lengths for each sequence in the batch, shape: (batch_size, ).
+        q_scale_ptr: Pointer to scalar fp8 scaling factor for q.
         k_scale_ptr: Pointer to scalar fp8 scaling factor for k.
         v_scale_ptr: Pointer to scalar fp8 scaling factor for v.
         scale: Scaling factor, 1/sqrt(head_size).
@@ -158,7 +160,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         cxpr_head_size_padded: The head size of the attention layer padded to the next power of two.
         cxpr_is_softcap: Whether or not logits softcapping will be applied.
         cxpr_apply_fp8_scaling: Whether or not to apply FP8 scaling.
-        cxpr_is_rocm: Whether or not we're on AMD.
         cxpr_is_causal: Whether or not to apply causal masking.
     """
     # Encode number of query and KV splits in axis=0
@@ -270,6 +271,10 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Load queries
     query = _load(query_ptr + query_offsets, use_mask=needs_query_mask, mask=query_mask, other=0.0)
 
+    if cxpr_apply_fp8_scaling:
+        q_scale = tl.load(q_scale_ptr)
+        query = (query * q_scale).to(dtype)
+
     # Index/offset for the current kv_head in the key_cache and value_cache
     kv_head_index_offset = kv_head_index * kv_head_stride
 
@@ -323,9 +328,8 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
         if cxpr_apply_fp8_scaling:
             # Dequantize (multiply by scale factor)
-            fp8_dtype = tl.float8e4b8 if cxpr_is_rocm else tl.float8e4nv
             k_scale = tl.load(k_scale_ptr)
-            key_block = (key_block.to(fp8_dtype, bitcast=True) * k_scale).to(dtype)
+            key_block = (key_block * k_scale).to(dtype)
 
         # Multiply query vector by key matrix for this cache block (and apply scaling factor)
         # query.shape -> (query_chunk_size * query_group_size, head_size)
@@ -383,9 +387,8 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
         if cxpr_apply_fp8_scaling:
             # Dequantize (multiply by scale factor)
-            fp8_dtype = tl.float8e4b8 if cxpr_is_rocm else tl.float8e4nv
             v_scale = tl.load(v_scale_ptr)
-            value_block = (value_block.to(fp8_dtype, bitcast=True) * v_scale).to(dtype)
+            value_block = (value_block * v_scale).to(dtype)
 
         # Multiply softmax probabilities by value matrix for this cache block
         # p.shape -> (query_chunk_size * query_group_size, cache_block_size)
@@ -630,6 +633,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
     scale: float | None = None,
     softcap: float = 0.0,
     kv_cache_dtype: str = "auto",
+    q_scale: torch.Tensor | None = None,
     k_scale: torch.Tensor | None = None,
     v_scale: torch.Tensor | None = None,
     strict: bool = False,
@@ -652,30 +656,32 @@ def varlen_attention_launcher(  # noqa: PLR0913
         scale: Scaling factor, 1/sqrt(head_size).
         softcap: Softcap value to apply to logits.
         kv_cache_dtype: Data type of the key/value cache.
+        q_scale: Scaling factor for Q values.
         k_scale: Scaling factor for K values.
         v_scale: Scaling factor for V values.
         strict: (Optional) Whether to enable strict checking of input sizes.
     """
     if strict:
-        assert query.shape == output.shape  # noqa: S101
-        assert key_cache.shape == value_cache.shape  # noqa: S101
-        assert key_cache.stride(0) == value_cache.stride(0)  # noqa: S101
-        assert key_cache.stride(1) == value_cache.stride(1)  # noqa: S101
-        assert key_cache.stride(2) == value_cache.stride(2)  # noqa: S101
-        assert key_cache.stride(3) == value_cache.stride(3)  # noqa: S101
-        assert key_cache.stride(3) == 1  # noqa: S101
-        assert softcap >= 0.0  # noqa: S101
+        assert query.shape == output.shape
+        assert key_cache.shape == value_cache.shape
+        assert key_cache.stride(0) == value_cache.stride(0)
+        assert key_cache.stride(1) == value_cache.stride(1)
+        assert key_cache.stride(2) == value_cache.stride(2)
+        assert key_cache.stride(3) == value_cache.stride(3)
+        assert key_cache.stride(3) == 1
+        assert softcap >= 0.0
 
-        allowed_in_out_dtypes = [torch.float32, torch.float16, torch.bfloat16]
-        assert query.dtype in allowed_in_out_dtypes  # noqa: S101
-        assert output.dtype == query.dtype  # noqa: S101
+        expected_output_dtype = torch.bfloat16 if query.dtype in _FP8_DTYPES else query.dtype
+        allowed_in_out_dtypes = [torch.float32, torch.float16, torch.bfloat16] + _FP8_DTYPES
+        assert query.dtype in allowed_in_out_dtypes
+        assert output.dtype == expected_output_dtype
 
         if output_scratchpad is not None or lse_scratchpad is not None:
             assert output_scratchpad is not None
             assert lse_scratchpad is not None
-            assert output_scratchpad.dtype == query.dtype  # noqa: S101
-            assert lse_scratchpad.dtype == query.dtype  # noqa: S101
-            assert output_scratchpad.size(1) == lse_scratchpad.size(1)  # noqa: S101
+            assert output_scratchpad.dtype == expected_output_dtype
+            assert lse_scratchpad.dtype == expected_output_dtype
+            assert output_scratchpad.size(1) == lse_scratchpad.size(1)
 
     # Perform unchecked size accesses, assume has already been checked
     total_num_q, num_query_heads, head_size = output.shape
@@ -684,7 +690,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
     max_num_kv_splits = output_scratchpad.size(0) if output_scratchpad is not None else 1
 
     if strict:
-        assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"  # noqa: S101
+        assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"
 
     # Need sizes to be constexpr in order to reshape tensors in kernel
     cxpr_cache_block_size: tl.constexpr = cache_block_size
@@ -693,14 +699,15 @@ def varlen_attention_launcher(  # noqa: PLR0913
     # For parity with Dao Flash Attention, softcap == 0.0 means no softcapping
     cxpr_is_softcap: tl.constexpr = softcap > 0.0
 
-    cxpr_apply_fp8_scaling: tl.constexpr = kv_cache_dtype == "fp8" or kv_cache_dtype == "fp8_e4m3"
-    cxpr_is_rocm: tl.constexpr = current_platform.is_amd()
+    cxpr_apply_fp8_scaling: tl.constexpr = "fp8" in kv_cache_dtype or query.dtype in _FP8_DTYPES
 
     if strict and cxpr_apply_fp8_scaling:
-        assert k_scale is not None  # noqa: S101
-        assert v_scale is not None  # noqa: S101
-        assert k_scale.numel() == 1  # noqa: S101
-        assert k_scale.numel() == 1  # noqa: S101
+        assert q_scale is not None
+        assert k_scale is not None
+        assert v_scale is not None
+        assert q_scale.numel() == 1
+        assert k_scale.numel() == 1
+        assert v_scale.numel() == 1
 
     # How many query heads correspond to the same KV head?
     query_group_size = num_query_heads // num_kv_heads
@@ -758,6 +765,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
         block_table_ptr=block_table,
         seq_lens_ptr=seq_lens,
         cu_seqlens_q_ptr=cu_seqlens_q,
+        q_scale_ptr=q_scale,
         k_scale_ptr=k_scale,
         v_scale_ptr=v_scale,
         # Scalars
@@ -787,7 +795,6 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_head_size_padded=cxpr_head_size_padded,
         cxpr_is_softcap=cxpr_is_softcap,
         cxpr_apply_fp8_scaling=cxpr_apply_fp8_scaling,
-        cxpr_is_rocm=cxpr_is_rocm,
         cxpr_is_causal=causal,
         cxpr_split_kv=(num_kv_splits > 1),
     )
