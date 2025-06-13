@@ -13,6 +13,8 @@ import triton
 import triton.language as tl
 from triton.language.extra import libdevice  # type: ignore[attr-defined]
 
+from conch.platforms import current_platform
+
 # FP8 representation on CUDA and ROCm
 _FP8_DTYPES: Final = [torch.float8_e4m3fn, torch.float8_e4m3fnuz]
 
@@ -94,6 +96,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     cxpr_apply_fp8_scaling: tl.constexpr,
     cxpr_is_causal: tl.constexpr,
     cxpr_split_kv: tl.constexpr,
+    cxpr_is_rocm: tl.constexpr,
 ) -> None:
     """Varlen Attention kernel: compute attention for a split block.
 
@@ -235,17 +238,26 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         + head_offsets[None, :]
     )
 
-    needs_query_split_mask = end_seqlen_q > this_query_length
-    needs_query_group_mask = query_group_size != cxpr_query_group_size_padded
-    needs_head_mask = head_size != cxpr_head_size_padded
-    needs_query_mask = (needs_query_split_mask or needs_query_group_mask) or needs_head_mask
+    needs_query_split_mask = True
+    needs_query_group_mask = True
+    needs_head_mask = True
+    needs_query_mask = True
+
+    if cxpr_is_rocm:
+        needs_query_split_mask = end_seqlen_q > this_query_length
+        needs_query_group_mask = query_group_size != cxpr_query_group_size_padded
+        needs_head_mask = head_size != cxpr_head_size_padded
+        needs_query_mask = (needs_query_split_mask or needs_query_group_mask) or needs_head_mask
 
     # Mask out query elements that are just for padding
     query_mask = query_split_group_seq_mask[:, None] & query_split_group_head_mask[:, None] & head_mask[None, :]
 
     # Load queries
     # query = tl.load(query_ptr + query_offsets, mask=query_mask, other=0.0, eviction_policy="evict_last")
-    query = _load(query_ptr + query_offsets, use_mask=needs_query_mask, mask=query_mask, other=0.0)
+    if cxpr_is_rocm:
+        query = _load(query_ptr + query_offsets, use_mask=needs_query_mask, mask=query_mask, other=0.0)
+    else:
+        query = tl.load(query_ptr + query_offsets, mask=query_mask, other=0.0, eviction_policy="evict_last")
 
     if cxpr_apply_fp8_scaling:
         q_scale = tl.load(q_scale_ptr)
@@ -278,8 +290,12 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         cache_block_offsets = tl.arange(0, cxpr_cache_block_size)
         cache_block_mask = cache_block_offsets < num_entries_in_cache_block
 
-        needs_cache_block_mask = num_entries_in_cache_block != cxpr_cache_block_size
-        needs_qk_mask = (needs_query_split_mask or needs_query_group_mask) or needs_cache_block_mask
+        needs_cache_block_mask = True
+        needs_qk_mask = True
+
+        if cxpr_is_rocm:
+            needs_cache_block_mask = num_entries_in_cache_block != cxpr_cache_block_size
+            needs_qk_mask = (needs_query_split_mask or needs_query_group_mask) or needs_cache_block_mask
 
         # Offset from the block_table row for the current batch by the number of cache blocks
         current_cache_block_number_ptr = current_block_table_ptr + cache_block_index
@@ -296,17 +312,19 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
         key_block_mask = head_mask[:, None] & cache_block_mask[None, :]
 
-        # key_block = tl.load(
-        #     key_cache_ptr + kv_cache_block_index_offset + key_block_offsets,
-        #     mask=key_block_mask,
-        #     other=0.0,
-        # )
-        key_block = _load(
-            key_cache_ptr + kv_cache_block_index_offset + key_block_offsets,
-            use_mask=(needs_cache_block_mask or needs_head_mask),
-            mask=key_block_mask,
-            other=0.0,
-        )
+        if cxpr_is_rocm:
+            key_block = _load(
+                key_cache_ptr + kv_cache_block_index_offset + key_block_offsets,
+                use_mask=(needs_cache_block_mask or needs_head_mask),
+                mask=key_block_mask,
+                other=0.0,
+            )
+        else:
+            key_block = tl.load(
+                key_cache_ptr + kv_cache_block_index_offset + key_block_offsets,
+                mask=key_block_mask,
+                other=0.0,
+            )
 
         if cxpr_apply_fp8_scaling:
             # Dequantize (multiply by scale factor)
@@ -370,18 +388,19 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
         value_block_mask = cache_block_mask[:, None] & head_mask[None, :]
 
-        # value_block = tl.load(
-        #     value_cache_ptr + kv_cache_block_index_offset + value_block_offsets,
-        #     mask=value_block_mask,
-        #     other=0.0,
-        # )
-
-        value_block = _load(
-            value_cache_ptr + kv_cache_block_index_offset + value_block_offsets,
-            use_mask=(needs_cache_block_mask or needs_head_mask),
-            mask=value_block_mask,
-            other=0.0,
-        )
+        if cxpr_is_rocm:
+            value_block = _load(
+                value_cache_ptr + kv_cache_block_index_offset + value_block_offsets,
+                use_mask=(needs_cache_block_mask or needs_head_mask),
+                mask=value_block_mask,
+                other=0.0,
+            )
+        else:
+            value_block = tl.load(
+                value_cache_ptr + kv_cache_block_index_offset + value_block_offsets,
+                mask=value_block_mask,
+                other=0.0,
+            )
 
         if cxpr_apply_fp8_scaling:
             # Dequantize (multiply by scale factor)
@@ -416,17 +435,19 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     )
 
     # Store output scratchpad results
-    # tl.store(
-    #     output_scratchpad_ptr + output_scratch_offsets,
-    #     output,
-    #     mask=query_mask,
-    # )
-    _store(
-        output_scratchpad_ptr + output_scratch_offsets,
-        output,
-        use_mask=needs_query_mask,
-        mask=query_mask,
-    )
+    if cxpr_is_rocm:
+        _store(
+            output_scratchpad_ptr + output_scratch_offsets,
+            output,
+            use_mask=needs_query_mask,
+            mask=query_mask,
+        )
+    else:
+        tl.store(
+            output_scratchpad_ptr + output_scratch_offsets,
+            output,
+            mask=query_mask,
+        )
 
     if cxpr_split_kv:
         # Calculate scratchpad log(sum(exp))
@@ -444,17 +465,19 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         lse_mask = query_split_group_seq_mask & query_split_group_head_mask
 
         # Store lse scratchpad results
-        # tl.store(
-        #     lse_scratchpad_ptr + lse_scratch_offsets,
-        #     lse,
-        #     mask=lse_mask,
-        # )
-        _store(
-            lse_scratchpad_ptr + lse_scratch_offsets,
-            lse,
-            use_mask=(needs_query_split_mask or needs_query_group_mask),
-            mask=lse_mask,
-        )
+        if cxpr_is_rocm:
+            _store(
+                lse_scratchpad_ptr + lse_scratch_offsets,
+                lse,
+                use_mask=(needs_query_split_mask or needs_query_group_mask),
+                mask=lse_mask,
+            )
+        else:
+            tl.store(
+                lse_scratchpad_ptr + lse_scratch_offsets,
+                lse,
+                mask=lse_mask,
+            )
 
 
 @triton.jit  # type: ignore[misc]
@@ -480,6 +503,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     # Constexprs
     cxpr_cache_block_size: tl.constexpr,
     cxpr_head_size_padded: tl.constexpr,
+    cxpr_is_rocm: tl.constexpr,
 ) -> None:
     """Varlen Attention kernel: reduce results across all splits.
 
@@ -533,6 +557,12 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     # Mask to only read valid indices of the actual head size
     head_mask = head_offsets < head_size
 
+    needs_head_mask = True
+
+    if cxpr_is_rocm:
+        # Only enable masking if its necessary
+        needs_head_mask = head_size != cxpr_head_size_padded
+
     # Iterate through every cache block for the current sequence
     for kv_split_index in range(num_kv_splits_this_seq):
         # Calculate offsets to load the scratch for this head/batch/split
@@ -545,11 +575,19 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
         )
 
         # Load output for this cache block, shape -> (cxpr_head_size_padded,)
-        block_output = tl.load(
-            output_scratchpad_ptr + output_scratchpad_offsets,
-            mask=head_mask,
-            other=0.0,
-        )
+        if cxpr_is_rocm:
+            block_output = _load(
+                output_scratchpad_ptr + output_scratchpad_offsets,
+                use_mask=needs_head_mask,
+                mask=head_mask,
+                other=0.0,
+            )
+        else:
+            block_output = tl.load(
+                output_scratchpad_ptr + output_scratchpad_offsets,
+                mask=head_mask,
+                other=0.0,
+            )
 
         # Calculate offsets to load log-sum-exp for this head/batch/cache block
         lse_scratchpad_offsets = (
@@ -588,11 +626,19 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     output_offsets = batch_index * output_batch_stride + query_head_index * output_head_stride + head_offsets
 
     # Store final result
-    tl.store(
-        output_ptr + output_offsets,
-        output,
-        mask=head_mask,
-    )
+    if cxpr_is_rocm:
+        _store(
+            output_ptr + output_offsets,
+            output,
+            use_mask=needs_head_mask,
+            mask=head_mask,
+        )
+    else:
+        tl.store(
+            output_ptr + output_offsets,
+            output,
+            mask=head_mask,
+        )
 
 
 def _get_block_size() -> int:
@@ -704,6 +750,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
     cxpr_is_softcap: tl.constexpr = softcap > 0.0
 
     cxpr_apply_fp8_scaling: tl.constexpr = "fp8" in kv_cache_dtype or query.dtype in _FP8_DTYPES
+    cxpr_is_rocm: tl.constexpr = current_platform.is_amd()
 
     if strict and cxpr_apply_fp8_scaling:
         assert q_scale is not None
@@ -800,6 +847,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_apply_fp8_scaling=cxpr_apply_fp8_scaling,
         cxpr_is_causal=causal,
         cxpr_split_kv=(num_kv_splits > 1),
+        cxpr_is_rocm=cxpr_is_rocm,
         # num_stages=2,
     )
 
@@ -832,4 +880,5 @@ def varlen_attention_launcher(  # noqa: PLR0913
             # Constexpr sizes
             cxpr_cache_block_size=cxpr_cache_block_size,
             cxpr_head_size_padded=cxpr_head_size_padded,
+            cxpr_is_rocm=cxpr_is_rocm,
         )
