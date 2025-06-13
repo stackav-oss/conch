@@ -155,12 +155,15 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # What is the last Q token in this block?
     end_seqlen_q = this_query_split_offset + cxpr_query_chunk_size
 
+    # Only need causal masking if enabled and this program is not processing a decode
+    needs_causal_mask = cxpr_is_causal and not is_pure_decode
+
     # How many tokens of K/V have we already processed prior to this kernel
     beginning_seqlen_k = starting_cache_block_index * cxpr_cache_block_size
 
     num_cache_blocks_to_process = num_cache_blocks_per_split
 
-    if cxpr_is_causal and not is_pure_decode:
+    if needs_causal_mask:
         if end_seqlen_q <= beginning_seqlen_k:
             return
 
@@ -201,11 +204,8 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Mask out query elements that are just for padding
     query_mask = query_split_group_seq_mask[:, None] & query_split_group_head_mask[:, None] & head_mask[None, :]
 
-    # Only need causal masking if enabled and this program is not processing a decode
-    needs_causal_mask = cxpr_is_causal and not is_pure_decode
-
     # Load queries
-    query = tl.load(query_ptr + query_offsets, mask=query_mask, other=0.0)
+    query = tl.load(query_ptr + query_offsets, mask=query_mask, other=0.0, eviction_policy="evict_last")
 
     if cxpr_apply_fp8_scaling:
         q_scale = tl.load(q_scale_ptr)
@@ -256,6 +256,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             key_cache_ptr + kv_cache_block_index_offset + key_block_offsets,
             mask=key_block_mask,
             other=0.0,
+            # eviction_policy="evict_first",
         )
 
         if cxpr_apply_fp8_scaling:
@@ -312,6 +313,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
             value_cache_ptr + kv_cache_block_index_offset + value_block_offsets,
             mask=value_block_mask,
             other=0.0,
+            # eviction_policy="evict_first",
         )
 
         if cxpr_apply_fp8_scaling:
@@ -519,7 +521,8 @@ def _get_block_size() -> int:
     # Note: in the future we could specify different settings here based on the platform or autotune,
     # but for simplicity right now we'll hardcode this block size because it gives good performance
     # on A10, H100, and MI300X.
-    return 32
+    # return 32
+    return 16
 
 
 def _get_tuned_sizes(head_size_padded: int, query_group_size_padded: int, max_seqlen_q: int) -> tuple[int, int]:
@@ -720,6 +723,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_apply_fp8_scaling=cxpr_apply_fp8_scaling,
         cxpr_is_causal=causal,
         cxpr_split_kv=(num_kv_splits > 1),
+        num_stages=2,
     )
 
     if num_kv_splits > 1:
