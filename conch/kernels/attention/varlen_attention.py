@@ -153,6 +153,9 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Only need causal masking if enabled and this program is not processing a decode
     needs_causal_mask = cxpr_is_causal and not is_pure_decode
 
+    # Use dtype of output as the dtype for intermediate values/calculations (except for those that must be done in FP32)
+    dtype = output_scratchpad_ptr.dtype.element_ty
+
     # How many tokens of K/V have we already processed prior to this kernel
     beginning_seqlen_k = starting_cache_block_index * cxpr_cache_block_size
 
@@ -206,7 +209,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
     if cxpr_apply_fp8_scaling:
         q_scale = tl.load(q_scale_ptr)
-        query = query * q_scale
+        query = (query * q_scale).to(dtype)
 
     # Index/offset for the current kv_head in the key_cache and value_cache
     kv_head_index_offset = kv_head_index * kv_head_stride
@@ -216,11 +219,11 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     current_block_table_ptr = block_table_ptr + current_block_table_offset
 
     # Scratchpad for output from this group of cache blocks
-    output = tl.zeros([cxpr_query_chunk_size * cxpr_query_group_size_padded, cxpr_head_size_padded], dtype=tl.float32)
+    output = tl.zeros([cxpr_query_chunk_size * cxpr_query_group_size_padded, cxpr_head_size_padded], dtype=dtype)
     # Keep running max of softmax numerator (scale * Q * K)
-    m_i = tl.full([cxpr_query_chunk_size * cxpr_query_group_size_padded], -float("inf"), dtype=tl.float32)
+    m_i = tl.full([cxpr_query_chunk_size * cxpr_query_group_size_padded], -float("inf"), dtype=dtype)
     # Keep running denominator of softmax
-    l_i = tl.full([cxpr_query_chunk_size * cxpr_query_group_size_padded], 0.0, dtype=tl.float32)
+    l_i = tl.full([cxpr_query_chunk_size * cxpr_query_group_size_padded], 0.0, dtype=dtype)
 
     # Iterate through the cache blocks that this kernel is assigned to
     for cache_block_index in range(
@@ -259,12 +262,13 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         if cxpr_apply_fp8_scaling:
             # Dequantize (multiply by scale factor)
             k_scale = tl.load(k_scale_ptr)
-            key_block = key_block * k_scale
+            key_block = (key_block * k_scale).to(dtype)
 
         # Multiply query vector by key matrix for this cache block (and apply scaling factor)
         # query.shape -> (query_chunk_size * query_group_size, head_size)
         # key_block.shape -> (head_size, cache_block_size)
         # qk.shape -> (query_chunk_size * query_group_size, cache_block_size)
+        # qk = (scale * tl.dot(query, key_block)).to(dtype)
         qk = scale * tl.dot(query, key_block)
 
         # Need to mask out any elements that represent unused cache block entries or padding elements
@@ -280,21 +284,28 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         # Handle softcapping
         if cxpr_is_softcap:
             # tanh can only accept fp32 or fp64 arguments
+            # qk = (softcap * libdevice.tanh((qk / softcap).to(tl.float32))).to(dtype)
             qk = softcap * libdevice.tanh(qk / softcap)
 
         # Reduce maximum between running max and the max of (scale * Q * K) for this cache block
+        # m_ij = tl.maximum(m_i, tl.max(qk, axis=1).to(dtype)).to(dtype)
+        # m_ij = tl.maximum(m_i, tl.max(qk, axis=1)).to(dtype)
+        # m_ij = tl.maximum(m_i, tl.max(qk, axis=1)).to(dtype)
         m_ij = tl.maximum(m_i, tl.max(qk, axis=1))
 
         # Calculate numerator of softmax for this cache block
-        p = tl.exp(qk - m_ij[:, None])
+        # p = tl.exp(qk.to(tl.float32) - m_ij[:, None].to(tl.float32)).to(dtype)
+        # p = tl.exp((qk - m_ij[:, None]).to(tl.float32)).to(dtype)
+        p = tl.exp(qk - m_ij[:, None]).to(dtype)
         # Need to mask out any elements that represent unused cache block entries or padding elements
-        p = tl.where(qk_mask, p, 0.0)
+        p = tl.where(qk_mask, p, 0.0).to(dtype)
 
         # Calculate sum of softmax numerator for this cache block
-        l_ij = tl.sum(p, axis=1)
+        l_ij = tl.sum(p, axis=1).to(dtype)
 
         # Calculate correction factor for this cache block
-        alpha = tl.exp(m_i - m_ij)
+        # alpha = tl.exp((m_i - m_ij).to(tl.float32)).to(dtype)
+        alpha = tl.exp(m_i - m_ij).to(dtype)
 
         # Apply scaling factor to running output
         output *= alpha[:, None]
@@ -315,16 +326,19 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         if cxpr_apply_fp8_scaling:
             # Dequantize (multiply by scale factor)
             v_scale = tl.load(v_scale_ptr)
-            value_block = value_block * v_scale
+            value_block = (value_block * v_scale).to(dtype)
 
         # Multiply softmax probabilities by value matrix for this cache block
         # p.shape -> (query_chunk_size * query_group_size, cache_block_size)
         # value_block.shape -> (cache_block_size, head_size)
         # output.shape -> (query_chunk_size * query_group_size, head_size)
-        output = tl.dot(p.to(value_block.dtype), value_block, acc=output)
+        # output += tl.dot(p.to(value_block.dtype), value_block)
+        # output += tl.dot(p.to(dtype), value_block, acc=output)
+        # output += tl.dot(p.to(dtype), value_block)
+        output += tl.dot(p, value_block).to(dtype)
 
         # Update running max
-        m_i = m_ij
+        m_i = m_ij.to(dtype)
         # Update running denominator
         l_i = l_i * alpha + l_ij
 
@@ -350,7 +364,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
     if cxpr_split_kv:
         # Calculate scratchpad log(sum(exp))
-        lse = m_i + tl.log(l_i)
+        lse = m_i + tl.log(l_i.to(tl.float32)).to(dtype)
 
         # Calculate offsets to store log-sum-exp for this query split/query group
         # 1D block of shape (query_chunk_size * query_group_size,)
@@ -384,13 +398,13 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     head_size: int,  # output.shape[2]
     batch_size: int,
     # Strides for tensors above
-    output_batch_stride: int,  # output.stride(0)
-    output_head_stride: int,  # output.stride(1)
-    output_scratchpad_kv_split_stride: int,  # output_scratchpad.stride(0)
-    output_scratchpad_batch_stride: int,  # output_scratchpad.stride(1)
-    output_scratchpad_head_stride: int,  # output_scratchpad.stride(2)
-    lse_scratchpad_kv_split_stride: int,  # lse_scratchpad.stride(0)
-    lse_scratchpad_batch_stride: int,  # lse_scratchpad.stride(1)
+    output_batch_stride: tl.int64,  # output.stride(0)
+    output_head_stride: tl.int64,  # output.stride(1)
+    output_scratchpad_kv_split_stride: tl.int64,  # output_scratchpad.stride(0)
+    output_scratchpad_batch_stride: tl.int64,  # output_scratchpad.stride(1)
+    output_scratchpad_head_stride: tl.int64,  # output_scratchpad.stride(2)
+    lse_scratchpad_kv_split_stride: tl.int64,  # lse_scratchpad.stride(0)
+    lse_scratchpad_batch_stride: tl.int64,  # lse_scratchpad.stride(1)
     # Constexprs
     cxpr_cache_block_size: tl.constexpr,
     cxpr_head_size_padded: tl.constexpr,
@@ -423,12 +437,15 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     # What batch is this program processing?
     batch_index = tl.program_id(1)
 
+    # Datatype for intermediates/output
+    dtype = output_scratchpad_ptr.dtype.element_ty
+
     # Accumulator for the output of this batch/head
-    output = tl.zeros([cxpr_head_size_padded], dtype=tl.float32)
+    output = tl.zeros([cxpr_head_size_padded], dtype=dtype)
     # Running max of block lse
-    m_i = tl.full([], -float("inf"), dtype=tl.float32)
+    m_i = tl.full([], -float("inf"), dtype=dtype)
     # Running final scale factor
-    l_i = tl.full([], 0.0, dtype=tl.float32)
+    l_i = tl.full([], 0.0, dtype=dtype)
 
     # Load scalar current_sequence_length for the current batch
     current_sequence_length = tl.load(seq_lens_ptr + batch_index)
@@ -476,13 +493,13 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
         m_ij = tl.maximum(m_i, block_lse)
 
         # Calculate correction factor from previous cache blocks
-        alpha = tl.exp(m_i - m_ij)
+        alpha = tl.exp((m_i - m_ij).to(tl.float32)).to(dtype)
 
         # Apply correction factor
         output *= alpha
 
         # Calculate correction factor from this cache block
-        beta = tl.exp(block_lse - m_ij)
+        beta = tl.exp((block_lse - m_ij).to(tl.float32)).to(dtype)
 
         # Apply second correction factor and accumulate running output
         output += beta * block_output
@@ -711,7 +728,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_apply_fp8_scaling=cxpr_apply_fp8_scaling,
         cxpr_is_causal=causal,
         cxpr_split_kv=(num_kv_splits > 1),
-        num_stages=2,
+        # num_stages=2,
     )
 
     if num_kv_splits > 1:

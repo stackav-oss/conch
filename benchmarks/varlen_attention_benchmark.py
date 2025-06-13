@@ -207,6 +207,13 @@ def main(
     query = torch.empty((total_num_q, num_query_heads, head_dim), dtype=dtype, device=device)
     query.uniform_(-scale, scale)
 
+    print(f"{query.shape = }, {query.stride() = }")
+    print(f"{key_cache.shape = }, {value_cache.stride() = }")
+    print(f"{value_cache.shape = }, {value_cache.stride() = }")
+    print(f"{cu_seqlens_q.shape = }, {cu_seqlens_q.stride() = }")
+    print(f"{seq_lens.shape = }, {seq_lens.stride() = }")
+    print(f"{block_table.shape = }, {block_table.stride() = }")
+
     output_conch = varlen_attention(
         query=query,
         key_cache=key_cache,
