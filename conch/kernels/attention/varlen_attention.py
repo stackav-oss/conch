@@ -50,7 +50,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     kv_page_stride: tl.int64,  # key_cache.stride(0), same for key and value
     kv_cache_block_stride: tl.int64,  # key_cache.stride(1), same for key and value
     kv_head_stride: tl.int64,  # key_cache.stride(2), same for key and value
-    kv_head_element_stride: tl.int64,  # key_cache.stride(3), same for key and value
     block_table_batch_stride: tl.int64,  # block_table.stride(0)
     # Constexprs
     cxpr_query_group_size_padded: tl.constexpr,  # num_query_heads // num_kv_heads
@@ -92,7 +91,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         kv_page_stride: Stride of the k/v tensors in the 0th dimension.
         kv_cache_block_stride: Stride of the k/v tensors in the 1st dimension.
         kv_head_stride: Stride of the k/v tensors in the 2nd dimension.
-        kv_head_element_stride: Stride of the k/v tensors in the 3rd dimension.
         block_table_batch_stride: Stride of the block table tensor in the 0th dimension.
         cxpr_query_group_size_padded: The number of query heads to group together (must be power-of-two!).
         cxpr_query_chunk_size: The size of the query chunks (must be power of two!).
@@ -323,7 +321,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         # p.shape -> (query_chunk_size * query_group_size, cache_block_size)
         # value_block.shape -> (cache_block_size, head_size)
         # output.shape -> (query_chunk_size * query_group_size, head_size)
-        # output += tl.dot(p.to(value_block.dtype), value_block)
         output = tl.dot(p.to(value_block.dtype), value_block, acc=output)
 
         # Update running max
@@ -704,7 +701,6 @@ def varlen_attention_launcher(  # noqa: PLR0913
         kv_page_stride=key_cache.stride(0),
         kv_cache_block_stride=key_cache.stride(1),
         kv_head_stride=key_cache.stride(2),
-        kv_head_element_stride=key_cache.stride(3),
         block_table_batch_stride=block_table.stride(0),
         # Constexpr sizes
         cxpr_query_group_size_padded=query_group_size_padded,
