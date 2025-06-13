@@ -40,18 +40,18 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     query_group_size: int,  # num_query_heads // num_kv_heads
     num_kv_splits: int,
     # Strides for tensors above
-    output_scratchpad_kv_split_stride: int,  # output_scratchpad.stride(0)
-    output_scratchpad_batch_stride: int,  # output_scratchpad.stride(1)
-    output_scratchpad_head_stride: int,  # output_scratchpad.stride(2)
-    lse_scratchpad_kv_split_stride: int,  # lse_scratchpad.stride(0)
-    lse_scratchpad_batch_stride: int,  # lse_scratchpad.stride(1)
-    query_batch_stride: int,  # query.stride(0)
-    query_head_stride: int,  # query.stride(1)
-    kv_page_stride: int,  # key_cache.stride(0), same for key and value
-    kv_cache_block_stride: int,  # key_cache.stride(1), same for key and value
-    kv_head_stride: int,  # key_cache.stride(2), same for key and value
-    kv_head_element_stride: int,  # key_cache.stride(3), same for key and value
-    block_table_batch_stride: int,  # block_table.stride(0)
+    output_scratchpad_kv_split_stride: tl.int64,  # output_scratchpad.stride(0)
+    output_scratchpad_batch_stride: tl.int64,  # output_scratchpad.stride(1)
+    output_scratchpad_head_stride: tl.int64,  # output_scratchpad.stride(2)
+    lse_scratchpad_kv_split_stride: tl.int64,  # lse_scratchpad.stride(0)
+    lse_scratchpad_batch_stride: tl.int64,  # lse_scratchpad.stride(1)
+    query_batch_stride: tl.int64,  # query.stride(0)
+    query_head_stride: tl.int64,  # query.stride(1)
+    kv_page_stride: tl.int64,  # key_cache.stride(0), same for key and value
+    kv_cache_block_stride: tl.int64,  # key_cache.stride(1), same for key and value
+    kv_head_stride: tl.int64,  # key_cache.stride(2), same for key and value
+    kv_head_element_stride: tl.int64,  # key_cache.stride(3), same for key and value
+    block_table_batch_stride: tl.int64,  # block_table.stride(0)
     # Constexprs
     cxpr_query_group_size_padded: tl.constexpr,  # num_query_heads // num_kv_heads
     cxpr_query_chunk_size: tl.constexpr,
@@ -695,6 +695,9 @@ def varlen_attention_launcher(  # noqa: PLR0913
 
     # For computing attention for split block (stage 1): parallelize over query splits, KV splits, KV heads, and batches.
     stage1_grid = (num_query_splits * num_kv_splits, num_kv_heads, batch_size)
+
+    # print("LAUNCH!")
+    # print(f"{output_scratchpad.shape = }")
 
     # Launch stage 1 kernel
     _varlen_attention_compute_splits_kernel[stage1_grid](

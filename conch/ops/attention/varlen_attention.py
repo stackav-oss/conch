@@ -143,7 +143,7 @@ def _determine_max_num_kv_splits(max_seqlen_q: int, max_seqlen_k: int, max_num_b
     # If we have all decodes, only enable FlashDecoding if we have a long sequence (>=2048 tokens) and
     # many cache blocks for each sequence (>=16 cache blocks for the longest sequence).
     # Note: this is a pretty basic heuristic, we could try and do something more sophisticated in the future
-    if max_seqlen_q > 1 and max_seqlen_k >= 2048 and max_num_blocks_per_sequence >= 16:
+    if max_seqlen_q == 1 and max_seqlen_k >= 2048 and max_num_blocks_per_sequence >= 16:
         # This number of KV splits affects the size of the scratchpad memory that we allocate,
         # so cap the number of splits at 64 so that we don't allocate too much memory
         return min(max_num_blocks_per_sequence // 4, 64)
@@ -271,6 +271,7 @@ def varlen_attention(
     lse_scratchpad = None
 
     if metadata.num_kv_splits > 1:
+        # print("ALLOCATING!")
         # Allocate additional memory for intermediate result (of shape (head_size,)) for each batch/kv split/query head
         output_scratchpad = torch.empty(
             (metadata.num_kv_splits, metadata.total_num_q, metadata.num_query_heads, metadata.head_size),
