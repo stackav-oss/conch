@@ -14,17 +14,19 @@ benchmark_dir="results/$benchmark_name"
 mkdir -p $benchmark_dir
 
 sequence_lengths=(
-  "32"
-  "64"
-  "128"
-  "256"
-  "512"
-  "1024"
-  "2048"
+  # "32"
+  # "64"
+  # "128"
+  # "256"
+  # "512"
+  # "1024"
+  # "2048"
   "4096"
   "8192"
   "16384"
   "32768"
+  "65536"
+  "131072"
 )
 
 for seq_len in ${sequence_lengths[@]}; do
