@@ -96,7 +96,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     cxpr_apply_fp8_scaling: tl.constexpr,
     cxpr_is_causal: tl.constexpr,
     cxpr_split_kv: tl.constexpr,
-    cxpr_is_rocm: tl.constexpr,
+    cxpr_use_conditional_mask: tl.constexpr,
 ) -> None:
     """Varlen Attention kernel: compute attention for a split block.
 
@@ -136,6 +136,8 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         cxpr_is_softcap: Whether or not logits softcapping will be applied.
         cxpr_apply_fp8_scaling: Whether or not to apply FP8 scaling.
         cxpr_is_causal: Whether or not to apply causal masking.
+        cxpr_split_kv: Whether or not we are using FlashDecoding.
+        cxpr_use_conditional_mask: Whether to use conditionally-masked loads/stores or always apply mask.
     """
     # Encode number of query and KV splits in axis=0
     split_index = tl.program_id(0)
@@ -243,7 +245,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     needs_head_mask = True
     needs_query_mask = True
 
-    if cxpr_is_rocm:
+    if cxpr_use_conditional_mask:
         needs_query_split_mask = end_seqlen_q > this_query_length
         needs_query_group_mask = query_group_size != cxpr_query_group_size_padded
         needs_head_mask = head_size != cxpr_head_size_padded
@@ -253,8 +255,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     query_mask = query_split_group_seq_mask[:, None] & query_split_group_head_mask[:, None] & head_mask[None, :]
 
     # Load queries
-    # query = tl.load(query_ptr + query_offsets, mask=query_mask, other=0.0, eviction_policy="evict_last")
-    if cxpr_is_rocm:
+    if cxpr_use_conditional_mask:
         query = _load(query_ptr + query_offsets, use_mask=needs_query_mask, mask=query_mask, other=0.0)
     else:
         query = tl.load(query_ptr + query_offsets, mask=query_mask, other=0.0, eviction_policy="evict_last")
@@ -293,7 +294,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         needs_cache_block_mask = True
         needs_qk_mask = True
 
-        if cxpr_is_rocm:
+        if cxpr_use_conditional_mask:
             needs_cache_block_mask = num_entries_in_cache_block != cxpr_cache_block_size
             needs_qk_mask = (needs_query_split_mask or needs_query_group_mask) or needs_cache_block_mask
 
@@ -312,7 +313,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
         key_block_mask = head_mask[:, None] & cache_block_mask[None, :]
 
-        if cxpr_is_rocm:
+        if cxpr_use_conditional_mask:
             key_block = _load(
                 key_cache_ptr + kv_cache_block_index_offset + key_block_offsets,
                 use_mask=(needs_cache_block_mask or needs_head_mask),
@@ -335,7 +336,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         # query.shape -> (query_chunk_size * query_group_size, head_size)
         # key_block.shape -> (head_size, cache_block_size)
         # qk.shape -> (query_chunk_size * query_group_size, cache_block_size)
-        # qk = (scale * tl.dot(query, key_block)).to(dtype)
         qk = scale * tl.dot(query, key_block)
 
         # Need to mask out any elements that represent unused cache block entries or padding elements
@@ -348,25 +348,17 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
         if needs_qk_mask or needs_causal_mask:
             # Set masked out elements to -inf
-            # qk = tl.where(qk_mask, qk, -float("inf")).to(dtype)
             qk = tl.where(qk_mask, qk, -float("inf"))
-        # qk = tl.where(qk_mask, qk, -float("inf"))
 
         # Handle softcapping
         if cxpr_is_softcap:
             # tanh can only accept fp32 or fp64 arguments
-            # qk = (softcap * libdevice.tanh((qk / softcap).to(tl.float32))).to(dtype)
             qk = softcap * libdevice.tanh(qk / softcap)
 
         # Reduce maximum between running max and the max of (scale * Q * K) for this cache block
-        # m_ij = tl.maximum(m_i, tl.max(qk, axis=1).to(dtype)).to(dtype)
-        # m_ij = tl.maximum(m_i, tl.max(qk, axis=1)).to(dtype)
-        # m_ij = tl.maximum(m_i, tl.max(qk, axis=1)).to(dtype)
         m_ij = tl.maximum(m_i, tl.max(qk, axis=1))
 
         # Calculate numerator of softmax for this cache block
-        # p = tl.exp(qk.to(tl.float32) - m_ij[:, None].to(tl.float32)).to(dtype)
-        # p = tl.exp((qk - m_ij[:, None]).to(tl.float32)).to(dtype)
         p = tl.exp(qk - m_ij[:, None]).to(dtype)
         # Need to mask out any elements that represent unused cache block entries or padding elements
         p = tl.where(qk_mask, p, 0.0).to(dtype)
@@ -375,7 +367,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         l_ij = tl.sum(p, axis=1).to(dtype)
 
         # Calculate correction factor for this cache block
-        # alpha = tl.exp((m_i - m_ij).to(tl.float32)).to(dtype)
         alpha = tl.exp(m_i - m_ij).to(dtype)
 
         # Apply scaling factor to running output
@@ -388,7 +379,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
 
         value_block_mask = cache_block_mask[:, None] & head_mask[None, :]
 
-        if cxpr_is_rocm:
+        if cxpr_use_conditional_mask:
             value_block = _load(
                 value_cache_ptr + kv_cache_block_index_offset + value_block_offsets,
                 use_mask=(needs_cache_block_mask or needs_head_mask),
@@ -411,9 +402,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         # p.shape -> (query_chunk_size * query_group_size, cache_block_size)
         # value_block.shape -> (cache_block_size, head_size)
         # output.shape -> (query_chunk_size * query_group_size, head_size)
-        # output += tl.dot(p.to(value_block.dtype), value_block)
-        # output += tl.dot(p.to(dtype), value_block, acc=output)
-        # output += tl.dot(p.to(dtype), value_block)
         output += tl.dot(p, value_block).to(dtype)
 
         # Update running max
@@ -435,7 +423,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     )
 
     # Store output scratchpad results
-    if cxpr_is_rocm:
+    if cxpr_use_conditional_mask:
         _store(
             output_scratchpad_ptr + output_scratch_offsets,
             output,
@@ -465,7 +453,7 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         lse_mask = query_split_group_seq_mask & query_split_group_head_mask
 
         # Store lse scratchpad results
-        if cxpr_is_rocm:
+        if cxpr_use_conditional_mask:
             _store(
                 lse_scratchpad_ptr + lse_scratch_offsets,
                 lse,
@@ -503,7 +491,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     # Constexprs
     cxpr_cache_block_size: tl.constexpr,
     cxpr_head_size_padded: tl.constexpr,
-    cxpr_is_rocm: tl.constexpr,
+    cxpr_use_conditional_mask: tl.constexpr,
 ) -> None:
     """Varlen Attention kernel: reduce results across all splits.
 
@@ -512,7 +500,6 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
         output_scratchpad_ptr: Pointer to tensor as scratchpad for output of each cache block, shape: (num_kv_splits, total_num_q, num_query_heads, head_size).
         lse_scratchpad_ptr: Pointer to tensor as scratchpad for log-sum-exp of each cache block, shape: (num_kv_splits, total_num_q, num_query_heads).
         seq_lens_ptr: Pointer to tensor holding the current sequence length for each sequence in the batch, shape: (batch_size, ).
-        cu_seqlens_q_ptr: Pointer to tensor holding the cumulative sequence lengths for each query in the batch, shape: (batch_size + 1, ).
         num_cache_blocks_per_split: The maximum number of cache blocks each split will process.
         head_size: Actual head dim, not padded to power-of-two.
         batch_size: Number of sequences in the batch.
@@ -523,10 +510,9 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
         output_scratchpad_head_stride: Stride of the output scratchpad tensor in the 2nd dimension.
         lse_scratchpad_kv_split_stride: Stride of the log-sum-exp scratchpad tensor in the 0th dimension.
         lse_scratchpad_batch_stride: Stride of the log-sum-exp scratchpad tensor in the 1st dimension.
-        cxpr_query_chunk_size: The size of the query chunks (must be power of two!).
         cxpr_cache_block_size: The size of the cache blocks (must be power of two!), as constexpr so that we can use for reshaping tensors.
         cxpr_head_size_padded: The head size of the attention layer padded to the next power of two.
-        cxpr_is_causal: Whether or not to apply causal masking.
+        cxpr_use_conditional_mask: Whether to use conditionally-masked loads/stores or always apply mask.
     """
     # What query head is this program processing?
     query_head_index = tl.program_id(0)
@@ -559,7 +545,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
 
     needs_head_mask = True
 
-    if cxpr_is_rocm:
+    if cxpr_use_conditional_mask:
         # Only enable masking if its necessary
         needs_head_mask = head_size != cxpr_head_size_padded
 
@@ -575,7 +561,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
         )
 
         # Load output for this cache block, shape -> (cxpr_head_size_padded,)
-        if cxpr_is_rocm:
+        if cxpr_use_conditional_mask:
             block_output = _load(
                 output_scratchpad_ptr + output_scratchpad_offsets,
                 use_mask=needs_head_mask,
@@ -615,7 +601,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
         output += beta * block_output
 
         # Update running max
-        m_i = m_ij
+        m_i = m_ij.to(dtype)
         # Update running final scale factor
         l_i = l_i * alpha + beta
 
@@ -626,7 +612,7 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
     output_offsets = batch_index * output_batch_stride + query_head_index * output_head_stride + head_offsets
 
     # Store final result
-    if cxpr_is_rocm:
+    if cxpr_use_conditional_mask:
         _store(
             output_ptr + output_offsets,
             output,
@@ -639,6 +625,15 @@ def _varlen_attention_reduce_splits_kernel(  # noqa: PLR0913
             output,
             mask=head_mask,
         )
+
+
+def _do_conditionally_masked_loads_and_stores() -> bool:
+    """Determine whether we should do conditionally-masked loads and stores or always use a mask.
+    On some platforms (H100) its faster to always use the mask than to conditionally apply it.
+    On MI300X, its much faster to conditionallly apply the mask.
+    """
+    # TODO(jmanning): Customize this per-platform
+    return "H100" not in current_platform.get_device_name()
 
 
 def _get_block_size() -> int:
@@ -750,7 +745,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
     cxpr_is_softcap: tl.constexpr = softcap > 0.0
 
     cxpr_apply_fp8_scaling: tl.constexpr = "fp8" in kv_cache_dtype or query.dtype in _FP8_DTYPES
-    cxpr_is_rocm: tl.constexpr = current_platform.is_amd()
+    cxpr_use_conditional_mask: tl.constexpr = _do_conditionally_masked_loads_and_stores()
 
     if strict and cxpr_apply_fp8_scaling:
         assert q_scale is not None
@@ -847,8 +842,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_apply_fp8_scaling=cxpr_apply_fp8_scaling,
         cxpr_is_causal=causal,
         cxpr_split_kv=(num_kv_splits > 1),
-        cxpr_is_rocm=cxpr_is_rocm,
-        # num_stages=2,
+        cxpr_use_conditional_mask=cxpr_use_conditional_mask,
     )
 
     if num_kv_splits > 1:
@@ -880,5 +874,5 @@ def varlen_attention_launcher(  # noqa: PLR0913
             # Constexpr sizes
             cxpr_cache_block_size=cxpr_cache_block_size,
             cxpr_head_size_padded=cxpr_head_size_padded,
-            cxpr_is_rocm=cxpr_is_rocm,
+            cxpr_use_conditional_mask=cxpr_use_conditional_mask,
         )
