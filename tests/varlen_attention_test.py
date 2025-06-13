@@ -439,6 +439,125 @@ def test_varlen_attention_vs_flash_attn(
 
 
 @pytest.mark.skipif(not _ENABLE_VLLM, reason="This test case requires vLLM")
+@pytest.mark.parametrize("num_seqs", _NUM_SEQS_ABRIDGED)
+@pytest.mark.parametrize("head_size", _HEAD_SIZES)
+@pytest.mark.parametrize(("num_query_heads", "num_kv_heads"), _NUM_HEADS_ABRIDGED)
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("sequence_length", [8192])
+@pytest.mark.parametrize("causal", [True])
+@pytest.mark.parametrize("kv_cache_dtype", ["auto", "fp8"])
+def test_varlen_attention_decode(
+    num_seqs: int,
+    head_size: int,
+    num_query_heads: int,
+    num_kv_heads: int,
+    dtype: torch.dtype,
+    sequence_length: int,
+    causal: bool,
+    kv_cache_dtype: str,
+) -> None:
+    """Test Varlen Attention Triton kernel with various configurations vs. vLLM FlashAttnVarlen."""
+    if kv_cache_dtype == "fp8" and not current_platform.supports_fp8():
+        pytest.skip()
+
+    from vllm.vllm_flash_attn import flash_attn_varlen_func  # type: ignore[attr-defined, unused-ignore]
+
+    seed: Final = 0
+    seed_everything(seed)
+
+    device: Final = torch.device(current_platform.device)
+    torch.set_default_device(device)
+
+    scale: Final = float(1.0 / (head_size**0.5))
+    softcap: Final = 0.0
+
+    tolerance: Final = _get_tolerance_for_dtype(dtype)
+
+    cache_block_size = 16
+
+    _, _, _, key_cache, value_cache, block_table, seq_lens = create_tensors(
+        head_size,
+        sequence_length,
+        cache_block_size,
+        num_seqs,
+        num_query_heads,
+        num_kv_heads,
+        kv_cache_dtype,
+        current_platform.device,
+        dtype,
+    )
+
+    q_scale = torch.full((1,), 0.5, device=device)
+    k_scale = torch.full((1,), 0.5, device=device)
+    v_scale = torch.full((1,), 0.5, device=device)
+
+    starting_item = torch.as_tensor([0], dtype=torch.int32)
+
+    # All seqlen_q == 1 because its all decodes
+    seqlens_q = torch.ones((num_seqs,), dtype=torch.int32)
+
+    cu_seqlens_q = torch.cumsum(seqlens_q, dim=0, dtype=torch.int32)
+    cu_seqlens_q = torch.cat((starting_item, cu_seqlens_q), dim=0)
+
+    max_seqlen_q = int(torch.max(seqlens_q).item())
+    max_seqlen_k = int(torch.max(seq_lens).item())
+
+    batch_size = cu_seqlens_q.shape[0] - 1
+    total_num_q = int(cu_seqlens_q[-1].item())
+
+    q = torch.empty(total_num_q, num_query_heads, head_size, dtype=dtype, device=device)
+    q.uniform_(-scale, scale)
+
+    # FA version 2 is fine until we need FP8 support
+    fa_version = 2
+
+    if kv_cache_dtype == "fp8":
+        fp8_dtype = torch.float8_e4m3fnuz if current_platform.is_amd() else torch.float8_e4m3fn
+        q = q.to(fp8_dtype)
+        key_cache = key_cache.view(fp8_dtype)
+        value_cache = value_cache.view(fp8_dtype)
+        # Use FA version 3 if we are using FP8
+        fa_version = 3
+
+    vllm_output = flash_attn_varlen_func(
+        q=q,
+        k=key_cache,
+        v=value_cache,
+        cu_seqlens_q=cu_seqlens_q,
+        max_seqlen_q=max_seqlen_q,
+        max_seqlen_k=max_seqlen_k,
+        block_table=block_table,
+        seqused_k=seq_lens,
+        softmax_scale=scale,
+        causal=causal,
+        fa_version=fa_version,
+        q_descale=q_scale.expand(batch_size, num_kv_heads),
+        k_descale=k_scale.expand(batch_size, num_kv_heads),
+        v_descale=v_scale.expand(batch_size, num_kv_heads),
+    )
+
+    conch_output = varlen_attention(
+        query=q,
+        key_cache=key_cache,
+        value_cache=value_cache,
+        cu_seqlens_q=cu_seqlens_q,
+        max_seqlen_q=max_seqlen_q,
+        seq_lens=seq_lens,
+        max_seqlen_k=max_seqlen_k,
+        block_table=block_table,
+        causal=causal,
+        scale=scale,
+        softcap=softcap,
+        kv_cache_dtype=kv_cache_dtype,
+        q_scale=q_scale,
+        k_scale=k_scale,
+        v_scale=v_scale,
+    )
+
+    torch.testing.assert_close(vllm_output, conch_output, atol=tolerance, rtol=tolerance)
+
+
+@pytest.mark.skipif(not _ENABLE_VLLM, reason="This test case requires vLLM")
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
 def test_vllm_crash(dtype: torch.dtype) -> None:
     """Test Varlen Attention Triton kernel with various configurations vs. vLLM FlashAttnVarlen."""
