@@ -158,7 +158,7 @@ def main(
 
     kv_cache_dtype = "auto"
 
-    query, _, _, key_cache, value_cache, block_table, seq_lens = create_tensors(
+    query, key_cache, value_cache, block_table, seq_lens = create_tensors(
         head_dim, seq_len, cache_block_size, batch_size, num_query_heads, num_kv_heads, kv_cache_dtype, device, dtype
     )
 

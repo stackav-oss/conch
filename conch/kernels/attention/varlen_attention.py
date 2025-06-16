@@ -74,7 +74,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Sizes of tensors above
     head_size: int,  # output.shape[3]
     query_group_size: int,  # num_query_heads // num_kv_heads
-    num_kv_splits: int,
     # Strides for tensors above
     output_scratchpad_kv_split_stride: tl.int64,  # output_scratchpad.stride(0)
     output_scratchpad_batch_stride: tl.int64,  # output_scratchpad.stride(1)
@@ -117,7 +116,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         softcap: Logits softcap to apply.
         head_size: Actual head dim, not padded to power-of-two.
         query_group_size: Number of query heads in each group.
-        num_kv_splits: The number of times we're splitting processing of the KV seqlen.
         output_scratchpad_kv_split_stride: Stride of the output scratchpad tensor in the 0th dimension.
         output_scratchpad_batch_stride: Stride of the output scratchpad tensor in the 1st dimension.
         output_scratchpad_head_stride: Stride of the output scratchpad tensor in the 2nd dimension.
@@ -139,14 +137,10 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         cxpr_split_kv: Whether or not we are using FlashDecoding.
         cxpr_use_conditional_mask: Whether to use conditionally-masked loads/stores or always apply mask.
     """
-    # Encode number of query and KV splits in axis=0
-    split_index = tl.program_id(0)
-    total_num_splits = tl.num_programs(0)
-
-    # kv_split_index: What "KV split" of the overall data (between 1 and N KV cache blocks) is this program processing?
-    kv_split_index = split_index // tl.cdiv(total_num_splits, num_kv_splits)
-    # query_split_index: What "query split" of the overall data (between 1 and M chunks of the query sequence) is this program processing?
-    query_split_index = split_index % tl.cdiv(total_num_splits, num_kv_splits)
+    # What "KV split" of the overall data (between 1 and N KV cache blocks) is this program processing?
+    kv_split_index = tl.program_id(0) if cxpr_split_kv else 0
+    # What "query split" of the overall data (between 1 and M chunks of the query sequence) is this program processing?
+    query_split_index = 0 if cxpr_split_kv else tl.program_id(0)
 
     # What KV head is this program processing?
     kv_head_index = tl.program_id(1)
@@ -175,9 +169,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     this_query_end = tl.load(cu_seqlens_q_ptr + batch_index + 1)
     this_query_length = this_query_end - this_query_start
 
-    # If the query length is just one token, then we have a decode case
-    is_pure_decode = this_query_length == 1
-
     # Offset for how many tokens in query correspond to previous splits for this sequence
     this_query_split_offset = query_split_index * cxpr_query_chunk_size
 
@@ -186,11 +177,14 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     if this_query_split_offset > this_query_length:
         return
 
-    # What is the last Q token in this block?
-    end_seqlen_q = this_query_split_offset + cxpr_query_chunk_size
+    # If the query length is just one token, then we have a decode case
+    is_pure_decode = this_query_length == 1
 
     # Only need causal masking if enabled and this program is not processing a decode
     needs_causal_mask = cxpr_is_causal and not is_pure_decode
+
+    # What is the last Q token in this block?
+    end_seqlen_q = this_query_split_offset + cxpr_query_chunk_size
 
     # Use dtype of output as the dtype for intermediate values/calculations (except for those that must be done in FP32)
     dtype = output_scratchpad_ptr.dtype.element_ty
@@ -646,7 +640,7 @@ def _get_block_size() -> int:
     return 32
 
 
-def _get_tuned_sizes(head_size_padded: int, query_group_size_padded: int, max_seqlen_q: int) -> tuple[int, int]:
+def _get_tuned_sizes(head_size_padded: int, query_group_size_padded: int, split_kv: bool) -> tuple[int, int]:
     """Get tuned sizes for current device."""
     block_size = _get_block_size()
 
@@ -656,10 +650,10 @@ def _get_tuned_sizes(head_size_padded: int, query_group_size_padded: int, max_se
         block_size = block_size // 2
 
     # The "query chunk size" represents the number of queries that each kernel will process at a time.
-    query_chunk_size = max(1, block_size // query_group_size_padded) if max_seqlen_q > 1 else 1
+    query_chunk_size = 1 if split_kv else max(1, block_size // query_group_size_padded)
 
     # If we have all decodes, we need to make sure that we have at least a block size of 16 for tl.dot
-    query_group_size_padded = query_group_size_padded if max_seqlen_q > 1 else max(16, query_group_size_padded)
+    query_group_size_padded = max(16, query_group_size_padded) if split_kv else query_group_size_padded
 
     return query_chunk_size, query_group_size_padded
 
@@ -732,9 +726,10 @@ def varlen_attention_launcher(  # noqa: PLR0913
 
     # Perform unchecked size accesses, assume has already been checked
     total_num_q, num_query_heads, head_size = output.shape
-    num_cache_blocks, cache_block_size, num_kv_heads, _ = key_cache.shape
-    batch_size, max_num_blocks_per_sequence = block_table.shape
-    max_num_kv_splits = output_scratchpad.size(0) if output_scratchpad is not None else 1
+    _, cache_block_size, num_kv_heads, _ = key_cache.shape
+    batch_size, _ = block_table.shape
+    num_kv_splits = output_scratchpad.size(0) if output_scratchpad is not None else 1
+    max_num_blocks_per_sequence = triton.cdiv(max_seqlen_k, cache_block_size)
 
     if strict:
         assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"
@@ -761,16 +756,11 @@ def varlen_attention_launcher(  # noqa: PLR0913
     query_group_size = num_query_heads // num_kv_heads
     query_group_size_padded = triton.next_power_of_2(query_group_size)
 
-    # What is the maximum number of stage 1 kernels to launch per batch/head?
-    # Each kernel processes up to {cache_block_size} tokens at a time (for each split that a stage1 kernel processes), so we
-    # can process a sequence up to {max_num_kv_splits * cache_block_size} tokens before a stage 1 kernel will process multiple
-    # cache blocks. This helps to reduce the overhead of kernel launches / split reduction for long sequences.
-    # Note: we may need to tune this value for a given HW platform.
-    num_kv_splits = min(max_num_blocks_per_sequence, max_num_kv_splits)
+    cxpr_split_kv: tl.constexpr = num_kv_splits > 1
 
     # Different platforms may require different sizes.
     query_chunk_size, query_group_size_padded = _get_tuned_sizes(
-        cxpr_head_size_padded, query_group_size_padded, max_seqlen_q
+        cxpr_head_size_padded, query_group_size_padded, cxpr_split_kv
     )
 
     # Use the maximum Q sequence length to determine what is the max number of query splits any sequence will need
@@ -789,7 +779,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
     lse_scratchpad_kv_split_stride = 0
     lse_scratchpad_batch_stride = 0
 
-    if num_kv_splits > 1:
+    if cxpr_split_kv:
         assert output_scratchpad is not None
         assert lse_scratchpad is not None
 
@@ -805,7 +795,7 @@ def varlen_attention_launcher(  # noqa: PLR0913
     # Launch stage 1 kernel
     _varlen_attention_compute_splits_kernel[stage1_grid](
         # Relevant tensors
-        output_scratchpad_ptr=output_scratchpad if num_kv_splits > 1 else output,
+        output_scratchpad_ptr=output_scratchpad if cxpr_split_kv else output,
         lse_scratchpad_ptr=lse_scratchpad,
         query_ptr=query,
         key_cache_ptr=key_cache,
@@ -822,7 +812,6 @@ def varlen_attention_launcher(  # noqa: PLR0913
         softcap=softcap,
         head_size=head_size,
         query_group_size=query_group_size,
-        num_kv_splits=num_kv_splits,
         # Strides of relevant tensors
         output_scratchpad_kv_split_stride=output_scratchpad_kv_split_stride,
         output_scratchpad_batch_stride=output_scratchpad_batch_stride,
@@ -843,11 +832,11 @@ def varlen_attention_launcher(  # noqa: PLR0913
         cxpr_is_softcap=cxpr_is_softcap,
         cxpr_apply_fp8_scaling=cxpr_apply_fp8_scaling,
         cxpr_is_causal=causal,
-        cxpr_split_kv=(num_kv_splits > 1),
+        cxpr_split_kv=cxpr_split_kv,
         cxpr_use_conditional_mask=cxpr_use_conditional_mask,
     )
 
-    if num_kv_splits > 1:
+    if cxpr_split_kv:
         assert output_scratchpad is not None
         assert lse_scratchpad is not None
 
