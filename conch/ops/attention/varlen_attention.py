@@ -16,12 +16,9 @@ from conch.kernels.attention.varlen_attention import _FP8_DTYPES, varlen_attenti
 class VarlenAttentionMetadata:
     """Wrapper class holding metadata for variable-length attention kernel."""
 
-    batch_size: int
-    num_query_heads: int
-    num_kv_heads: int
-    head_size: int
     total_num_q: int
-    max_num_blocks_per_sequence: int
+    num_query_heads: int
+    head_size: int
     num_kv_splits: int
 
 
@@ -187,26 +184,19 @@ def _create_varlen_metadata(
     if strict:
         _check_output_query_size_compatibility(out, query)
 
-    batch_size = cu_seqlens_q.shape[0] - 1
-    total_num_q, num_query_heads, head_size = out.shape
+        _, num_query_heads, head_size = out.shape
+        batch_size = cu_seqlens_q.shape[0] - 1
 
-    if strict:
         _check_key_value_cache_size_compatibility(key_cache, value_cache, head_size, num_query_heads)
         _check_block_table_size_compatibility(block_table, batch_size)
         _check_seqlen_size_compatibility(seq_lens, batch_size)
 
-    _, cache_block_size, num_kv_heads, _ = key_cache.shape
-    _, max_num_blocks_per_sequence = block_table.shape
-
     return VarlenAttentionMetadata(
-        batch_size=batch_size,
-        num_query_heads=num_query_heads,
-        num_kv_heads=num_kv_heads,
-        head_size=head_size,
-        total_num_q=total_num_q,
-        max_num_blocks_per_sequence=max_num_blocks_per_sequence,
+        total_num_q=out.size(0),
+        num_query_heads=out.size(1),
+        head_size=out.size(2),
         num_kv_splits=_determine_max_num_kv_splits(
-            max_seqlen_q, max_seqlen_k, triton.cdiv(max_seqlen_k, cache_block_size)
+            max_seqlen_q, max_seqlen_k, triton.cdiv(max_seqlen_k, key_cache.size(1))
         ),
     )
 
