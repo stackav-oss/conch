@@ -259,7 +259,7 @@ def varlen_attention(
             strict=strict,
         )
 
-    num_kv_splits=_determine_max_num_kv_splits(
+    num_kv_splits = _determine_max_num_kv_splits(
         max_seqlen_q, max_seqlen_k, triton.cdiv(max_seqlen_k, key_cache.size(1))
     )
 
@@ -268,9 +268,9 @@ def varlen_attention(
 
     # if metadata.num_kv_splits > 1:
     if num_kv_splits > 1:
-        total_num_q=out.size(0)
-        num_query_heads=out.size(1)
-        head_size=out.size(2)
+        total_num_q=output.size(0)
+        num_query_heads=output.size(1)
+        head_size=output.size(2)
 
         # Allocate additional memory for intermediate result (of shape (head_size,)) for each batch/kv split/query head
         output_scratchpad = torch.empty(

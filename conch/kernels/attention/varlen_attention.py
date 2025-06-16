@@ -74,7 +74,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
     # Sizes of tensors above
     head_size: int,  # output.shape[3]
     query_group_size: int,  # num_query_heads // num_kv_heads
-    num_kv_splits: int,
     # Strides for tensors above
     output_scratchpad_kv_split_stride: tl.int64,  # output_scratchpad.stride(0)
     output_scratchpad_batch_stride: tl.int64,  # output_scratchpad.stride(1)
@@ -117,7 +116,6 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         softcap: Logits softcap to apply.
         head_size: Actual head dim, not padded to power-of-two.
         query_group_size: Number of query heads in each group.
-        num_kv_splits: The number of times we're splitting processing of the KV seqlen.
         output_scratchpad_kv_split_stride: Stride of the output scratchpad tensor in the 0th dimension.
         output_scratchpad_batch_stride: Stride of the output scratchpad tensor in the 1st dimension.
         output_scratchpad_head_stride: Stride of the output scratchpad tensor in the 2nd dimension.
@@ -821,7 +819,6 @@ def varlen_attention_launcher(  # noqa: PLR0913
         softcap=softcap,
         head_size=head_size,
         query_group_size=query_group_size,
-        num_kv_splits=num_kv_splits,
         # Strides of relevant tensors
         output_scratchpad_kv_split_stride=output_scratchpad_kv_split_stride,
         output_scratchpad_batch_stride=output_scratchpad_batch_stride,
