@@ -12,14 +12,14 @@ import triton
 from conch.kernels.attention.varlen_attention import _FP8_DTYPES, varlen_attention_launcher
 
 
-@dataclass
-class VarlenAttentionMetadata:
-    """Wrapper class holding metadata for variable-length attention kernel."""
-
-    total_num_q: int
-    num_query_heads: int
-    head_size: int
-    num_kv_splits: int
+# @dataclass
+# class VarlenAttentionMetadata:
+#     """Wrapper class holding metadata for variable-length attention kernel."""
+# 
+#     total_num_q: int
+#     num_query_heads: int
+#     head_size: int
+#     # num_kv_splits: int
 
 
 def _check_output_query_size_compatibility(output: torch.Tensor, query: torch.Tensor) -> None:
@@ -162,7 +162,8 @@ def _create_varlen_metadata(
     max_seqlen_q: int,
     max_seqlen_k: int,
     strict: bool = False,
-) -> VarlenAttentionMetadata:
+# ) -> VarlenAttentionMetadata:
+) -> None:
     """Check size compatibility of tensors for variable-length attention and return metadata if successful.
 
     Args:
@@ -191,14 +192,11 @@ def _create_varlen_metadata(
         _check_block_table_size_compatibility(block_table, batch_size)
         _check_seqlen_size_compatibility(seq_lens, batch_size)
 
-    return VarlenAttentionMetadata(
-        total_num_q=out.size(0),
-        num_query_heads=out.size(1),
-        head_size=out.size(2),
-        num_kv_splits=_determine_max_num_kv_splits(
-            max_seqlen_q, max_seqlen_k, triton.cdiv(max_seqlen_k, key_cache.size(1))
-        ),
-    )
+    # return VarlenAttentionMetadata(
+    #     total_num_q=out.size(0),
+    #     num_query_heads=out.size(1),
+    #     head_size=out.size(2),
+    # )
 
 
 def varlen_attention(
@@ -247,33 +245,45 @@ def varlen_attention(
         output = torch.zeros_like(query, device=query.device, dtype=output_dtype)
 
     # Check sizes of input tensors
-    metadata = _create_varlen_metadata(
-        output,
-        query,
-        key_cache,
-        value_cache,
-        cu_seqlens_q,
-        seq_lens,
-        block_table,
-        max_seqlen_q,
-        max_seqlen_k,
-        strict=strict,
+    if strict:
+        _create_varlen_metadata(
+            output,
+            query,
+            key_cache,
+            value_cache,
+            cu_seqlens_q,
+            seq_lens,
+            block_table,
+            max_seqlen_q,
+            max_seqlen_k,
+            strict=strict,
+        )
+
+    num_kv_splits=_determine_max_num_kv_splits(
+        max_seqlen_q, max_seqlen_k, triton.cdiv(max_seqlen_k, key_cache.size(1))
     )
 
     output_scratchpad = None
     lse_scratchpad = None
 
-    if metadata.num_kv_splits > 1:
+    # if metadata.num_kv_splits > 1:
+    if num_kv_splits > 1:
+        total_num_q=out.size(0)
+        num_query_heads=out.size(1)
+        head_size=out.size(2)
+
         # Allocate additional memory for intermediate result (of shape (head_size,)) for each batch/kv split/query head
         output_scratchpad = torch.empty(
-            (metadata.num_kv_splits, metadata.total_num_q, metadata.num_query_heads, metadata.head_size),
+            # (metadata.num_kv_splits, metadata.total_num_q, metadata.num_query_heads, metadata.head_size),
+            (num_kv_splits, total_num_q, num_query_heads, head_size),
             dtype=output.dtype,
             device=output.device,
         )
 
         # Allocate additional memory for intermediate log-sum-exp ("lse", scalar value per-cache block) for each batch/kv split/query head
         lse_scratchpad = torch.empty(
-            (metadata.num_kv_splits, metadata.total_num_q, metadata.num_query_heads),
+            # (metadata.num_kv_splits, metadata.total_num_q, metadata.num_query_heads),
+            (num_kv_splits, total_num_q, num_query_heads),
             dtype=output.dtype,
             device=output.device,
         )
