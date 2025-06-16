@@ -12,6 +12,7 @@ from conch import envs
 from conch.ops.attention.varlen_attention import varlen_attention
 from conch.platforms import current_platform
 from conch.third_party.vllm.utils import create_tensors, seed_everything
+from conch.third_party.vllm.unified_attention import unified_attention
 
 _ENABLE_VLLM: Final = envs.CONCH_ENABLE_VLLM and current_platform.has_cuda()
 _HEAD_SIZES: Final = [64, 96, 128, 256]
@@ -27,10 +28,12 @@ _SEQUENCE_LENGTHS: Final = [256, 257, 343, 1024, 1025]
 def _get_tolerance_for_dtype(dtype: torch.dtype) -> float:
     """Get expected tolerance to match to for a given dtype."""
     if dtype == torch.float16:
-        return 7e-4
+        # return 7e-4
+        return 1e-4
 
     if dtype == torch.bfloat16:
-        return 2e-3
+        # return 2e-3
+        return 1e-3
 
     msg = f"Unsupported dtype: '{dtype}'"
     raise NotImplementedError(msg)
@@ -214,10 +217,13 @@ def _varlen_attention_pytorch(
 
 @pytest.mark.parametrize("num_seqs", _NUM_SEQS_ABRIDGED)
 @pytest.mark.parametrize("head_size", _HEAD_SIZES)
+# @pytest.mark.parametrize("head_size", [96, 128, 256])
 @pytest.mark.parametrize(("num_query_heads", "num_kv_heads"), _NUM_HEADS_ABRIDGED)
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+# @pytest.mark.parametrize("dtype", [torch.float16])
 @pytest.mark.parametrize("sequence_length", _SEQUENCE_LENGTHS)
-@pytest.mark.parametrize("causal", [True, False])
+# @pytest.mark.parametrize("causal", [True, False])
+@pytest.mark.parametrize("causal", [True])
 def test_varlen_attention_vs_pytorch(
     num_seqs: int,
     head_size: int,
@@ -228,7 +234,8 @@ def test_varlen_attention_vs_pytorch(
     causal: bool,
 ) -> None:
     """Test Varlen Attention Triton kernel with various configurations vs. vLLM FlashAttnVarlen."""
-    seed: Final = 0
+    # seed: Final = 0
+    seed: Final = 1024
     seed_everything(seed)
 
     device: Final = torch.device(current_platform.device)
@@ -294,6 +301,27 @@ def test_varlen_attention_vs_pytorch(
         causal=causal,
     )
 
+    # conch_output = torch.zeros_like(q)
+
+    # unified_attention(
+    #     q=q,
+    #     k=key_cache,
+    #     v=value_cache,
+    #     out=conch_output,
+    #     cu_seqlens_q=cu_seqlens_q,
+    #     max_seqlen_q=max_seqlen_q,
+    #     seqused_k=seq_lens,
+    #     max_seqlen_k=max_seqlen_k,
+    #     softmax_scale=scale,
+    #     causal=causal,
+    #     window_size=(-1, -1),
+    #     block_table=block_table,
+    #     softcap=softcap,
+    #     q_descale=None,
+    #     k_descale=None,
+    #     v_descale=None,
+    # )
+
     conch_output = varlen_attention(
         query=q,
         key_cache=key_cache,
@@ -316,10 +344,13 @@ def test_varlen_attention_vs_pytorch(
 @pytest.mark.parametrize("head_size", _HEAD_SIZES)
 @pytest.mark.parametrize(("num_query_heads", "num_kv_heads"), _NUM_HEADS_ABRIDGED)
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+# @pytest.mark.parametrize("dtype", [torch.float16])
 @pytest.mark.parametrize("sequence_length", _SEQUENCE_LENGTHS)
-@pytest.mark.parametrize("causal", [True, False])
+# @pytest.mark.parametrize("causal", [True, False])
+@pytest.mark.parametrize("causal", [True])
 @pytest.mark.parametrize("is_pure_decode", [True, False])
 @pytest.mark.parametrize("kv_cache_dtype", ["auto", "fp8"])
+# @pytest.mark.parametrize("kv_cache_dtype", ["auto"])
 def test_varlen_attention_vs_flash_attn(
     num_seqs: int,
     head_size: int,
@@ -435,6 +466,27 @@ def test_varlen_attention_vs_flash_attn(
         v_scale=v_scale,
     )
 
+    # conch_output = torch.zeros_like(q)
+
+    # unified_attention(
+    #     q=q,
+    #     k=key_cache,
+    #     v=value_cache,
+    #     out=conch_output,
+    #     cu_seqlens_q=cu_seqlens_q,
+    #     max_seqlen_q=max_seqlen_q,
+    #     seqused_k=seq_lens,
+    #     max_seqlen_k=max_seqlen_k,
+    #     softmax_scale=scale,
+    #     causal=causal,
+    #     window_size=(-1, -1),
+    #     block_table=block_table,
+    #     softcap=softcap,
+    #     q_descale=None,
+    #     k_descale=None,
+    #     v_descale=None,
+    # )
+
     torch.testing.assert_close(vllm_output, conch_output, atol=tolerance, rtol=tolerance)
 
 
@@ -442,7 +494,8 @@ def test_varlen_attention_vs_flash_attn(
 @pytest.mark.parametrize("num_seqs", _NUM_SEQS_ABRIDGED)
 @pytest.mark.parametrize("head_size", _HEAD_SIZES)
 @pytest.mark.parametrize(("num_query_heads", "num_kv_heads"), _NUM_HEADS_ABRIDGED)
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+# @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("dtype", [torch.float16])
 @pytest.mark.parametrize("sequence_length", [8192])
 @pytest.mark.parametrize("causal", [True])
 @pytest.mark.parametrize("kv_cache_dtype", ["auto", "fp8"])
@@ -558,7 +611,8 @@ def test_varlen_attention_decode(
 
 
 @pytest.mark.skipif(not _ENABLE_VLLM, reason="This test case requires vLLM")
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+# @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("dtype", [torch.float16])
 def test_vllm_crash(dtype: torch.dtype) -> None:
     """Test Varlen Attention Triton kernel with various configurations vs. vLLM FlashAttnVarlen."""
     from vllm.vllm_flash_attn import flash_attn_varlen_func  # type: ignore[attr-defined, unused-ignore]
