@@ -310,111 +310,6 @@ def _run_paged_vs_sdpa(
     torch.testing.assert_close(final_out_sdpa, out_paged, atol=atol, rtol=rtol)
 
 
-def _triton_vs_vllm_cuda(
-    batch_size: int,
-    cache_block_size: int,
-    head_size: int,
-    num_query_heads: int,
-    num_kv_heads: int,
-    sequence_length: int,
-    kv_cache_dtype: str,
-    dtype: torch.dtype,
-) -> None:
-    """Run test case comparing our Triton PagedAttention kernel vs vLLM CUDA PagedAttention.
-
-    Args:
-        batch_size: Number of batches in input.
-        head_size: Head dimension.
-        num_query_heads: Number of query heads.
-        num_kv_heads: Number of key/value heads.
-        sequence_length: Sequence length of input.
-        cache_block_size: Number of K/V tensors that can fit in a cache block.
-        kv_cache_dtype: Data type of KV cache.
-        dtype: Datatype for tensors.
-    """
-    seed: Final = 0
-    seed_everything(seed)
-
-    device: Final = torch.device(current_platform.device)
-    torch.set_default_device(device)
-
-    from vllm._custom_ops import paged_attention_v2 as vllm_paged_attention_v2
-
-    query, key_cache_vllm, value_cache_vllm, key_cache_conch, value_cache_conch, block_table, seq_lens = create_tensors(
-        head_size,
-        sequence_length,
-        cache_block_size,
-        batch_size,
-        num_query_heads,
-        num_kv_heads,
-        kv_cache_dtype,
-        "cuda",
-        dtype,
-    )
-
-    scale: Final = float(1.0 / (head_size**0.5))
-    atol: Final = 1e-3
-    rtol: Final = 1e-3
-
-    k_scale = torch.full((1,), 0.5)
-    v_scale = torch.full((1,), 0.5)
-
-    # Run vLLM reference implementation
-    output_vllm = torch.empty_like(query)
-
-    max_seq_len = torch.max(seq_lens)
-
-    partition_size = 512
-    max_num_partitions = (max_seq_len + partition_size - 1) // partition_size
-    tmp_output = torch.empty(
-        size=(batch_size, num_query_heads, max_num_partitions, head_size),
-        dtype=dtype,
-        device=query.device,
-    )
-    exp_sums = torch.empty(
-        size=(batch_size, num_query_heads, max_num_partitions),
-        dtype=torch.float32,
-        device=query.device,
-    )
-    max_logits = torch.empty_like(exp_sums)
-
-    vllm_paged_attention_v2(
-        output_vllm,
-        max_logits,
-        exp_sums,
-        tmp_output,
-        query,
-        key_cache_vllm,
-        value_cache_vllm,
-        num_kv_heads,
-        scale,
-        block_table,
-        seq_lens,
-        cache_block_size,
-        int(max_seq_len.item()),
-        None,
-        kv_cache_dtype,
-        k_scale,
-        v_scale,
-    )
-
-    # Run Triton implementation
-    output_conch = paged_attention(
-        query,
-        key_cache_conch,
-        value_cache_conch,
-        block_table,
-        seq_lens,
-        scale=scale,
-        softcap=0.0,
-        kv_cache_dtype=kv_cache_dtype,
-        k_scale=k_scale,
-        v_scale=v_scale,
-    )
-
-    torch.testing.assert_close(output_vllm, output_conch, atol=atol, rtol=rtol)
-
-
 def _triton_vs_flash_attn(
     batch_size: int,
     cache_block_size: int,
@@ -447,7 +342,7 @@ def _triton_vs_flash_attn(
 
     from vllm.vllm_flash_attn import flash_attn_with_kvcache  # type: ignore[attr-defined, unused-ignore]
 
-    query, _, _, key_cache, value_cache, block_table, seq_lens = create_tensors(
+    query, key_cache, value_cache, block_table, seq_lens = create_tensors(
         head_size,
         sequence_length,
         cache_block_size,
@@ -531,43 +426,6 @@ def test_paged_attention(
         cache_block_size,
         dtype,
         gqa_workaround,
-    )
-
-
-@pytest.mark.skipif(not _ENABLE_VLLM, reason="This test case requires vLLM")
-@pytest.mark.parametrize("batch_size", _BATCH_SIZES)
-@pytest.mark.parametrize("cache_block_size", _CACHE_BLOCK_SIZES_VLLM)
-@pytest.mark.parametrize("head_size", _HEAD_SIZES_VLLM)
-@pytest.mark.parametrize(("num_query_heads", "num_kv_heads"), _NUM_HEADS)
-@pytest.mark.parametrize("sequence_length", _SEQUENCE_LENGTHS)
-@pytest.mark.parametrize("kv_cache_dtype", ["auto", "fp8"])
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
-def test_triton_vs_vllm_cuda(
-    batch_size: int,
-    cache_block_size: int,
-    head_size: int,
-    num_query_heads: int,
-    num_kv_heads: int,
-    sequence_length: int,
-    kv_cache_dtype: str,
-    dtype: torch.dtype,
-) -> None:
-    """Test PagedAttention kernel with various configurations vs. vLLM CUDA PagedAttention."""
-    if sequence_length < cache_block_size:
-        pytest.skip()
-
-    if kv_cache_dtype == "fp8" and not current_platform.supports_fp8():
-        pytest.skip()
-
-    _triton_vs_vllm_cuda(
-        batch_size,
-        cache_block_size,
-        head_size,
-        num_query_heads,
-        num_kv_heads,
-        sequence_length,
-        kv_cache_dtype,
-        dtype,
     )
 
 

@@ -146,7 +146,8 @@ def _determine_max_num_kv_splits(max_seqlen_q: int, max_seqlen_k: int, max_num_b
     if max_seqlen_q == 1 and max_seqlen_k >= 4096 and max_num_blocks_per_sequence >= 64:
         # This number of KV splits affects the size of the scratchpad memory that we allocate,
         # so cap the number of splits at 64 so that we don't allocate too much memory
-        return min(max_num_blocks_per_sequence // 16, 64)
+        # return min(max_num_blocks_per_sequence // 16, 64)
+        return min(max_num_blocks_per_sequence // 16, 16)
 
     return 1
 

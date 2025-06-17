@@ -3,22 +3,15 @@
 
 """Conch paged attention benchmark."""
 
-import sys
 from typing import Final
 
 import click
 import torch
 
-from conch import envs
 from conch.ops.attention.paged_attention import paged_attention
 from conch.platforms import current_platform
 from conch.third_party.vllm.utils import create_tensors, seed_everything
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
-
-if envs.CONCH_ENABLE_VLLM and current_platform.has_cuda():
-    from vllm._custom_ops import paged_attention_v2 as vllm_paged_attention_v2
-else:
-    vllm_paged_attention_v2 = None  # type: ignore[assignment, unused-ignore]
 
 
 @click.command()
@@ -165,7 +158,7 @@ def main(
         },
     )
 
-    query, key_cache_vllm, value_cache_vllm, key_cache_conch, value_cache_conch, block_table, seq_lens = create_tensors(
+    query, key_cache, value_cache, block_table, seq_lens = create_tensors(
         head_dim,
         seq_len,
         cache_block_size,
@@ -178,7 +171,6 @@ def main(
     )
 
     scale: Final = float(1.0 / (head_dim**0.5))
-    max_seq_len: Final = int(seq_lens.max().item())
 
     k_scale = torch.full((1,), 0.5, dtype=dtype, device=device)
     v_scale = torch.full((1,), 0.5, dtype=dtype, device=device)
@@ -187,8 +179,8 @@ def main(
 
     paged_attention(
         query,
-        key_cache_conch,
-        value_cache_conch,
+        key_cache,
+        value_cache,
         block_table,
         seq_lens,
         output=output_conch,
@@ -199,91 +191,11 @@ def main(
         v_scale=v_scale,
     )
 
-    if vllm_paged_attention_v2 is not None:
-        # VLLM scratchpads
-        partition_size: Final = 512
-        max_num_partitions = (max_seq_len + partition_size - 1) // partition_size
-        tmp_output = torch.empty(
-            size=(batch_size, num_query_heads, max_num_partitions, head_dim),
-            dtype=query.dtype,
-            device=query.device,
-        )
-        exp_sums = torch.empty(
-            size=(batch_size, num_query_heads, max_num_partitions),
-            dtype=torch.float32,
-            device=query.device,
-        )
-        max_logits = torch.empty_like(exp_sums)
-
-        alibi_slopes = None
-
-        output_vllm = torch.empty_like(query)
-
-        # Check accuracy match
-        vllm_paged_attention_v2(
-            output_vllm,
-            exp_sums,
-            max_logits,
-            tmp_output,
-            query,
-            key_cache_vllm,
-            value_cache_vllm,
-            num_kv_heads,
-            scale,
-            block_table,
-            seq_lens,
-            cache_block_size,
-            max_seq_len,
-            alibi_slopes,
-            kv_cache_dtype,
-            k_scale,
-            v_scale,
-        )
-
-        if not torch.allclose(output_vllm, output_conch, atol=absolute_tolerance):
-            print(f"WARNING: Reference and Conch results differ! (atol={absolute_tolerance})", file=sys.stderr)
-            print(f"Output max diff: {(output_conch - output_vllm).abs().max().item()}", file=sys.stderr)
-
-            if verbose:
-                print(f"Reference output: {output_vllm}", file=sys.stderr)
-                print(f"Conch output: {output_conch}", file=sys.stderr)
-        else:
-            print(f"Results matched with atol={absolute_tolerance} :)", file=sys.stderr)
-
-        baseline_result = benchmark_it(
-            lambda: vllm_paged_attention_v2(
-                output_vllm,
-                exp_sums,
-                max_logits,
-                tmp_output,
-                query,
-                key_cache_vllm,
-                value_cache_vllm,
-                num_kv_heads,
-                scale,
-                block_table,
-                seq_lens,
-                cache_block_size,
-                max_seq_len,
-                alibi_slopes,
-                kv_cache_dtype,
-                k_scale,
-                v_scale,
-            ),
-            tag="Baseline",
-            metadata=metadata,
-            iteration_time_ms=iteration_time_ms,
-            warmup_time_ms=warmup_time_ms,
-        )
-    else:
-        print("Skipping checking vs. reference vLLM implementation...", file=sys.stderr)
-        baseline_result = None
-
     conch_result = benchmark_it(
         lambda: paged_attention(
             query,
-            key_cache_conch,
-            value_cache_conch,
+            key_cache,
+            value_cache,
             block_table,
             seq_lens,
             output=output_conch,
@@ -302,8 +214,6 @@ def main(
     # Print results
     conch_result.print_parameters(csv=csv)
     conch_result.print_results(csv=csv)
-    if baseline_result is not None:
-        baseline_result.print_results(csv=csv)
 
 
 if __name__ == "__main__":

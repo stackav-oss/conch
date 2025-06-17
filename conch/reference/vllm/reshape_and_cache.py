@@ -21,14 +21,13 @@ def _reshape_and_cache_pytorch_ref(
 ) -> None:
     """Reference PyTorch-only implementation of reshape_and_cache."""
     num_tokens, _, _ = key.shape
-    _, _, _, block_size, _ = key_cache.shape
+    _, block_size, _, _ = key_cache.shape
 
     if kv_cache_dtype == "fp8":
         k_scale_scalar = 1.0 / k_scale.item()
         v_scale_scalar = 1.0 / v_scale.item()
         fp8_dtype = torch.float8_e4m3fnuz if current_platform.is_amd() else torch.float8_e4m3fn
 
-    reshaped_key = key.reshape(num_tokens, *key_cache[0, :, :, 0, :].shape)
     block_indicies = torch.div(slot_mapping, block_size, rounding_mode="floor")
     block_indicies_lst = block_indicies.cpu().tolist()
     block_offsets = slot_mapping % block_size
@@ -37,11 +36,11 @@ def _reshape_and_cache_pytorch_ref(
         block_idx = block_indicies_lst[i]
         block_offset = block_offsets_lst[i]
         if kv_cache_dtype == "fp8":
-            key_cache[block_idx, :, :, block_offset, :] = (reshaped_key[i] * k_scale_scalar).to(fp8_dtype)
-            value_cache[block_idx, :, :, block_offset] = (value[i] * v_scale_scalar).to(fp8_dtype)
+            key_cache[block_idx, block_offset, :, :] = (key[i] * k_scale_scalar).to(fp8_dtype)
+            value_cache[block_idx, block_offset, :, :] = (value[i] * v_scale_scalar).to(fp8_dtype)
         else:
-            key_cache[block_idx, :, :, block_offset, :] = reshaped_key[i]
-            value_cache[block_idx, :, :, block_offset] = value[i]
+            key_cache[block_idx, block_offset, :, :] = key[i]
+            value_cache[block_idx, block_offset, :, :] = value[i]
 
 
 def _reshape_and_cache_vllm_ref(
@@ -55,7 +54,7 @@ def _reshape_and_cache_vllm_ref(
     v_scale: torch.Tensor,
 ) -> None:
     """Reference vLLM implementation of reshape_and_cache."""
-    from vllm._custom_ops import reshape_and_cache as reshape_and_cache_vllm
+    from vllm._custom_ops import reshape_and_cache_flash as reshape_and_cache_vllm
 
     reshape_and_cache_vllm(key, value, key_cache, value_cache, slot_mapping, kv_cache_dtype, k_scale, v_scale)
 

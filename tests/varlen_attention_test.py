@@ -243,7 +243,7 @@ def test_varlen_attention_vs_pytorch(
 
     cache_block_size = 16
 
-    _, _, _, key_cache, value_cache, block_table, seq_lens = create_tensors(
+    _, key_cache, value_cache, block_table, seq_lens = create_tensors(
         head_size,
         sequence_length,
         cache_block_size,
@@ -350,7 +350,7 @@ def test_varlen_attention_vs_flash_attn(
 
     cache_block_size = 16
 
-    _, _, _, key_cache, value_cache, block_table, seq_lens = create_tensors(
+    _, key_cache, value_cache, block_table, seq_lens = create_tensors(
         head_size,
         sequence_length,
         cache_block_size,
@@ -475,7 +475,7 @@ def test_varlen_attention_decode(
 
     cache_block_size = 16
 
-    _, _, _, key_cache, value_cache, block_table, seq_lens = create_tensors(
+    _, key_cache, value_cache, block_table, seq_lens = create_tensors(
         head_size,
         sequence_length,
         cache_block_size,

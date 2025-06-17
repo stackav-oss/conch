@@ -172,7 +172,7 @@ def main(
     kv_cache_dtype: Final = "auto"
     dtype: Final = torch.float16
 
-    _, _, _, key_cache, value_cache, block_table, seq_lens = create_tensors(
+    _, key_cache, value_cache, block_table, seq_lens = create_tensors(
         head_dim,
         seq_len,
         cache_block_size,
