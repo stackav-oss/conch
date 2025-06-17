@@ -137,17 +137,10 @@ def _varlen_attention_compute_splits_kernel(  # noqa: PLR0913, PLR0915
         cxpr_split_kv: Whether or not we are using FlashDecoding.
         cxpr_use_conditional_mask: Whether to use conditionally-masked loads/stores or always apply mask.
     """
-    # Encode number of query and KV splits in axis=0
-    # split_index = tl.program_id(0)
-    # total_num_splits = tl.num_programs(0)
-
+    # What "KV split" of the overall data (between 1 and N KV cache blocks) is this program processing?
     kv_split_index = tl.program_id(0) if cxpr_split_kv else 0
+    # What "query split" of the overall data (between 1 and M chunks of the query sequence) is this program processing?
     query_split_index = 0 if cxpr_split_kv else tl.program_id(0)
-
-    # kv_split_index: What "KV split" of the overall data (between 1 and N KV cache blocks) is this program processing?
-    # kv_split_index = split_index // tl.cdiv(total_num_splits, num_kv_splits)
-    # query_split_index: What "query split" of the overall data (between 1 and M chunks of the query sequence) is this program processing?
-    # query_split_index = split_index % tl.cdiv(total_num_splits, num_kv_splits)
 
     # What KV head is this program processing?
     kv_head_index = tl.program_id(1)
