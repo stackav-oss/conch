@@ -323,8 +323,8 @@ def _gemm_kernel(
     group_offsets = tl.arange(0, cxpr_block_size_k)
 
     # Vectorized coalesced load
-    if cxpr_data_contiguous:
-        matrix_b_offsets_n = tl.max_contiguous(tl.multiple_of(matrix_b_offsets_n, cxpr_block_size_n), cxpr_block_size_n)
+    # if cxpr_data_contiguous:
+    #     matrix_b_offsets_n = tl.max_contiguous(tl.multiple_of(matrix_b_offsets_n, cxpr_block_size_n), cxpr_block_size_n)
 
     # Calculate offsets for pointer into the block of matrix A
     matrix_a_block_offsets = (
@@ -343,7 +343,14 @@ def _gemm_kernel(
     matrix_b_block_ptr = b_ptr + matrix_b_block_offsets
 
     # Quantization metadata
-    q_shift = ((group_offsets % cxpr_elements_per_sample) * cxpr_w_nbits).to(tl.int32)[:, None]
+    # q_shift = ((group_offsets % cxpr_elements_per_sample) * cxpr_w_nbits).to(tl.int32)[:, None]
+    q_shift = ((group_offsets % cxpr_elements_per_sample) * cxpr_w_nbits).to(tl.int32)
+    # if pid == 0:
+    #     print("group_offsets = ", group_offsets)
+    #     print("q_shift = ", q_shift)
+    # q_shift = tl.max_contiguous(tl.multiple_of(q_shift, cxpr_block_size_k), cxpr_block_size_k)
+    q_shift = tl.max_contiguous(tl.multiple_of(q_shift, cxpr_w_nbits), cxpr_block_size_k)
+    q_shift = q_shift[:, None]
     scales_block_ptr = scales_ptr + matrix_b_offsets_n[None, :] * meta_stride_n
     zeros_block_ptr = zeros_ptr + matrix_b_offsets_n[None, :] * meta_stride_n
     stride_mul = cxpr_block_size_k / cxpr_group_size
@@ -462,9 +469,9 @@ def _gemm_kernel(
     # Calculate offsets for pointer into the block of the output matrix
     matrix_c_block_offsets_m = pid_m * cxpr_block_size_m + tl.arange(0, cxpr_block_size_m)
     matrix_c_block_offsets_n = pid_n * cxpr_block_size_n + tl.arange(0, cxpr_block_size_n)
-    matrix_c_block_offsets_n = tl.max_contiguous(
-        tl.multiple_of(matrix_c_block_offsets_n, cxpr_block_size_n), cxpr_block_size_n
-    )
+    # matrix_c_block_offsets_n = tl.max_contiguous(
+    #     tl.multiple_of(matrix_c_block_offsets_n, cxpr_block_size_n), cxpr_block_size_n
+    # )
 
     # Create pointer to block of output matrix to store accumulated result
     matrix_c_block_ptr = c_ptr + (
