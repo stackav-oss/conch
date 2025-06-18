@@ -175,6 +175,12 @@ def main(
         device,
     )
 
+    fp8_dtype = torch.float8_e4m3fnuz if current_platform.is_amd() else torch.float8_e4m3fn
+
+    if "fp8" in kv_cache_dtype:
+        key_cache_ref = key_cache_ref.view(fp8_dtype)
+        value_cache_ref = value_cache_ref.view(fp8_dtype)
+
     key_cache_conch = key_cache_ref.clone()
     value_cache_conch = value_cache_ref.clone()
 
@@ -187,6 +193,13 @@ def main(
     reshape_and_cache_conch(
         key, value, key_cache_conch, value_cache_conch, slot_mapping, kv_cache_dtype, k_scale, v_scale
     )
+
+    # Can't compare FP8 directly, so bitcast to uint8 for comparison
+    if "fp8" in kv_cache_dtype:
+        key_cache_ref = key_cache_ref.view(torch.uint8)
+        value_cache_ref = value_cache_ref.view(torch.uint8)
+        key_cache_conch = key_cache_conch.view(torch.uint8)
+        value_cache_conch = value_cache_conch.view(torch.uint8)
 
     if not torch.allclose(key_cache_conch, key_cache_ref, atol=absolute_tolerance):
         print(f"WARNING: Reference and Conch results differ! (atol={absolute_tolerance})", file=sys.stderr)
@@ -207,6 +220,13 @@ def main(
             print(f"Conch output: {value_cache_ref}", file=sys.stderr)
     else:
         print(f"Value cache matched with atol={absolute_tolerance} :)", file=sys.stderr)
+
+    # Convert datatype back to FP8 before benchmark
+    if "fp8" in kv_cache_dtype:
+        key_cache_ref = key_cache_ref.view(fp8_dtype)
+        value_cache_ref = value_cache_ref.view(fp8_dtype)
+        key_cache_conch = key_cache_conch.view(fp8_dtype)
+        value_cache_conch = value_cache_conch.view(fp8_dtype)
 
     # Benchmark Reference vs. Conch implementations
     baseline_result = benchmark_it(

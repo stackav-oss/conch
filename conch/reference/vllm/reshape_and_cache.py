@@ -24,8 +24,8 @@ def _reshape_and_cache_pytorch_ref(
     _, block_size, _, _ = key_cache.shape
 
     if kv_cache_dtype == "fp8":
-        k_scale_scalar = 1.0 / k_scale.item()
-        v_scale_scalar = 1.0 / v_scale.item()
+        k_scale_scalar = 1.0 / k_scale
+        v_scale_scalar = 1.0 / v_scale
         fp8_dtype = torch.float8_e4m3fnuz if current_platform.is_amd() else torch.float8_e4m3fn
 
     block_indicies = torch.div(slot_mapping, block_size, rounding_mode="floor")

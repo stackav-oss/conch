@@ -16,10 +16,10 @@ from conch.third_party.vllm.utils import create_kv_cache_with_random, seed_every
 
 _DTYPES: Final = [torch.float16, torch.bfloat16, torch.float32]
 _NUM_TOKENS: Final = [20, 40, 60]
-_NUM_HEADS: Final = [1, 4]
-_HEAD_SIZES: Final = [128]
+_NUM_HEADS: Final = [1, 4, 6]
+_HEAD_SIZES: Final = [64, 96, 128]
 _BLOCK_SIZES: Final = [32, 128]
-_NUM_BLOCKS: Final = [1000]
+_NUM_BLOCKS: Final = [1000, 1500]
 _KV_CACHE_DTYPE: Final = ["auto", "fp8"]
 
 
@@ -73,13 +73,13 @@ def test_reshape_and_cache(
         device,
     )
 
-    key_cache_conch = key_cache_ref.clone()
-    value_cache_conch = value_cache_ref.clone()
-
     if "fp8" in kv_cache_dtype:
         fp8_dtype = torch.float8_e4m3fnuz if current_platform.is_amd() else torch.float8_e4m3fn
         key_cache_ref = key_cache_ref.view(fp8_dtype)
         value_cache_ref = value_cache_ref.view(fp8_dtype)
+
+    key_cache_conch = key_cache_ref.clone()
+    value_cache_conch = value_cache_ref.clone()
 
     # Run the reference implementation.
     reshape_and_cache_reference(
