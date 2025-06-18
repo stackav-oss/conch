@@ -199,19 +199,24 @@ def _dequantize(
     scales: tl.tensor,
     zeros: tl.tensor,
     q_shift: tl.tensor,
+    weight_bias: tl.tensor,
+    # pid,
     cxpr_input_dtype: tl.constexpr,
     cxpr_meta_dtype: tl.constexpr,
     cxpr_unpack_mask: tl.constexpr,
     cxpr_elements_per_sample: tl.constexpr,
     cxpr_w_group_mode: tl.constexpr,
     cxpr_zero_is_scalar: tl.constexpr,
-    cxpr_weight_bias: tl.constexpr,
+    # cxpr_weight_bias: tl.constexpr,
 ) -> tl.tensor:
     """Dequantize a tensor."""
     # Unpack
     if cxpr_elements_per_sample > 1:
         b = ((b >> q_shift) & cxpr_unpack_mask).to(cxpr_meta_dtype)
-        b -= cxpr_weight_bias
+        # if pid == 0:
+        #     print("b = ", b)
+        b -= weight_bias[:, None]
+        # b -= cxpr_weight_bias
 
     # Shift (operation: b - zeros)
     if cxpr_w_group_mode == _WEIGHT_GROUP_MODE_SHIFT:
@@ -361,6 +366,8 @@ def _gemm_kernel(
     # Output accumulator
     acc = tl.zeros((cxpr_block_size_m, cxpr_block_size_n), dtype=cxpr_acc_dtype)
 
+    weight_bias = tl.full([cxpr_block_size_k], cxpr_weight_bias, dtype=cxpr_meta_dtype)
+
     for group_index in range(num_groups):
         # Very early load
         if cxpr_matrix_a_load_order == _LOAD_ORDER_VERY_EARLY:
@@ -409,13 +416,15 @@ def _gemm_kernel(
             scales,
             zeros,
             q_shift,
+            weight_bias,
+            # pid,
             cxpr_input_dtype,
             cxpr_meta_dtype,
             cxpr_unpack_mask,
             cxpr_elements_per_sample,
             cxpr_w_group_mode,
             cxpr_zero_is_scalar,
-            cxpr_weight_bias,
+            # cxpr_weight_bias,
         )
 
         # Late load
