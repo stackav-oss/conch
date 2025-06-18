@@ -135,33 +135,13 @@ def _get_metadata_eviction_policy() -> str:
 
 def _get_tuning_parameters() -> dict[str, int]:
     """Get block sizes/tuning parameters for current device."""
-    device_name = current_platform.get_device_name()
-
-    if "H100" in device_name:
-        return {
-            "cxpr_block_size_m": 128,
-            "cxpr_block_size_n": 128,
-            "cxpr_block_size_k": 128,
-            "cxpr_group_size_m": 8,
-            "num_warps": 8,
-            "num_stages": 2,
-        }
-
-    if "MI300X" in device_name:
-        return {
-            "cxpr_block_size_m": 128,
-            "cxpr_block_size_n": 64,
-            "cxpr_block_size_k": 128,
-            "cxpr_group_size_m": 16,
-            "num_warps": 8,
-            "num_stages": 2,
-        }
-
     return {
-        "cxpr_block_size_m": 64,
+        "cxpr_block_size_m": 128,
         "cxpr_block_size_n": 64,
-        "cxpr_block_size_k": 32,
-        "cxpr_group_size_m": 8,
+        "cxpr_block_size_k": 64,
+        "cxpr_group_size_m": 16,
+        "num_warps": 8,
+        "num_stages": 2,
     }
 
 
