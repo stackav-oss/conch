@@ -18,21 +18,19 @@ def _reshape_and_cache_kernel(
     slot_mapping_ptr: tl.tensor,
     k_scale_ptr: tl.tensor,
     v_scale_ptr: tl.tensor,
-    # Strides of relevant tensors
-    k_token_stride: int,
-    k_head_stride: int,
-    k_head_element_stride: tl.constexpr,
-    v_token_stride: int,
-    v_head_stride: int,
-    v_head_element_stride: tl.constexpr,
-    kv_cache_page_stride: int,
-    kv_cache_block_stride: int,
-    kv_cache_head_stride: int,
-    kv_cache_head_element_stride: tl.constexpr,
     # Scalars
+    head_size: int,
+    num_kv_heads: int,
     cache_block_size: int,
+    # Strides of relevant tensors
+    kv_token_stride: tl.int64,
+    kv_head_stride: tl.int64,
+    kv_cache_page_stride: tl.int64,
+    kv_cache_block_stride: tl.int64,
+    kv_cache_head_stride: tl.int64,
     # Constexprs
-    cxpr_head_size: tl.constexpr,
+    cxpr_head_size_padded: tl.constexpr,
+    cxpr_num_kv_heads_padded: tl.constexpr,
     cxpr_apply_fp8_scaling: tl.constexpr,
 ) -> None:
     """Implementation of reshape_and_cache kernel.
@@ -45,18 +43,16 @@ def _reshape_and_cache_kernel(
         slot_mapping_ptr: Pointer to slot mapping tensor, shape: (num_tokens,).
         k_scale_ptr: Pointer to Fp8 scaling factor for k.
         v_scale_ptr: Pointer to Fp8 scaling factor for v.
-        k_token_stride: Stride of key tensor in 0th dimension.
-        k_head_stride: Stride of key tensor in 1st dimension.
-        k_head_element_stride: Stride of key tensor in 2nd dimension.
-        v_token_stride: Stride of value tensor in 0th dimension.
-        v_head_stride: Stride of value tensor in 1st dimension.
-        v_head_element_stride: Stride of value tensor in 2nd dimension.
+        head_size: Dimension of attention head.
+        num_kv_heads: Number of key/value heads.
+        cache_block_size: Size of each cache block / page in the KV cache.
+        kv_token_stride: Stride of key/value tensors in 0th dimension.
+        kv_head_stride: Stride of key/value tensors in 1st dimension.
         kv_cache_page_stride: Stride of key/value cache tensors in 0th dimension.
         kv_cache_block_stride: Stride of key/value cache tensors in 1st dimension.
         kv_cache_head_stride: Stride of key/value cache tensors in 2nd dimension.
-        kv_cache_head_element_stride: Stride of key/value cache tensors in 3rd dimension.
-        cache_block_size: Size of each cache block / page in the KV cache.
-        cxpr_head_size: Head size / dimension for the attention head (must be power of two!).
+        cxpr_head_size_padded: Head size padded to the next power of two.
+        cxpr_num_kv_heads_padded: Number of KV heads padded to the next power of two.
         cxpr_apply_fp8_scaling: Whether or not to apply FP8 scaling.
     """
     # What token is this program processing?
@@ -69,54 +65,52 @@ def _reshape_and_cache_kernel(
     if slot_index < 0:
         return
 
-    # What head is this program processing?
-    head_index = tl.program_id(1)
-
-    # Calculate offset into key/value tensors to get to the token for this program
-    k_token_offset = token_index * k_token_stride
-    v_token_offset = token_index * v_token_stride
-    # Calculate offset into key/value tensors to get to the head for this program
-    k_head_offset = head_index * k_head_stride
-    v_head_offset = head_index * v_head_stride
-    # Offsets for each element of the head
-    k_head_offsets = tl.arange(0, cxpr_head_size) * k_head_element_stride
-    v_head_offsets = tl.arange(0, cxpr_head_size) * v_head_element_stride
-
-    # Load key/value vectors for this token/head
-    key = tl.load(key_ptr + k_token_offset + k_head_offset + k_head_offsets)
-    value = tl.load(value_ptr + v_token_offset + v_head_offset + v_head_offsets)
-
-    # Apply FP8 scaling if necessary
-    if cxpr_apply_fp8_scaling:
-        k_scale = tl.load(k_scale_ptr)
-        k_scale = 1.0 / k_scale
-        key *= k_scale
-
-        v_scale = tl.load(v_scale_ptr)
-        v_scale = 1.0 / v_scale
-        value *= v_scale
-
-        key = key.to(key_cache_ptr.dtype.element_ty)
-        value = value.to(value_cache_ptr.dtype.element_ty)
-
     # Calculate index of page (value in range(0, num_pages))
     page_index = slot_index // cache_block_size
     # Calculate entry index inside of a cache block/page for this slot (value in range(0, cache_block_size))
     entry_index = slot_index % cache_block_size
 
-    # Calculate offset into key/value cache tensors to get to the cache block we're copying into
-    kv_page_offset = page_index * kv_cache_page_stride
-    # Calculate offset in a cache block to get to the entry for we're copying into
-    kv_cache_entry_offset = entry_index * kv_cache_block_stride
-    # Calculate offset into key/value cache tensors to get to the head we're copying into
-    kv_cache_head_offset = head_index * kv_cache_head_stride
+    # Calculate offset into key/value tensors to get to the token for this program
+    token_offset = token_index * kv_token_stride
+
+    # Offsets for each KV head
+    kv_head_offsets = tl.arange(0, cxpr_num_kv_heads_padded)
 
     # Offsets for each element of the head
-    kv_head_offsets = tl.arange(0, cxpr_head_size) * kv_cache_head_element_stride
+    head_element_offsets = tl.arange(0, cxpr_head_size_padded)
+
+    # Offsets for entries of key/value
+    kv_offsets = (kv_head_offsets * kv_head_stride)[:, None] + head_element_offsets
+
+    # Mask to ensure we only load valid KV heads and elements (if head_size or num_kv_heads are not powers of two)
+    kv_mask = (kv_head_offsets < num_kv_heads)[:, None] & (head_element_offsets < head_size)[None, :]
+
+    # Load key/value vectors for this token/head
+    key = tl.load(key_ptr + token_offset + kv_offsets, mask=kv_mask, other=0.0)
+    value = tl.load(value_ptr + token_offset + kv_offsets, mask=kv_mask, other=0.0)
+
+    # Apply FP8 scaling if necessary
+    if cxpr_apply_fp8_scaling:
+        # Load, invert, and apply scaling factors
+        k_scale = tl.load(k_scale_ptr)
+        k_scale = 1.0 / k_scale
+        key = (key * k_scale).to(key_cache_ptr.dtype.element_ty)
+
+        v_scale = tl.load(v_scale_ptr)
+        v_scale = 1.0 / v_scale
+        value = (value * v_scale).to(value_cache_ptr.dtype.element_ty)
+
+    # Calculate offset into key/value cache tensors to get to the cache block we're copying into
+    page_offset = page_index * kv_cache_page_stride
+    # Calculate offset in a cache block to get to the entry for we're copying into
+    kv_cache_entry_offset = entry_index * kv_cache_block_stride
+
+    # Calculate offsets for where to store key/value vectors in the cache
+    output_offsets = (kv_head_offsets * kv_cache_head_stride)[:, None] + head_element_offsets
 
     # Store key/value vectors into cache
-    tl.store(key_cache_ptr + kv_page_offset + kv_cache_entry_offset + kv_cache_head_offset + kv_head_offsets, key)
-    tl.store(value_cache_ptr + kv_page_offset + kv_cache_entry_offset + kv_cache_head_offset + kv_head_offsets, value)
+    tl.store(key_cache_ptr + page_offset + kv_cache_entry_offset + output_offsets, key, mask=kv_mask)
+    tl.store(value_cache_ptr + page_offset + kv_cache_entry_offset + output_offsets, value, mask=kv_mask)
 
 
 def reshape_and_cache_launcher(
@@ -144,7 +138,7 @@ def reshape_and_cache_launcher(
     """
     # Assume sizes already checked if calling launcher. For interface with strict size checking, call `ops.reshape_and_cache()` with `strict=True`.
     _, num_kv_heads, head_size = key.shape
-    num_pages, cache_block_size, _, _ = key_cache.shape
+    _, cache_block_size, _, _ = key_cache.shape
 
     # Note: In vLLM v1, slot_mapping is the only tensor that can be trusted to tell the correct number of tokens
     num_tokens = slot_mapping.size(0)
@@ -153,14 +147,16 @@ def reshape_and_cache_launcher(
         assert key.shape == value.shape
         assert key_cache.shape == value_cache.shape
 
+        assert key.stride(0) == value.stride(0)
+        assert key.stride(1) == value.stride(1)
+        assert key.stride(2) == value.stride(2)
+        assert key.stride(2) == 1
+
         assert key_cache.stride(0) == value_cache.stride(0)
         assert key_cache.stride(1) == value_cache.stride(1)
         assert key_cache.stride(2) == value_cache.stride(2)
         assert key_cache.stride(3) == value_cache.stride(3)
         assert key_cache.stride(3) == 1
-
-        assert cache_block_size == triton.next_power_of_2(cache_block_size), "Cache block size must be a power of two!"
-        assert head_size == triton.next_power_of_2(head_size), "Head size must be a power of two!"
 
     apply_fp8_scaling: tl.constexpr = "fp8" in kv_cache_dtype
 
@@ -171,32 +167,30 @@ def reshape_and_cache_launcher(
         assert v_scale.numel() == 1
 
     # Parallelize over the number of tokens and number of kv heads
-    grid = (num_tokens, num_kv_heads)
+    grid = (num_tokens,)
 
     # Launch kernel
     _reshape_and_cache_kernel[grid](
         # Tensors
-        key,
-        value,
-        key_cache,
-        value_cache,
-        slot_mapping,
-        k_scale,
-        v_scale,
-        # Strides of relevant tensors
-        key.stride(0),
-        key.stride(1),
-        key.stride(2),
-        value.stride(0),
-        value.stride(1),
-        value.stride(2),
-        key_cache.stride(0),
-        key_cache.stride(1),
-        key_cache.stride(2),
-        key_cache.stride(3),
+        key_ptr=key,
+        value_ptr=value,
+        key_cache_ptr=key_cache,
+        value_cache_ptr=value_cache,
+        slot_mapping_ptr=slot_mapping,
+        k_scale_ptr=k_scale,
+        v_scale_ptr=v_scale,
         # Scalars
-        cache_block_size,
+        head_size=head_size,
+        num_kv_heads=num_kv_heads,
+        cache_block_size=cache_block_size,
+        # Strides of relevant tensors
+        kv_token_stride=key.stride(0),
+        kv_head_stride=key.stride(1),
+        kv_cache_page_stride=key_cache.stride(0),
+        kv_cache_block_stride=key_cache.stride(1),
+        kv_cache_head_stride=key_cache.stride(2),
         # Constexprs
-        head_size,
-        apply_fp8_scaling,
+        cxpr_head_size_padded=triton.next_power_of_2(head_size),
+        cxpr_num_kv_heads_padded=triton.next_power_of_2(num_kv_heads),
+        cxpr_apply_fp8_scaling=apply_fp8_scaling,
     )

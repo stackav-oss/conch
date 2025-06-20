@@ -9,17 +9,17 @@ from typing import Final
 import pytest
 import torch
 
-from conch.ops.vllm.reshape_and_cache import reshape_and_cache as reshape_and_cache_triton
+from conch.ops.vllm.reshape_and_cache import reshape_and_cache as reshape_and_cache_conch
 from conch.platforms import current_platform
 from conch.reference.vllm.reshape_and_cache import reshape_and_cache as reshape_and_cache_reference
-from conch.third_party.vllm.utils import create_kv_caches_with_random, reshape_vllm_kvcache, seed_everything
+from conch.third_party.vllm.utils import create_kv_cache_with_random, seed_everything
 
 _DTYPES: Final = [torch.float16, torch.bfloat16, torch.float32]
 _NUM_TOKENS: Final = [20, 40, 60]
-_NUM_HEADS: Final = [1, 4]
-_HEAD_SIZES: Final = [128]
+_NUM_HEADS: Final = [1, 4, 6]
+_HEAD_SIZES: Final = [64, 96, 128]
 _BLOCK_SIZES: Final = [32, 128]
-_NUM_BLOCKS: Final = [1000]
+_NUM_BLOCKS: Final = [1000, 1500]
 _KV_CACHE_DTYPE: Final = ["auto", "fp8"]
 
 
@@ -62,10 +62,9 @@ def test_reshape_and_cache(
     v_scale = torch.full((1,), 3.0, dtype=torch.float32, device=device)
 
     # Create the KV caches.
-    key_caches_vllm, value_caches_vllm = create_kv_caches_with_random(
+    key_cache_ref, value_cache_ref = create_kv_cache_with_random(
         num_blocks,
         block_size,
-        1,
         num_heads,
         head_size,
         kv_cache_dtype,
@@ -74,35 +73,31 @@ def test_reshape_and_cache(
         device,
     )
 
-    key_cache_vllm, value_cache_vllm = key_caches_vllm[0], value_caches_vllm[0]
-
     if "fp8" in kv_cache_dtype:
         fp8_dtype = torch.float8_e4m3fnuz if current_platform.is_amd() else torch.float8_e4m3fn
-        key_cache_vllm = key_cache_vllm.view(fp8_dtype)
-        value_cache_vllm = value_cache_vllm.view(fp8_dtype)
+        key_cache_ref = key_cache_ref.view(fp8_dtype)
+        value_cache_ref = value_cache_ref.view(fp8_dtype)
 
-    key_cache_conch, value_cache_conch = reshape_vllm_kvcache(key_cache_vllm, value_cache_vllm)
+    key_cache_conch = key_cache_ref.clone()
+    value_cache_conch = value_cache_ref.clone()
 
     # Run the reference implementation.
     reshape_and_cache_reference(
-        key, value, key_cache_vllm, value_cache_vllm, slot_mapping, kv_cache_dtype, k_scale, v_scale
+        key, value, key_cache_ref, value_cache_ref, slot_mapping, kv_cache_dtype, k_scale, v_scale
     )
 
     # Call Triton kernel
-    reshape_and_cache_triton(
+    reshape_and_cache_conch(
         key, value, key_cache_conch, value_cache_conch, slot_mapping, kv_cache_dtype, k_scale, v_scale
     )
 
-    # Reshape vLLM key/value caches
-    key_cache_vllm, value_cache_vllm = reshape_vllm_kvcache(key_cache_vllm, value_cache_vllm)
-
     # Can't compare FP8 directly, so bitcast to uint8
     if "fp8" in kv_cache_dtype:
-        key_cache_vllm = key_cache_vllm.view(torch.uint8)
-        value_cache_vllm = value_cache_vllm.view(torch.uint8)
+        key_cache_ref = key_cache_ref.view(torch.uint8)
+        value_cache_ref = value_cache_ref.view(torch.uint8)
         key_cache_conch = key_cache_conch.view(torch.uint8)
         value_cache_conch = value_cache_conch.view(torch.uint8)
 
     # Compare the results.
-    torch.testing.assert_close(key_cache_conch, key_cache_vllm)
-    torch.testing.assert_close(value_cache_conch, value_cache_vllm)
+    torch.testing.assert_close(key_cache_conch, key_cache_ref)
+    torch.testing.assert_close(value_cache_conch, value_cache_ref)

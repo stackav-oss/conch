@@ -13,7 +13,7 @@ import torch
 from conch.ops.vllm.reshape_and_cache import reshape_and_cache as reshape_and_cache_conch
 from conch.platforms import current_platform
 from conch.reference.vllm.reshape_and_cache import reshape_and_cache as reshape_and_cache_reference
-from conch.third_party.vllm.utils import create_kv_caches_with_random, reshape_vllm_kvcache, seed_everything
+from conch.third_party.vllm.utils import create_kv_cache_with_random, seed_everything
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 
@@ -164,10 +164,9 @@ def main(
     v_scale = torch.full((1,), 3.0, dtype=torch.float32, device=device)
 
     # Create the KV caches.
-    key_caches_vllm, value_caches_vllm = create_kv_caches_with_random(
+    key_cache_ref, value_cache_ref = create_kv_cache_with_random(
         num_blocks,
         cache_block_size,
-        1,
         num_kv_heads,
         head_dim,
         kv_cache_dtype,
@@ -176,47 +175,66 @@ def main(
         device,
     )
 
-    key_cache_vllm, value_cache_vllm = key_caches_vllm[0], value_caches_vllm[0]
-    key_cache, value_cache = reshape_vllm_kvcache(key_cache_vllm.clone(), value_cache_vllm.clone())
+    fp8_dtype = torch.float8_e4m3fnuz if current_platform.is_amd() else torch.float8_e4m3fn
+
+    if "fp8" in kv_cache_dtype:
+        key_cache_ref = key_cache_ref.view(fp8_dtype)
+        value_cache_ref = value_cache_ref.view(fp8_dtype)
+
+    key_cache_conch = key_cache_ref.clone()
+    value_cache_conch = value_cache_ref.clone()
 
     # Run the reference implementation.
     reshape_and_cache_reference(
-        key, value, key_cache_vllm, value_cache_vllm, slot_mapping, kv_cache_dtype, k_scale, v_scale
+        key, value, key_cache_ref, value_cache_ref, slot_mapping, kv_cache_dtype, k_scale, v_scale
     )
 
     # Call Conch kernel
-    reshape_and_cache_conch(key, value, key_cache, value_cache, slot_mapping, kv_cache_dtype, k_scale, v_scale)
+    reshape_and_cache_conch(
+        key, value, key_cache_conch, value_cache_conch, slot_mapping, kv_cache_dtype, k_scale, v_scale
+    )
 
-    # Reshape vLLM key/value caches
-    key_cache_vllm_out, value_cache_vllm_out = reshape_vllm_kvcache(key_cache_vllm, value_cache_vllm)
+    # Can't compare FP8 directly, so bitcast to uint8 for comparison
+    if "fp8" in kv_cache_dtype:
+        key_cache_ref = key_cache_ref.view(torch.uint8)
+        value_cache_ref = value_cache_ref.view(torch.uint8)
+        key_cache_conch = key_cache_conch.view(torch.uint8)
+        value_cache_conch = value_cache_conch.view(torch.uint8)
 
-    if not torch.allclose(key_cache, key_cache_vllm_out, atol=absolute_tolerance):
+    if not torch.allclose(key_cache_conch, key_cache_ref, atol=absolute_tolerance):
         print(f"WARNING: Reference and Conch results differ! (atol={absolute_tolerance})", file=sys.stderr)
-        print(f"Output max diff: {(key_cache_vllm_out - key_cache).abs().max().item()}", file=sys.stderr)
+        print(f"Output max diff: {(key_cache_ref - key_cache_conch).abs().max().item()}", file=sys.stderr)
 
         if verbose:
-            print(f"Reference output: {key_cache}", file=sys.stderr)
-            print(f"Conch output: {key_cache_vllm_out}", file=sys.stderr)
+            print(f"Reference output: {key_cache_conch}", file=sys.stderr)
+            print(f"Conch output: {key_cache_ref}", file=sys.stderr)
     else:
         print(f"Key cache matched with atol={absolute_tolerance} :)", file=sys.stderr)
 
-    if not torch.allclose(value_cache, value_cache_vllm_out, atol=absolute_tolerance):
+    if not torch.allclose(value_cache_conch, value_cache_ref, atol=absolute_tolerance):
         print(f"WARNING: Reference and Conch results differ! (atol={absolute_tolerance})", file=sys.stderr)
-        print(f"Output max diff: {(value_cache_vllm_out - value_cache).abs().max().item()}", file=sys.stderr)
+        print(f"Output max diff: {(value_cache_ref - value_cache_conch).abs().max().item()}", file=sys.stderr)
 
         if verbose:
-            print(f"Reference output: {value_cache}", file=sys.stderr)
-            print(f"Conch output: {value_cache_vllm_out}", file=sys.stderr)
+            print(f"Reference output: {value_cache_conch}", file=sys.stderr)
+            print(f"Conch output: {value_cache_ref}", file=sys.stderr)
     else:
         print(f"Value cache matched with atol={absolute_tolerance} :)", file=sys.stderr)
+
+    # Convert datatype back to FP8 before benchmark
+    if "fp8" in kv_cache_dtype:
+        key_cache_ref = key_cache_ref.view(fp8_dtype)
+        value_cache_ref = value_cache_ref.view(fp8_dtype)
+        key_cache_conch = key_cache_conch.view(fp8_dtype)
+        value_cache_conch = value_cache_conch.view(fp8_dtype)
 
     # Benchmark Reference vs. Conch implementations
     baseline_result = benchmark_it(
         lambda: reshape_and_cache_reference(
             key,
             value,
-            key_cache_vllm,
-            value_cache_vllm,
+            key_cache_ref,
+            value_cache_ref,
             slot_mapping,
             kv_cache_dtype,
             k_scale,
@@ -232,8 +250,8 @@ def main(
         lambda: reshape_and_cache_conch(
             key,
             value,
-            key_cache,
-            value_cache,
+            key_cache_conch,
+            value_cache_conch,
             slot_mapping,
             kv_cache_dtype,
             k_scale,

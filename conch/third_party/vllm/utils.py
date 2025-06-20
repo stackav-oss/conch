@@ -78,10 +78,9 @@ def get_kv_cache_torch_dtype(
     return torch_dtype
 
 
-def create_kv_caches_with_random(
+def create_kv_cache_with_random(
     num_blocks: int,
     block_size: int,
-    num_layers: int,
     num_heads: int,
     head_size: int,
     cache_dtype: str | torch.dtype | None,
@@ -98,56 +97,27 @@ def create_kv_caches_with_random(
     torch_dtype = get_kv_cache_torch_dtype(cache_dtype, model_dtype)
 
     scale = head_size**-0.5
-    x = 16 // torch.tensor([], dtype=torch_dtype).element_size()
-    key_cache_shape = (num_blocks, num_heads, head_size // x, block_size, x)
-    key_caches: list[torch.Tensor] = []
-    for _ in range(num_layers):
-        key_cache = torch.empty(size=key_cache_shape, dtype=torch_dtype, device=device)
-        if cache_dtype in ["auto", "half", "bfloat16", "float"]:
-            key_cache.uniform_(-scale, scale)
-        elif cache_dtype == "fp8":
-            _generate_random_fp8(key_cache, -scale, scale)
-        else:
-            error_msg = f"Does not support key cache of type {cache_dtype}"
-            raise ValueError(error_msg)
-        key_caches.append(key_cache)
+    key_cache_shape = (num_blocks, block_size, num_heads, head_size)
+    key_cache = torch.empty(size=key_cache_shape, dtype=torch_dtype, device=device)
+    if cache_dtype in ["auto", "half", "bfloat16", "float"]:
+        key_cache.uniform_(-scale, scale)
+    elif cache_dtype == "fp8":
+        _generate_random_fp8(key_cache, -scale, scale)
+    else:
+        error_msg = f"Does not support key cache of type {cache_dtype}"
+        raise ValueError(error_msg)
 
-    value_cache_shape = (num_blocks, num_heads, head_size, block_size)
-    value_caches: list[torch.Tensor] = []
-    for _ in range(num_layers):
-        value_cache = torch.empty(size=value_cache_shape, dtype=torch_dtype, device=device)
-        if cache_dtype in ["auto", "half", "bfloat16", "float"]:
-            value_cache.uniform_(-scale, scale)
-        elif cache_dtype == "fp8":
-            _generate_random_fp8(value_cache, -scale, scale)
-        else:
-            error_msg = f"Does not support value cache of type {cache_dtype}"
-            raise ValueError(error_msg)
-        value_caches.append(value_cache)
-    return key_caches, value_caches
+    value_cache_shape = (num_blocks, block_size, num_heads, head_size)
+    value_cache = torch.empty(size=value_cache_shape, dtype=torch_dtype, device=device)
+    if cache_dtype in ["auto", "half", "bfloat16", "float"]:
+        value_cache.uniform_(-scale, scale)
+    elif cache_dtype == "fp8":
+        _generate_random_fp8(value_cache, -scale, scale)
+    else:
+        error_msg = f"Does not support value cache of type {cache_dtype}"
+        raise ValueError(error_msg)
 
-
-def reshape_vllm_kvcache(
-    key_cache_vllm: torch.Tensor, value_cache_vllm: torch.Tensor
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Reshape vLLM key and value caches into format expected by FlashAttention.
-
-    Args:
-        key_cache_vllm: vLLM key cache, shape: (num_cache_blocks, num_kv_heads, head_size // x, cache_block_size, x).
-        value_cache_vllm: vLLM value cache, shape: (num_cache_blocks, num_kv_heads, head_size, cache_block_size).
-
-    Returns:
-        Reshaped key and value caches as (num_cache_blocks, cache_block_size, num_kv_heads, head_size).
-    """
-    num_cache_blocks, num_kv_heads, head_size, cache_block_size = value_cache_vllm.shape
-
-    k = key_cache_vllm.permute(0, 1, 3, 2, 4).contiguous().reshape(num_cache_blocks, num_kv_heads, cache_block_size, head_size)
-    v = value_cache_vllm.permute(0, 1, 3, 2).contiguous().reshape(num_cache_blocks, num_kv_heads, cache_block_size, head_size)
-
-    k = k.permute(0, 2, 1, 3).contiguous()
-    v = v.permute(0, 2, 1, 3).contiguous()
-
-    return k, v
+    return key_cache, value_cache
 
 
 def create_tensors(
@@ -191,10 +161,9 @@ def create_tensors(
     block_table = torch.as_tensor(block_table_lst, dtype=torch.int)
 
     # Create the KV caches.
-    key_caches_vllm, value_caches_vllm = create_kv_caches_with_random(
+    key_cache, value_cache = create_kv_cache_with_random(
         num_cache_blocks,
         cache_block_size,
-        1,
         num_kv_heads,
         head_dim,
         kv_cache_dtype,
@@ -203,8 +172,4 @@ def create_tensors(
         device,  # type: ignore[arg-type]
     )
 
-    key_cache_vllm, value_cache_vllm = key_caches_vllm[0], value_caches_vllm[0]
-
-    key_cache_flash, value_cache_flash = reshape_vllm_kvcache(key_cache_vllm, value_cache_vllm)
-
-    return query, key_cache_vllm, value_cache_vllm, key_cache_flash, value_cache_flash, block_table, seq_lens
+    return query, key_cache, value_cache, block_table, seq_lens
