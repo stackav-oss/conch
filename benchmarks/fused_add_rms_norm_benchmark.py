@@ -62,6 +62,16 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     is_flag=True,
     help="Flag for printing results in CSV format",
 )
+@click.option(
+    "--compile-ref",
+    is_flag=True,
+    help="Flag to torch.compile() the reference impl",
+)
+@click.option(
+    "--compile-conch",
+    is_flag=True,
+    help="Flag to torch.compile() the Conch impl",
+)
 def main(  # noqa: PLR0913
     hidden_size: int,
     num_tokens: int,
@@ -70,6 +80,8 @@ def main(  # noqa: PLR0913
     verbose: bool,
     gpu: str,
     csv: bool,
+    compile_ref: bool,
+    compile_conch: bool,
 ) -> None:
     """Benchmark Conch rms_norm op.
 
@@ -81,6 +93,8 @@ def main(  # noqa: PLR0913
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag to indicate whether or not to print results in CSV format.
+        compile_ref: Flag to torch.compile() the reference implementation.
+        compile_conch: Flag to torch.compile() the Conch implementation.
     """
     seed: Final = 0
     seed_everything(seed)
@@ -110,9 +124,14 @@ def main(  # noqa: PLR0913
     conch_residual = residual.clone()
     ref_residual = residual.clone()
 
-    conch_output, conch_residual = fused_add_rms_norm_conch(conch_x, conch_residual, weight, epsilon)
+    fused_add_rms_norm_conch_fn = torch.compile(fused_add_rms_norm_conch) if compile_conch else fused_add_rms_norm_conch
+    fused_add_rms_norm_ref_fn = (
+        torch.compile(fused_add_rms_norm_reference) if compile_ref else fused_add_rms_norm_reference
+    )
 
-    ref_output, ref_residual = fused_add_rms_norm_reference(ref_x, ref_residual, weight, epsilon)
+    conch_output, conch_residual = fused_add_rms_norm_conch_fn(conch_x, conch_residual, weight, epsilon)
+
+    ref_output, ref_residual = fused_add_rms_norm_ref_fn(ref_x, ref_residual, weight, epsilon)
 
     if not torch.allclose(ref_output, conch_output, atol=tolerance, rtol=tolerance):
         print(f"WARNING: Reference and Conch results differ! (atol={tolerance}, rtol={tolerance})", file=sys.stderr)
@@ -136,7 +155,7 @@ def main(  # noqa: PLR0913
 
     # Benchmark Reference vs. Conch implementations
     baseline_result = benchmark_it(
-        lambda: fused_add_rms_norm_reference(
+        lambda: fused_add_rms_norm_ref_fn(
             ref_x,
             ref_residual,
             weight,
@@ -149,7 +168,7 @@ def main(  # noqa: PLR0913
     )
 
     conch_result = benchmark_it(
-        lambda: fused_add_rms_norm_conch(
+        lambda: fused_add_rms_norm_conch_fn(
             conch_x,
             conch_residual,
             weight,

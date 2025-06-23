@@ -69,6 +69,16 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     is_flag=True,
     help="Flag for printing results in CSV format",
 )
+@click.option(
+    "--compile-ref",
+    is_flag=True,
+    help="Flag to torch.compile() the reference impl",
+)
+@click.option(
+    "--compile-conch",
+    is_flag=True,
+    help="Flag to torch.compile() the Conch impl",
+)
 def main(
     hidden_size: int,
     num_tokens: int,
@@ -78,6 +88,8 @@ def main(
     verbose: bool,
     gpu: str,
     csv: bool,
+    compile_ref: bool,
+    compile_conch: bool,
 ) -> None:
     """Benchmark static scaled int8 quantization.
 
@@ -90,6 +102,8 @@ def main(
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag to indicate whether or not to print results in CSV format.
+        compile_ref: Flag to torch.compile() the reference implementation.
+        compile_conch: Flag to torch.compile() the Conch implementation.
     """
     seed: Final = 0
     seed_everything(seed)
@@ -110,8 +124,13 @@ def main(
     x = torch.rand(num_tokens, hidden_size, dtype=dtype, device=device) * 1000
     scale_arg = torch.tensor([scale], dtype=torch.float32, device=device)
 
-    ref_output = scaled_int8_quant_reference(x, scale_arg)
-    conch_output, _ = scaled_int8_quant_conch(x, scale_arg)
+    scaled_int8_quant_ref_fn = (
+        torch.compile(scaled_int8_quant_reference) if compile_ref else scaled_int8_quant_reference
+    )
+    scaled_int8_quant_conch_fn = torch.compile(scaled_int8_quant_conch) if compile_conch else scaled_int8_quant_conch
+
+    ref_output = scaled_int8_quant_ref_fn(x, scale_arg)
+    conch_output, _ = scaled_int8_quant_conch_fn(x, scale_arg)
 
     if not torch.allclose(ref_output, conch_output, atol=1, rtol=0.0):
         print("WARNING: Reference and Conch results differ!", file=sys.stderr)
@@ -124,7 +143,7 @@ def main(
         print("Results matched :)", file=sys.stderr)
 
     baseline_result = benchmark_it(
-        lambda: scaled_int8_quant_reference(
+        lambda: scaled_int8_quant_ref_fn(
             x,
             scale_arg,
         ),
@@ -135,7 +154,7 @@ def main(
     )
 
     conch_result = benchmark_it(
-        lambda: scaled_int8_quant_conch(
+        lambda: scaled_int8_quant_conch_fn(
             x,
             scale_arg,
         ),

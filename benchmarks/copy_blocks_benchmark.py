@@ -98,6 +98,16 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     is_flag=True,
     help="Flag for printing results in CSV format",
 )
+@click.option(
+    "--compile-ref",
+    is_flag=True,
+    help="Flag to torch.compile() the reference impl",
+)
+@click.option(
+    "--compile-conch",
+    is_flag=True,
+    help="Flag to torch.compile() the Conch impl",
+)
 def main(
     head_dim: int,
     num_layers: int,
@@ -111,6 +121,8 @@ def main(
     verbose: bool,
     gpu: str,
     csv: bool,
+    compile_ref: bool,
+    compile_conch: bool,
 ) -> None:
     """Benchmark Conch copy_blocks operation.
 
@@ -127,6 +139,8 @@ def main(
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag to indicate whether or not to print results in CSV format.
+        compile_ref: Flag to torch.compile() the reference implementation.
+        compile_conch: Flag to torch.compile() the Conch implementation.
     """
     seed: Final = 0
     seed_everything(seed)
@@ -179,10 +193,13 @@ def main(
     # Convert mapping list to tensor
     block_mapping_tensor = torch.tensor(block_mapping, dtype=torch.int64, device=device).view(-1, 2)
 
+    copy_blocks_ref_fn = torch.compile(copy_blocks_reference) if compile_ref else copy_blocks_reference
+    copy_blocks_conch_fn = torch.compile(copy_blocks_conch) if compile_conch else copy_blocks_conch
+
     # Run the reference implementation.
-    copy_blocks_reference(cloned_key_caches, cloned_value_caches, block_mapping)
+    copy_blocks_ref_fn(cloned_key_caches, cloned_value_caches, block_mapping)
     # Call Conch kernel
-    copy_blocks_conch(key_caches, value_caches, block_mapping_tensor)
+    copy_blocks_conch_fn(key_caches, value_caches, block_mapping_tensor)
 
     # Compare the results.
     num_key_matched = 0
@@ -215,7 +232,7 @@ def main(
 
     # Benchmark Reference vs. Conch implementations
     baseline_result = benchmark_it(
-        lambda: copy_blocks_reference(
+        lambda: copy_blocks_ref_fn(
             cloned_key_caches,
             cloned_value_caches,
             block_mapping,
@@ -227,7 +244,7 @@ def main(
     )
 
     conch_result = benchmark_it(
-        lambda: copy_blocks_conch(
+        lambda: copy_blocks_conch_fn(
             key_caches,
             value_caches,
             block_mapping_tensor,

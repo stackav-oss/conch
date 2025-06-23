@@ -69,6 +69,16 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     is_flag=True,
     help="Flag for printing results in CSV format",
 )
+@click.option(
+    "--compile-ref",
+    is_flag=True,
+    help="Flag to torch.compile() the reference impl",
+)
+@click.option(
+    "--compile-conch",
+    is_flag=True,
+    help="Flag to torch.compile() the Conch impl",
+)
 def main(
     hidden_size: int,
     num_tokens: int,
@@ -78,6 +88,8 @@ def main(
     verbose: bool,
     gpu: str,
     csv: bool,
+    compile_ref: bool,
+    compile_conch: bool,
 ) -> None:
     """Benchmark Conch GeluTanhAndMul op.
 
@@ -90,6 +102,8 @@ def main(
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag for printing results in CSV format.
+        compile_ref: Flag to torch.compile() the reference implementation.
+        compile_conch: Flag to torch.compile() the Conch implementation.
     """
     seed: Final = 0
     seed_everything(seed)
@@ -107,8 +121,13 @@ def main(
 
     projections = torch.rand((num_tokens, hidden_size * 2), device=device)
 
-    ref_output = gelu_tanh_and_mul_reference(projections)
-    conch_output = gelu_tanh_and_mul_conch(projections)
+    gelu_tanh_and_mul_ref_fn = (
+        torch.compile(gelu_tanh_and_mul_reference) if compile_ref else gelu_tanh_and_mul_reference
+    )
+    gelu_tanh_and_mul_conch_fn = torch.compile(gelu_tanh_and_mul_conch) if compile_conch else gelu_tanh_and_mul_conch
+
+    ref_output = gelu_tanh_and_mul_ref_fn(projections)
+    conch_output = gelu_tanh_and_mul_conch_fn(projections)
 
     if not torch.allclose(ref_output, conch_output, atol=absolute_tolerance):
         print(f"WARNING: Reference and Conch results differ! (atol={absolute_tolerance})", file=sys.stderr)
@@ -121,7 +140,7 @@ def main(
         print(f"Results matched with atol={absolute_tolerance} :)", file=sys.stderr)
 
     baseline_result = benchmark_it(
-        lambda: gelu_tanh_and_mul_reference(projections),
+        lambda: gelu_tanh_and_mul_ref_fn(projections),
         tag="Baseline",
         metadata=metadata,
         iteration_time_ms=iteration_time_ms,
@@ -129,7 +148,7 @@ def main(
     )
 
     conch_result = benchmark_it(
-        lambda: gelu_tanh_and_mul_conch(projections),
+        lambda: gelu_tanh_and_mul_conch_fn(projections),
         tag="Conch",
         metadata=metadata,
         iteration_time_ms=iteration_time_ms,

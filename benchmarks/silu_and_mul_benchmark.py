@@ -69,6 +69,16 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     is_flag=True,
     help="Flag for printing results in CSV format",
 )
+@click.option(
+    "--compile-ref",
+    is_flag=True,
+    help="Flag to torch.compile() the reference impl",
+)
+@click.option(
+    "--compile-conch",
+    is_flag=True,
+    help="Flag to torch.compile() the Conch impl",
+)
 def main(  # noqa: PLR0913
     dim: int,
     batch_size: int,
@@ -78,6 +88,8 @@ def main(  # noqa: PLR0913
     verbose: bool,
     gpu: str,
     csv: bool,
+    compile_ref: bool,
+    compile_conch: bool,
 ) -> None:
     """Benchmark silu_and_mul op.
 
@@ -90,6 +102,8 @@ def main(  # noqa: PLR0913
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag to indicate whether or not to print results in CSV format.
+        compile_ref: Flag to torch.compile() the reference implementation.
+        compile_conch: Flag to torch.compile() the Conch implementation.
     """
     seed: Final = 0
     seed_everything(seed)
@@ -112,8 +126,11 @@ def main(  # noqa: PLR0913
     x_shape = (batch_size, num_tokens, 2 * dim)
     x = torch.randn(x_shape, dtype=dtype, device=device)
 
-    ref_output = silu_and_mul_reference(x)
-    conch_output = silu_and_mul_conch(x)
+    silu_and_mul_conch_fn = torch.compile(silu_and_mul_conch) if compile_conch else silu_and_mul_conch
+    silu_and_mul_ref_fn = torch.compile(silu_and_mul_reference) if compile_ref else silu_and_mul_reference
+
+    ref_output = silu_and_mul_ref_fn(x)
+    conch_output = silu_and_mul_conch_fn(x)
 
     if not torch.allclose(ref_output, conch_output, atol=tolerance, rtol=tolerance):
         print(f"WARNING: Reference and conch results differ! (atol={tolerance}, rtol={tolerance})", file=sys.stderr)
@@ -127,7 +144,7 @@ def main(  # noqa: PLR0913
 
     # Benchmark Reference vs. conch implementations
     baseline_result = benchmark_it(
-        lambda: silu_and_mul_reference(x),
+        lambda: silu_and_mul_ref_fn(x),
         tag="Baseline",
         metadata=metadata,
         iteration_time_ms=iteration_time_ms,
@@ -135,7 +152,7 @@ def main(  # noqa: PLR0913
     )
 
     conch_result = benchmark_it(
-        lambda: silu_and_mul_conch(x),
+        lambda: silu_and_mul_conch_fn(x),
         tag="Conch",
         metadata=metadata,
         iteration_time_ms=iteration_time_ms,

@@ -69,6 +69,16 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     is_flag=True,
     help="Flag for printing results in CSV format",
 )
+@click.option(
+    "--compile-ref",
+    is_flag=True,
+    help="Flag to torch.compile() the reference impl",
+)
+@click.option(
+    "--compile-conch",
+    is_flag=True,
+    help="Flag to torch.compile() the Conch impl",
+)
 def main(
     embedding_size: int,
     num_tokens: int,
@@ -78,6 +88,8 @@ def main(
     verbose: bool,
     gpu: str,
     csv: bool,
+    compile_ref: bool,
+    compile_conch: bool,
 ) -> None:
     """Benchmark Conch GemmaRMSNorm op.
 
@@ -90,6 +102,8 @@ def main(
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag for printing results in CSV format.
+        compile_ref: Flag to torch.compile() the reference implementation.
+        compile_conch: Flag to torch.compile() the Conch implementation.
     """
     seed: Final = 0
     seed_everything(seed)
@@ -113,8 +127,11 @@ def main(
     x_ref = x.clone()
     x_conch = x.clone()
 
-    result_ref = gemma_rms_norm_reference(x_ref, weights, epsilon, residual=None)
-    result_conch = gemma_rms_norm_conch(x_conch, weights, epsilon, residual=None)
+    gemma_rms_norm_ref_fn = torch.compile(gemma_rms_norm_reference) if compile_ref else gemma_rms_norm_reference
+    gemma_rms_norm_conch_fn = torch.compile(gemma_rms_norm_conch) if compile_conch else gemma_rms_norm_conch
+
+    result_ref = gemma_rms_norm_ref_fn(x_ref, weights, epsilon, residual=None)
+    result_conch = gemma_rms_norm_conch_fn(x_conch, weights, epsilon, residual=None)
 
     # For mypy (if residual==None then result is single Tensor, not tuple[Tensor, Tensor])
     assert isinstance(result_ref, torch.Tensor)
@@ -131,7 +148,7 @@ def main(
         print(f"Results matched with atol={absolute_tolerance} :)", file=sys.stderr)
 
     baseline_result = benchmark_it(
-        lambda: gemma_rms_norm_reference(x_ref, weights, epsilon, residual=None),
+        lambda: gemma_rms_norm_ref_fn(x_ref, weights, epsilon, residual=None),
         tag="Baseline",
         metadata=metadata,
         iteration_time_ms=iteration_time_ms,
@@ -139,7 +156,7 @@ def main(
     )
 
     conch_result = benchmark_it(
-        lambda: gemma_rms_norm_conch(x_conch, weights, epsilon, residual=None),
+        lambda: gemma_rms_norm_conch_fn(x_conch, weights, epsilon, residual=None),
         tag="Conch",
         metadata=metadata,
         iteration_time_ms=iteration_time_ms,
