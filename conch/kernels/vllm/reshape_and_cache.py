@@ -20,7 +20,6 @@ def _reshape_and_cache_kernel(
     v_scale_ptr: tl.tensor,
     # Scalars
     head_size: int,
-    num_kv_heads: int,
     cache_block_size: int,
     # Strides of relevant tensors
     kv_token_stride: tl.int64,
@@ -30,7 +29,6 @@ def _reshape_and_cache_kernel(
     kv_cache_head_stride: tl.int64,
     # Constexprs
     cxpr_head_size_padded: tl.constexpr,
-    cxpr_num_kv_heads_padded: tl.constexpr,
     cxpr_apply_fp8_scaling: tl.constexpr,
 ) -> None:
     """Implementation of reshape_and_cache kernel.
@@ -44,7 +42,6 @@ def _reshape_and_cache_kernel(
         k_scale_ptr: Pointer to Fp8 scaling factor for k.
         v_scale_ptr: Pointer to Fp8 scaling factor for v.
         head_size: Dimension of attention head.
-        num_kv_heads: Number of key/value heads.
         cache_block_size: Size of each cache block / page in the KV cache.
         kv_token_stride: Stride of key/value tensors in 0th dimension.
         kv_head_stride: Stride of key/value tensors in 1st dimension.
@@ -52,11 +49,11 @@ def _reshape_and_cache_kernel(
         kv_cache_block_stride: Stride of key/value cache tensors in 1st dimension.
         kv_cache_head_stride: Stride of key/value cache tensors in 2nd dimension.
         cxpr_head_size_padded: Head size padded to the next power of two.
-        cxpr_num_kv_heads_padded: Number of KV heads padded to the next power of two.
         cxpr_apply_fp8_scaling: Whether or not to apply FP8 scaling.
     """
     # What token is this program processing?
     token_index = tl.program_id(0)
+    kv_head_index = tl.program_id(1)
 
     # Get index of slot for this token from mapping tensor
     slot_index = tl.load(slot_mapping_ptr + token_index)
@@ -72,22 +69,17 @@ def _reshape_and_cache_kernel(
 
     # Calculate offset into key/value tensors to get to the token for this program
     token_offset = token_index * kv_token_stride
-
-    # Offsets for each KV head
-    kv_head_offsets = tl.arange(0, cxpr_num_kv_heads_padded)
+    # Offset for this KV head
+    head_offset = kv_head_index * kv_head_stride
 
     # Offsets for each element of the head
     head_element_offsets = tl.arange(0, cxpr_head_size_padded)
+    # Mask to ensure we only load valid head elements (if head_size is not power of two)
+    head_mask = head_element_offsets < head_size
 
-    # Offsets for entries of key/value
-    kv_offsets = (kv_head_offsets * kv_head_stride)[:, None] + head_element_offsets
-
-    # Mask to ensure we only load valid KV heads and elements (if head_size or num_kv_heads are not powers of two)
-    kv_mask = (kv_head_offsets < num_kv_heads)[:, None] & (head_element_offsets < head_size)[None, :]
-
-    # Load key/value vectors for this token/head
-    key = tl.load(key_ptr + token_offset + kv_offsets, mask=kv_mask, other=0.0)
-    value = tl.load(value_ptr + token_offset + kv_offsets, mask=kv_mask, other=0.0)
+    # Load key/value vectors for this token/head, shape: (cxpr_head_size_padded,)
+    key = tl.load(key_ptr + token_offset + head_offset + head_element_offsets, mask=head_mask, other=0.0)
+    value = tl.load(value_ptr + token_offset + head_offset + head_element_offsets, mask=head_mask, other=0.0)
 
     # Apply FP8 scaling if necessary
     if cxpr_apply_fp8_scaling:
@@ -105,12 +97,15 @@ def _reshape_and_cache_kernel(
     # Calculate offset in a cache block to get to the entry for we're copying into
     kv_cache_entry_offset = entry_index * kv_cache_block_stride
 
-    # Calculate offsets for where to store key/value vectors in the cache
-    output_offsets = (kv_head_offsets * kv_cache_head_stride)[:, None] + head_element_offsets
-
     # Store key/value vectors into cache
-    tl.store(key_cache_ptr + page_offset + kv_cache_entry_offset + output_offsets, key, mask=kv_mask)
-    tl.store(value_cache_ptr + page_offset + kv_cache_entry_offset + output_offsets, value, mask=kv_mask)
+    tl.store(
+        key_cache_ptr + page_offset + kv_cache_entry_offset + head_offset + head_element_offsets, key, mask=head_mask
+    )
+    tl.store(
+        value_cache_ptr + page_offset + kv_cache_entry_offset + head_offset + head_element_offsets,
+        value,
+        mask=head_mask,
+    )
 
 
 def reshape_and_cache_launcher(
@@ -167,7 +162,7 @@ def reshape_and_cache_launcher(
         assert v_scale.numel() == 1
 
     # Parallelize over the number of tokens and number of kv heads
-    grid = (num_tokens,)
+    grid = (num_tokens, num_kv_heads)
 
     # Launch kernel
     _reshape_and_cache_kernel[grid](
@@ -181,7 +176,6 @@ def reshape_and_cache_launcher(
         v_scale_ptr=v_scale,
         # Scalars
         head_size=head_size,
-        num_kv_heads=num_kv_heads,
         cache_block_size=cache_block_size,
         # Strides of relevant tensors
         kv_token_stride=key.stride(0),
@@ -191,6 +185,5 @@ def reshape_and_cache_launcher(
         kv_cache_head_stride=key_cache.stride(2),
         # Constexprs
         cxpr_head_size_padded=triton.next_power_of_2(head_size),
-        cxpr_num_kv_heads_padded=triton.next_power_of_2(num_kv_heads),
         cxpr_apply_fp8_scaling=apply_fp8_scaling,
     )
