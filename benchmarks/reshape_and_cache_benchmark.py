@@ -98,6 +98,16 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     is_flag=True,
     help="Flag for printing results in CSV format",
 )
+@click.option(
+    "--compile-ref",
+    is_flag=True,
+    help="Flag to torch.compile() the reference impl",
+)
+@click.option(
+    "--compile-conch",
+    is_flag=True,
+    help="Flag to torch.compile() the Conch impl",
+)
 def main(
     head_dim: int,
     num_tokens: int,
@@ -111,6 +121,8 @@ def main(
     verbose: bool,
     gpu: str,
     csv: bool,
+    compile_ref: bool,
+    compile_conch: bool,
 ) -> None:
     """Benchmark Conch reshape_and_cache.
 
@@ -127,6 +139,8 @@ def main(
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag for printing results in CSV format.
+        compile_ref: Flag to torch.compile() the reference implementation.
+        compile_conch: Flag to torch.compile() the Conch implementation.
     """
     if kv_cache_dtype != "auto" and not current_platform.supports_fp8():
         error_msg = "Cannot use FP8 KV Cache because current platform does not support FP8"
@@ -184,13 +198,16 @@ def main(
     key_cache_conch = key_cache_ref.clone()
     value_cache_conch = value_cache_ref.clone()
 
-    # Run the reference implementation.
-    reshape_and_cache_reference(
-        key, value, key_cache_ref, value_cache_ref, slot_mapping, kv_cache_dtype, k_scale, v_scale
+    reshape_and_cache_ref_fn = (
+        torch.compile(reshape_and_cache_reference) if compile_ref else reshape_and_cache_reference
     )
+    reshape_and_cache_conch_fn = torch.compile(reshape_and_cache_conch) if compile_conch else reshape_and_cache_conch
+
+    # Run the reference implementation.
+    reshape_and_cache_ref_fn(key, value, key_cache_ref, value_cache_ref, slot_mapping, kv_cache_dtype, k_scale, v_scale)
 
     # Call Conch kernel
-    reshape_and_cache_conch(
+    reshape_and_cache_conch_fn(
         key, value, key_cache_conch, value_cache_conch, slot_mapping, kv_cache_dtype, k_scale, v_scale
     )
 
@@ -230,7 +247,7 @@ def main(
 
     # Benchmark Reference vs. Conch implementations
     baseline_result = benchmark_it(
-        lambda: reshape_and_cache_reference(
+        lambda: reshape_and_cache_ref_fn(
             key,
             value,
             key_cache_ref,
@@ -247,7 +264,7 @@ def main(
     )
 
     conch_result = benchmark_it(
-        lambda: reshape_and_cache_conch(
+        lambda: reshape_and_cache_conch_fn(
             key,
             value,
             key_cache_conch,

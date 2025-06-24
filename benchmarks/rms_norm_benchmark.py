@@ -62,6 +62,16 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     is_flag=True,
     help="Flag for printing results in CSV format",
 )
+@click.option(
+    "--compile-ref",
+    is_flag=True,
+    help="Flag to torch.compile() the reference impl",
+)
+@click.option(
+    "--compile-conch",
+    is_flag=True,
+    help="Flag to torch.compile() the Conch impl",
+)
 def main(  # noqa: PLR0913
     hidden_size: int,
     num_tokens: int,
@@ -70,6 +80,8 @@ def main(  # noqa: PLR0913
     verbose: bool,
     gpu: str,
     csv: bool,
+    compile_ref: bool,
+    compile_conch: bool,
 ) -> None:
     """Benchmark Conch rms_norm op.
 
@@ -81,6 +93,8 @@ def main(  # noqa: PLR0913
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag for printing results in CSV format.
+        compile_ref: Flag to torch.compile() the reference implementation.
+        compile_conch: Flag to torch.compile() the Conch implementation.
     """
     seed: Final = 0
     seed_everything(seed)
@@ -103,9 +117,12 @@ def main(  # noqa: PLR0913
     x = torch.randn((num_tokens, hidden_size), dtype=dtype, device=device)
     weight = torch.randn((hidden_size,), dtype=dtype, device=device)
 
-    conch_output = rms_norm_conch(x, weight, epsilon)
+    rms_norm_ref_fn = torch.compile(rms_norm_reference) if compile_ref else rms_norm_reference
+    rms_norm_conch_fn = torch.compile(rms_norm_conch) if compile_conch else rms_norm_conch
 
-    ref_output = rms_norm_reference(x, weight, epsilon)
+    conch_output = rms_norm_conch_fn(x, weight, epsilon)
+
+    ref_output = rms_norm_ref_fn(x, weight, epsilon)
 
     if not torch.allclose(ref_output, conch_output, atol=tolerance, rtol=tolerance):
         print(f"WARNING: Reference and Conch results differ! (atol={tolerance}, rtol={tolerance})", file=sys.stderr)
@@ -119,7 +136,7 @@ def main(  # noqa: PLR0913
 
     # Benchmark Reference vs. Conch implementations
     baseline_result = benchmark_it(
-        lambda: rms_norm_reference(
+        lambda: rms_norm_ref_fn(
             x,
             weight,
             epsilon,
@@ -131,7 +148,7 @@ def main(  # noqa: PLR0913
     )
 
     conch_result = benchmark_it(
-        lambda: rms_norm_conch(
+        lambda: rms_norm_conch_fn(
             x,
             weight,
             epsilon,

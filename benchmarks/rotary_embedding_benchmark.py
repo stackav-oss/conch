@@ -76,6 +76,16 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     is_flag=True,
     help="Flag to output results in CSV format",
 )
+@click.option(
+    "--compile-ref",
+    is_flag=True,
+    help="Flag to torch.compile() the reference impl",
+)
+@click.option(
+    "--compile-conch",
+    is_flag=True,
+    help="Flag to torch.compile() the Conch impl",
+)
 def main(
     head_size: int,
     num_heads: int,
@@ -86,6 +96,8 @@ def main(
     verbose: bool,
     gpu: str,
     csv: bool,
+    compile_ref: bool,
+    compile_conch: bool,
 ) -> None:
     """Benchmark Conch RotaryEmbedding op.
 
@@ -99,6 +111,8 @@ def main(
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag for printing results in CSV format.
+        compile_ref: Flag to torch.compile() the reference implementation.
+        compile_conch: Flag to torch.compile() the Conch implementation.
     """
     seed: Final = 0
     seed_everything(seed)
@@ -129,7 +143,10 @@ def main(
     query_ref = torch.clone(query)
     key_ref = torch.clone(key)
 
-    query_ref, key_ref = rotary_embedding_reference(
+    rotary_embedding_conch_fn = torch.compile(rotary_embedding_conch) if compile_conch else rotary_embedding_conch
+    rotary_embedding_ref_fn = torch.compile(rotary_embedding_reference) if compile_ref else rotary_embedding_reference
+
+    query_ref, key_ref = rotary_embedding_ref_fn(
         positions,
         query_ref,
         key_ref,
@@ -139,7 +156,7 @@ def main(
         is_neox_style=is_neox_style,
     )
 
-    query_conch, key_conch = rotary_embedding_conch(
+    query_conch, key_conch = rotary_embedding_conch_fn(
         positions,
         query,
         key,
@@ -169,7 +186,7 @@ def main(
         print(f"Key matched with atol={absolute_tolerance} :)", file=sys.stderr)
 
     baseline_result = benchmark_it(
-        lambda: rotary_embedding_reference(
+        lambda: rotary_embedding_ref_fn(
             positions,
             query_ref,
             key_ref,
@@ -184,7 +201,7 @@ def main(
         warmup_time_ms=warmup_time_ms,
     )
     conch_result = benchmark_it(
-        lambda: rotary_embedding_conch(
+        lambda: rotary_embedding_conch_fn(
             positions,
             query,
             key,
