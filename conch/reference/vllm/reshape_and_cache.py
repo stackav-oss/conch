@@ -28,7 +28,7 @@ def _reshape_and_cache_pytorch_ref(
         key = (key / k_scale).to(fp8_dtype).view(key_cache.dtype)
         value = (value / v_scale).to(fp8_dtype).view(value_cache.dtype)
 
-    block_indicies = torch.div(slot_mapping, block_size, rounding_mode="floor")
+    block_indicies = torch.floor_divide(slot_mapping, block_size)
     block_offsets = slot_mapping % block_size
     key_cache[block_indicies, block_offsets, :, :] = key[:num_tokens]
     value_cache[block_indicies, block_offsets, :, :] = value[:num_tokens]
