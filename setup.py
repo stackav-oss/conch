@@ -15,6 +15,7 @@ _REQUIREMENTS: Final = [
 # --extra-index-url https://download.pytorch.org/whl/cpu
 _DEFAULT_PLATFORM_REQUIREMENTS: Final = [
     f"torch=={_TORCH_VERSION}",
+    "torchvision==0.22",
     "triton>=3.3.0",
 ]
 
