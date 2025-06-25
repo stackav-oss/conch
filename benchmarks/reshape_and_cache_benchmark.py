@@ -1,7 +1,7 @@
 # Copyright 2025 Stack AV Co.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Conch reshape_and_cache benchmark."""
+"""pytorch reshape_and_cache benchmark."""
 
 import random
 import sys
@@ -10,9 +10,9 @@ from typing import Final
 import click
 import torch
 
-from conch.ops.vllm.reshape_and_cache import reshape_and_cache as reshape_and_cache_conch
 from conch.platforms import current_platform
-from conch.reference.vllm.reshape_and_cache import reshape_and_cache as reshape_and_cache_reference
+from conch.reference.vllm.reshape_and_cache import _reshape_and_cache_pytorch_ref as reshape_and_cache_pytorch
+from conch.reference.vllm.reshape_and_cache import _reshape_and_cache_vllm_ref as reshape_and_cache_vllm
 from conch.third_party.vllm.utils import create_kv_cache_with_random, seed_everything
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
@@ -104,9 +104,9 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Flag to torch.compile() the reference impl",
 )
 @click.option(
-    "--compile-conch",
+    "--compile-pytorch",
     is_flag=True,
-    help="Flag to torch.compile() the Conch impl",
+    help="Flag to torch.compile() the pytorch impl",
 )
 def main(
     head_dim: int,
@@ -122,9 +122,9 @@ def main(
     gpu: str,
     csv: bool,
     compile_ref: bool,
-    compile_conch: bool,
+    compile_pytorch: bool,
 ) -> None:
-    """Benchmark Conch reshape_and_cache.
+    """Benchmark pytorch reshape_and_cache.
 
     Args:
         head_dim: Head dimension of input tensors.
@@ -135,12 +135,12 @@ def main(
         kv_cache_dtype: KV Cache dtype.
         iteration_time_ms: Time in milliseconds to run benchmark.
         warmup_time_ms: Time in milliseconds to warmup before recording times.
-        absolute_tolerance: Absolute tolerance used to check accuracy of PyTorch vs. Conch.
+        absolute_tolerance: Absolute tolerance used to check accuracy of PyTorch vs. pytorch.
         verbose: Flag to indicate whether or not to print verbose output.
         gpu: Which gpu to run on.
         csv: Flag for printing results in CSV format.
         compile_ref: Flag to torch.compile() the reference implementation.
-        compile_conch: Flag to torch.compile() the Conch implementation.
+        compile_pytorch: Flag to torch.compile() the pytorch implementation.
     """
     if kv_cache_dtype != "auto" and not current_platform.supports_fp8():
         error_msg = "Cannot use FP8 KV Cache because current platform does not support FP8"
@@ -195,46 +195,46 @@ def main(
         key_cache_ref = key_cache_ref.view(fp8_dtype)
         value_cache_ref = value_cache_ref.view(fp8_dtype)
 
-    key_cache_conch = key_cache_ref.clone()
-    value_cache_conch = value_cache_ref.clone()
+    key_cache_pytorch = key_cache_ref.clone()
+    value_cache_pytorch = value_cache_ref.clone()
 
     reshape_and_cache_ref_fn = (
-        torch.compile(reshape_and_cache_reference) if compile_ref else reshape_and_cache_reference
+        torch.compile(reshape_and_cache_vllm) if compile_ref else reshape_and_cache_vllm
     )
-    reshape_and_cache_conch_fn = torch.compile(reshape_and_cache_conch) if compile_conch else reshape_and_cache_conch
+    reshape_and_cache_pytorch_fn = torch.compile(reshape_and_cache_pytorch) if compile_pytorch else reshape_and_cache_pytorch
 
     # Run the reference implementation.
     reshape_and_cache_ref_fn(key, value, key_cache_ref, value_cache_ref, slot_mapping, kv_cache_dtype, k_scale, v_scale)
 
-    # Call Conch kernel
-    reshape_and_cache_conch_fn(
-        key, value, key_cache_conch, value_cache_conch, slot_mapping, kv_cache_dtype, k_scale, v_scale
+    # Call pytorch kernel
+    reshape_and_cache_pytorch_fn(
+        key, value, key_cache_pytorch, value_cache_pytorch, slot_mapping, kv_cache_dtype, k_scale, v_scale
     )
 
     # Can't compare FP8 directly, so bitcast to uint8 for comparison
     if "fp8" in kv_cache_dtype:
         key_cache_ref = key_cache_ref.view(torch.uint8)
         value_cache_ref = value_cache_ref.view(torch.uint8)
-        key_cache_conch = key_cache_conch.view(torch.uint8)
-        value_cache_conch = value_cache_conch.view(torch.uint8)
+        key_cache_pytorch = key_cache_pytorch.view(torch.uint8)
+        value_cache_pytorch = value_cache_pytorch.view(torch.uint8)
 
-    if not torch.allclose(key_cache_conch, key_cache_ref, atol=absolute_tolerance):
-        print(f"WARNING: Reference and Conch results differ! (atol={absolute_tolerance})", file=sys.stderr)
-        print(f"Output max diff: {(key_cache_ref - key_cache_conch).abs().max().item()}", file=sys.stderr)
+    if not torch.allclose(key_cache_pytorch, key_cache_ref, atol=absolute_tolerance):
+        print(f"WARNING: Reference and pytorch results differ! (atol={absolute_tolerance})", file=sys.stderr)
+        print(f"Output max diff: {(key_cache_ref - key_cache_pytorch).abs().max().item()}", file=sys.stderr)
 
         if verbose:
-            print(f"Reference output: {key_cache_conch}", file=sys.stderr)
-            print(f"Conch output: {key_cache_ref}", file=sys.stderr)
+            print(f"Reference output: {key_cache_pytorch}", file=sys.stderr)
+            print(f"pytorch output: {key_cache_ref}", file=sys.stderr)
     else:
         print(f"Key cache matched with atol={absolute_tolerance} :)", file=sys.stderr)
 
-    if not torch.allclose(value_cache_conch, value_cache_ref, atol=absolute_tolerance):
-        print(f"WARNING: Reference and Conch results differ! (atol={absolute_tolerance})", file=sys.stderr)
-        print(f"Output max diff: {(value_cache_ref - value_cache_conch).abs().max().item()}", file=sys.stderr)
+    if not torch.allclose(value_cache_pytorch, value_cache_ref, atol=absolute_tolerance):
+        print(f"WARNING: Reference and pytorch results differ! (atol={absolute_tolerance})", file=sys.stderr)
+        print(f"Output max diff: {(value_cache_ref - value_cache_pytorch).abs().max().item()}", file=sys.stderr)
 
         if verbose:
-            print(f"Reference output: {value_cache_conch}", file=sys.stderr)
-            print(f"Conch output: {value_cache_ref}", file=sys.stderr)
+            print(f"Reference output: {value_cache_pytorch}", file=sys.stderr)
+            print(f"pytorch output: {value_cache_ref}", file=sys.stderr)
     else:
         print(f"Value cache matched with atol={absolute_tolerance} :)", file=sys.stderr)
 
@@ -242,10 +242,10 @@ def main(
     if "fp8" in kv_cache_dtype:
         key_cache_ref = key_cache_ref.view(fp8_dtype)
         value_cache_ref = value_cache_ref.view(fp8_dtype)
-        key_cache_conch = key_cache_conch.view(fp8_dtype)
-        value_cache_conch = value_cache_conch.view(fp8_dtype)
+        key_cache_pytorch = key_cache_pytorch.view(fp8_dtype)
+        value_cache_pytorch = value_cache_pytorch.view(fp8_dtype)
 
-    # Benchmark Reference vs. Conch implementations
+    # Benchmark Reference vs. pytorch implementations
     baseline_result = benchmark_it(
         lambda: reshape_and_cache_ref_fn(
             key,
@@ -257,32 +257,32 @@ def main(
             k_scale,
             v_scale,
         ),
-        tag="Baseline",
+        tag="CUDA Baseline",
         metadata=metadata,
         iteration_time_ms=iteration_time_ms,
         warmup_time_ms=warmup_time_ms,
     )
 
-    conch_result = benchmark_it(
-        lambda: reshape_and_cache_conch_fn(
+    pytorch_result = benchmark_it(
+        lambda: reshape_and_cache_pytorch_fn(
             key,
             value,
-            key_cache_conch,
-            value_cache_conch,
+            key_cache_pytorch,
+            value_cache_pytorch,
             slot_mapping,
             kv_cache_dtype,
             k_scale,
             v_scale,
         ),
-        tag="Conch",
+        tag=f"PyTorch (compiled? {compile_pytorch})",
         metadata=metadata,
         iteration_time_ms=iteration_time_ms,
         warmup_time_ms=warmup_time_ms,
     )
 
     # Print results
-    conch_result.print_parameters(csv=csv)
-    conch_result.print_results(csv=csv)
+    pytorch_result.print_parameters(csv=csv)
+    pytorch_result.print_results(csv=csv)
     baseline_result.print_results(csv=csv)
 
 

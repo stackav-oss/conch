@@ -32,4 +32,5 @@ for tokens in ${num_tokens[@]}; do
   fi
 
   python benchmarks/reshape_and_cache_benchmark.py $csv_flag --num-tokens $tokens > $output_file
+  python benchmarks/reshape_and_cache_benchmark.py $csv_flag --num-tokens $tokens --compile-pytorch > $output_file
 done
