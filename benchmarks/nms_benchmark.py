@@ -200,7 +200,7 @@ def main(
             scores,
             iou_threshold,
         ),
-        tag="PyTorch Reference",
+        tag="Baseline",
         metadata=metadata,
         iteration_time_ms=iteration_time_ms,
         warmup_time_ms=warmup_time_ms,

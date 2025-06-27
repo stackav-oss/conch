@@ -34,6 +34,7 @@ _TABLE_OP_NAME_TO_BENCHMARK: Final = {
     "Int8 Static Quantization": "static_scaled_int8_quant_benchmark",
     "Mixed-precision GEMM [Int4 x FP16]": "mixed_precision_gemm_benchmark",
     "Scaled GEMM [Int8 x BF16]": "scaled_gemm_benchmark",
+    "Non-Max Suppression": "nms_benchmark",
     "vLLM: Copy Blocks": "copy_blocks_benchmark",
     "vLLM: Reshape and Cache": "reshape_and_cache_benchmark",
 }
@@ -48,6 +49,10 @@ _DEVICE_SPECIFIC_BLACKLIST: Final = {
 
 # Add any extra flags for each benchmark here
 _EXTRA_BENCHMARK_FLAGS: Final = {
+    "gelu_tanh_and_mul_benchmark": ["--compile-ref"],
+    "silu_and_mul_benchmark": ["--compile-ref"],
+    "gemma_rms_norm_benchmark": ["--compile-ref"],
+    "rms_norm_benchmark": ["--compile-ref"],
     "varlen_attention_benchmark": ["--causal"],
 }
 
@@ -69,6 +74,7 @@ def main(results_directory: Path, use_cached_results: bool) -> None:
     # Always run against fastest possible implementation
     os.environ["CONCH_BENCH_ENABLE_ALL_REF"] = "1"
     os.environ["CONCH_ENABLE_BNB"] = "1"
+    os.environ["CONCH_ENABLE_TORCHVISION"] = "1"
     os.environ["CONCH_ENABLE_VLLM"] = "1"
     os.environ["VLLM_LOGGING_LEVEL"] = "CRITICAL"
 
