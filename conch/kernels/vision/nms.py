@@ -39,6 +39,14 @@ def _calculate_iou_kernel(
     cxpr_block_size: tl.constexpr,
 ) -> None:
     """Calculate IoU matrix between all pairs of boxes.
+    
+      0 1 2 3 4 5
+    0 x . . . . .
+    1 x x . . . .
+    2 x x x . . .
+    3 x x x x . .
+    4 x x x x x .
+    5 x x x x x x
 
     Args:
         boxes_ptr: Pointer to boxes tensor, shape: (N, 4) in (x1, y1, x2, y2) format.
@@ -50,6 +58,10 @@ def _calculate_iou_kernel(
     """
     row_idx = tl.program_id(0)
     col_block_start = tl.program_id(1) * cxpr_block_size
+
+    if row_idx > col_block_start + cxpr_block_size - 1:
+        # If the row index is beyond the current block, skip processing
+        return
 
     # Load the reference box (row_idx)
     box1_offset = row_idx * boxes_stride
@@ -136,7 +148,7 @@ def _nms_suppression_kernel(
         is_kept = tl.load(keep_mask_ptr + current_box_idx)
         if is_kept:
             # IoU row offset for the current box
-            iou_row_offset = current_box_idx * iou_matrix_stride
+            # iou_row_offset = current_box_idx * iou_matrix_stride
 
             # Iterate blockwise through the columns
             for block_idx in range(triton.cdiv(cxpr_num_boxes_padded, cxpr_block_size)):
@@ -144,12 +156,19 @@ def _nms_suppression_kernel(
                 block_start = current_box_idx + 1 + block_idx * cxpr_block_size
                 # Only process if the start of the block is within bounds
                 if block_start < num_boxes:
+                    row_indices = tl.full([cxpr_block_size], current_box_idx, dtype=tl.int32)
                     # Masked load of indices for the target boxes in the current block
+                    # target_box_offsets = block_start + tl.arange(0, cxpr_block_size)
                     target_box_offsets = block_start + tl.arange(0, cxpr_block_size)
                     target_box_mask = target_box_offsets < num_boxes
 
+                    adjusted_row_offsets = tl.where(row_indices < target_box_offsets, row_indices, target_box_offsets)
+                    adjusted_col_offsets = tl.where(row_indices < target_box_offsets, target_box_offsets, row_indices)
+                    # target_box_indices = tl.load(sorted_indices_ptr + target_box_offsets, mask=target_box_mask)
+
                     # Load IoU values for the current block
-                    iou_values = tl.load(iou_matrix_ptr + iou_row_offset + target_box_offsets, mask=target_box_mask)
+                    # iou_values = tl.load(iou_matrix_ptr + iou_row_offset + target_box_indices, mask=target_box_mask)
+                    iou_values = tl.load(iou_matrix_ptr + adjusted_row_offsets * iou_matrix_stride + adjusted_col_offsets, mask=target_box_mask)
 
                     # Suppress boxes with lower scores that have high IoU
                     suppression_mask = tl.where(iou_values > iou_threshold, True, False)
