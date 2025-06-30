@@ -181,6 +181,9 @@ def main(
 
     # Test Conch implementation
     conch_output = nms_conch(boxes, scores, iou_threshold)
+    
+    print(f"{reference_output = }")
+    print(f"{conch_output = }")
 
     # Accuracy checks
     if not torch.allclose(conch_output, reference_output, atol=absolute_tolerance):
