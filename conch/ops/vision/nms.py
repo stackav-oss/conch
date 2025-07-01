@@ -40,7 +40,7 @@ def nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float) -> torc
     # Initialize keep mask - all boxes are initially kept
     keep_mask = torch.empty(num_boxes, dtype=torch.bool, device=device)
     keep_mask.fill_(True)
-
+    
     return nms_launcher(
         boxes=boxes,
         scores=scores,
