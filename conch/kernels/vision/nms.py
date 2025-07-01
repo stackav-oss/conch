@@ -73,26 +73,22 @@ def _calculate_iou_kernel(
         iou_matrix_stride: Stride for IoU matrix tensor.
         cxpr_block_size: Block size for processing.
     """
-    row_block_start = tl.program_id(0) * cxpr_block_size
+    # row_block_start = tl.program_id(0) * cxpr_block_size
+    row_idx = tl.program_id(0)
     col_block_start = tl.program_id(1) * cxpr_block_size
 
     # Skip this block if we are entirely in the lower-triangular part of the matrix
-    if row_block_start > col_block_start:
+    if row_idx >= col_block_start + cxpr_block_size:
         return
 
-    # Process a block of rows
-    row_offsets = row_block_start + tl.arange(0, cxpr_block_size)
-    row_mask = row_offsets < num_boxes
+    # Load the reference box
+    box1_offset = row_idx * boxes_stride
+    box1_x1 = tl.load(boxes_ptr + box1_offset + 0)
+    box1_y1 = tl.load(boxes_ptr + box1_offset + 1)
+    box1_x2 = tl.load(boxes_ptr + box1_offset + 2)
+    box1_y2 = tl.load(boxes_ptr + box1_offset + 3)
 
-    # Load the reference boxes
-    # Shape: (cxpr_block_size,)
-    box1_offsets = row_offsets * boxes_stride
-    box1_x1 = tl.load(boxes_ptr + box1_offsets + 0, mask=row_mask, other=0.0)
-    box1_y1 = tl.load(boxes_ptr + box1_offsets + 1, mask=row_mask, other=0.0)
-    box1_x2 = tl.load(boxes_ptr + box1_offsets + 2, mask=row_mask, other=0.0)
-    box1_y2 = tl.load(boxes_ptr + box1_offsets + 3, mask=row_mask, other=0.0)
-
-    # Calculate areas of the reference boxes
+    # Calculate areas of the reference box
     box1_area = (box1_x2 - box1_x1) * (box1_y2 - box1_y1)
 
     # Process a block of columns
@@ -111,10 +107,10 @@ def _calculate_iou_kernel(
     box2_area = (box2_x2 - box2_x1) * (box2_y2 - box2_y1)
 
     # Calculate intersection
-    inter_x1 = tl.maximum(box1_x1[:, None], box2_x1[None, :])
-    inter_y1 = tl.maximum(box1_y1[:, None], box2_y1[None, :])
-    inter_x2 = tl.minimum(box1_x2[:, None], box2_x2[None, :])
-    inter_y2 = tl.minimum(box1_y2[:, None], box2_y2[None, :])
+    inter_x1 = tl.maximum(box1_x1, box2_x1)
+    inter_y1 = tl.maximum(box1_y1, box2_y1)
+    inter_x2 = tl.minimum(box1_x2, box2_x2)
+    inter_y2 = tl.minimum(box1_y2, box2_y2)
 
     # Check if there's valid intersection
     inter_w = tl.maximum(0.0, inter_x2 - inter_x1)
@@ -122,14 +118,13 @@ def _calculate_iou_kernel(
     inter_area = inter_w * inter_h
 
     # Calculate union and IoU
-    # Shape: (cxpr_block_size, cxpr_block_size)
-    union_area = box1_area[:, None] + box2_area[None, :] - inter_area
+    # Shape: (cxpr_block_size,)
+    union_area = box1_area + box2_area - inter_area
     iou = tl.where(union_area > 0.0, inter_area / union_area, 0.0)
 
     # Store IoU values -> upper triangular part of the matrix
-    iou_output_offsets = row_offsets[:, None] * iou_matrix_stride + col_offsets[None, :]
-    iou_output_mask = row_mask[:, None] & col_mask[None, :] & (row_offsets[:, None] <= col_offsets[None, :])
-    tl.store(iou_matrix_ptr + iou_output_offsets, iou, mask=iou_output_mask)
+    iou_output_offsets = row_idx * iou_matrix_stride + col_offsets
+    tl.store(iou_matrix_ptr + iou_output_offsets, iou, mask=col_mask)
 
 
 @triton.autotune(  # type: ignore[misc]
@@ -237,7 +232,7 @@ def nms_launcher(
     # dimensions, in chunks of size `cxpr_block_size`.
     def stage1_grid(meta: dict[str, Any]) -> tuple[int, int]:
         num_blocks = triton.cdiv(num_boxes, meta["cxpr_block_size"])
-        return (num_blocks, num_blocks)
+        return (num_boxes, num_blocks)
 
     # Calculate IoU matrix, which is an upper triangular matrix where each element (i, j) contains the IoU
     # between box i and box j, where i <= j.
