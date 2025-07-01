@@ -34,8 +34,8 @@ from matplotlib import pyplot as plt
     "--triton-tag",
     required=True,
     type=str,
-    default="Triton",
-    help="The 'tag' column value for Triton results.",
+    default="Conch",
+    help="The 'tag' column value for Conch results.",
 )
 @click.option(
     "--baseline-tag",
@@ -60,7 +60,7 @@ def main(results_directory: Path, x_axis: str, y_axis: str, triton_tag: str, bas
     triton_df = df[df["tag"] == triton_tag].sort_values(by=x_axis)
     baseline_df = df[df["tag"] == baseline_tag].sort_values(by=x_axis)
 
-    columns_to_exclude = ["tag", "platform", x_axis, y_axis]
+    columns_to_exclude = ["tag", "platform", "num_iterations", x_axis, y_axis]
     metadata_columns = [col for col in triton_df.columns if col not in columns_to_exclude]
 
     triton_metadata = triton_df[metadata_columns].set_index(metadata_columns[0]).reset_index(drop=True)

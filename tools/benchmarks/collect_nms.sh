@@ -12,12 +12,15 @@ mkdir -p $benchmark_dir
 
 num_boxes=(
   "512"
+  "1024"
   "2048"
   "8192"
+  "16384"
+  "32768"
 )
 
 for boxes in ${num_boxes[@]}; do
-  output_file="$benchmark_dir/$seq_len.csv"
+  output_file="$benchmark_dir/$boxes.csv"
   csv_flag="--csv"
 
   if [ -v CONCH_BENCH_NO_CSV ]; then
