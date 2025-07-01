@@ -77,7 +77,7 @@ def _nms_pytorch_iterative(boxes: torch.Tensor, scores: torch.Tensor, iou_thresh
         return torch.empty(0, dtype=torch.long, device=boxes.device)
 
     # Sort boxes by scores in descending order
-    sorted_scores, sorted_indices = torch.sort(scores, descending=True)
+    _, sorted_indices = torch.sort(scores, dim=0, stable=True, descending=True)
 
     # Keep track of which boxes to keep
     keep = []
@@ -132,7 +132,7 @@ def _nms_pytorch_vectorized(boxes: torch.Tensor, scores: torch.Tensor, iou_thres
     num_boxes = boxes.size(0)
 
     # Sort boxes by scores in descending order
-    sorted_scores, sorted_indices = torch.sort(scores, descending=True)
+    _, sorted_indices = torch.sort(scores, dim=0, stable=True, descending=True)
 
     # Pre-compute all pairwise IoUs
     iou_matrix = _calculate_iou(boxes, boxes)  # (N, N)

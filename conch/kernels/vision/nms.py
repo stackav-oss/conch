@@ -16,7 +16,6 @@ import triton.language as tl
 
 @triton.autotune(  # type: ignore[misc]
     configs=[
-        triton.Config({"cxpr_block_size": 8}),
         triton.Config({"cxpr_block_size": 16}),
         triton.Config({"cxpr_block_size": 32}),
         triton.Config({"cxpr_block_size": 64}),
@@ -128,20 +127,19 @@ def _calculate_iou_kernel(
 
     # Store IoU values -> upper triangular part of the matrix
     iou_output_offsets = row_offsets[:, None] * iou_matrix_stride + col_offsets[None, :]
-    iou_output_mask = row_mask[:, None] & col_mask[None, :] & (row_offsets[:, None] <= col_offsets[None, :])
+    iou_output_mask = row_mask[:, None] & col_mask[None, :] & (row_offsets[:, None] < col_offsets[None, :])
     tl.store(iou_matrix_ptr + iou_output_offsets, iou, mask=iou_output_mask)
 
 
 @triton.autotune(  # type: ignore[misc]
     configs=[
-        triton.Config({"cxpr_block_size": 32}),
-        triton.Config({"cxpr_block_size": 64}),
         triton.Config({"cxpr_block_size": 128}),
         triton.Config({"cxpr_block_size": 256}),
         triton.Config({"cxpr_block_size": 512}),
         triton.Config({"cxpr_block_size": 1024}),
         triton.Config({"cxpr_block_size": 2048}),
         triton.Config({"cxpr_block_size": 4096}),
+        triton.Config({"cxpr_block_size": 8192}),
     ],
     key=["num_boxes"],
 )
@@ -151,13 +149,12 @@ def _nms_suppression_kernel(
     iou_matrix_ptr: tl.tensor,  # [N, N]
     keep_mask_ptr: tl.tensor,  # [N]
     # Scalars
-    num_boxes: int,
+    num_boxes: tl.int32,
     iou_threshold: float,
     # Strides
-    iou_matrix_stride: int,
+    iou_matrix_stride: tl.int32,
     # Constexprs
     cxpr_block_size: tl.constexpr,
-    cxpr_num_boxes_padded: tl.constexpr,
 ) -> None:
     """NMS suppression kernel.
 
@@ -168,10 +165,9 @@ def _nms_suppression_kernel(
         iou_threshold: IoU threshold for suppression.
         iou_matrix_stride: Stride for IoU matrix tensor.
         cxpr_block_size: Block size for processing.
-        cxpr_num_boxes_padded: Padded number of boxes for block processing.
     """
     # Sequential NMS: for each box in sorted order, suppress later boxes
-    for current_box_idx in range(num_boxes):
+    for current_box_idx in range(num_boxes - 1):
         # Check if current box is still kept
         is_kept = tl.load(keep_mask_ptr + current_box_idx)
         if is_kept:
@@ -180,26 +176,32 @@ def _nms_suppression_kernel(
             # This means we only need to read the upper triangular part of the IoU matrix.
             iou_row_offset = current_box_idx * iou_matrix_stride
 
+            # Only process boxes that come after the current box
+            next_box_idx = current_box_idx + 1
+            remaining_boxes = num_boxes - next_box_idx
+
             # Iterate blockwise through the columns
-            for block_idx in range(triton.cdiv(cxpr_num_boxes_padded, cxpr_block_size)):
-                # Only need to consider later boxes, so start from current_box + 1
-                block_start = current_box_idx + 1 + block_idx * cxpr_block_size
-                # Only process if the start of the block is within bounds
-                if block_start < num_boxes:
-                    # Masked load of indices for the target boxes in the current block
-                    target_box_offsets = block_start + tl.arange(0, cxpr_block_size)
-                    target_box_mask = target_box_offsets < num_boxes
+            for block_idx in range(tl.cdiv(remaining_boxes, cxpr_block_size)):
+                # Masked load of indices for the target boxes in the current block
+                block_start = next_box_idx + block_idx * cxpr_block_size
+                target_box_offsets = block_start + tl.arange(0, cxpr_block_size)
+                target_box_mask = target_box_offsets < num_boxes
 
-                    # Load IoU values for the current block
-                    iou_values = tl.load(
-                        iou_matrix_ptr + iou_row_offset + target_box_offsets, mask=target_box_mask, other=0.0
-                    )
+                # Load IoU values for the current block, out-of-bounds indices will get zeros for IoU score
+                # (which means they won't be suppressed)
+                iou_values = tl.load(
+                    iou_matrix_ptr + iou_row_offset + target_box_offsets, mask=target_box_mask, other=0.0
+                )
 
-                    # Suppress boxes with lower scores that have high IoU
-                    suppression_mask = tl.where(iou_values > iou_threshold, True, False)
+                # Suppress boxes with lower scores that have high IoU
+                suppression_mask = iou_values > iou_threshold
 
-                    # Conditionally store suppression result for high-IoU boxes
-                    tl.store(keep_mask_ptr + target_box_offsets, False, mask=suppression_mask)
+                # Conditionally store suppression result for high-IoU boxes
+                tl.store(keep_mask_ptr + target_box_offsets, False, mask=suppression_mask)
+
+                # Potential race condition: we need to ensure all threads complete the store before the next
+                # iteration otherwise we may load stale data for whether or not a box has been suppressed.
+                tl.debug_barrier()
 
 
 def nms_launcher(
@@ -230,8 +232,8 @@ def nms_launcher(
     num_boxes = boxes.size(0)
 
     # Sort boxes by scores in descending order
-    _, sorted_indices = torch.sort(scores, descending=True)
-    sorted_boxes = boxes[sorted_indices]
+    _, sorted_indices = torch.sort(scores, dim=0, stable=True, descending=True)
+    sorted_boxes = boxes[sorted_indices].contiguous()
 
     # Calculate IoU of each box against all other boxes in parallel. Process blockwise in both
     # dimensions, in chunks of size `cxpr_block_size`.
@@ -248,7 +250,7 @@ def nms_launcher(
         # Scalars
         num_boxes=num_boxes,
         # Strides
-        boxes_stride=boxes.stride(0),
+        boxes_stride=sorted_boxes.stride(0),
         iou_matrix_stride=iou_matrix.stride(0),
     )
 
@@ -264,8 +266,6 @@ def nms_launcher(
         iou_threshold=iou_threshold,
         # Strides
         iou_matrix_stride=iou_matrix.stride(0),
-        # Constexprs
-        cxpr_num_boxes_padded=triton.next_power_of_2(num_boxes),
     )
 
     # Extract indices of kept boxes

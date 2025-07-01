@@ -52,6 +52,9 @@ def test_nms_conch_vs_reference(
     keep_ref = nms_ref(boxes, scores, iou_threshold)
     keep_conch = nms_conch(boxes, scores, iou_threshold)
 
+    print(f"{keep_conch=}")
+    print(f"{keep_ref=}")
+
     # Results should be identical (same indices, same order)
     torch.testing.assert_close(keep_ref, keep_conch)
 
