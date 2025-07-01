@@ -16,11 +16,12 @@ import triton.language as tl
 
 @triton.autotune(  # type: ignore[misc]
     configs=[
+        triton.Config({"cxpr_block_size": 8}),
+        triton.Config({"cxpr_block_size": 16}),
+        triton.Config({"cxpr_block_size": 32}),
         triton.Config({"cxpr_block_size": 64}),
         triton.Config({"cxpr_block_size": 128}),
         triton.Config({"cxpr_block_size": 256}),
-        triton.Config({"cxpr_block_size": 512}),
-        triton.Config({"cxpr_block_size": 1024}),
     ],
     key=["num_boxes"],
 )
@@ -39,24 +40,59 @@ def _calculate_iou_kernel(
 ) -> None:
     """Calculate IoU matrix between all pairs of boxes.
 
+    Note: we only populate the upper-triangular portion of the IoU matrix.
+    For example: for N = 16 boxes, and cxpr_block_size = 4, the IoU matrix will look like this:
+
+    ---------------------
+    |....|....|....|....|
+    |X...|....|....|....|
+    |XX..|....|....|....|
+    |XXX.|....|....|....|
+    ---------------------
+    |XXXX|....|....|....|
+    |XXXX|X...|....|....|
+    |XXXX|XX..|....|....|
+    |XXXX|XXX.|....|....|
+    ---------------------
+    |XXXX|XXXX|X...|....|
+    |XXXX|XXXX|XX..|....|
+    |XXXX|XXXX|XXX.|....|
+    |XXXX|XXXX|XXXX|....|
+    ---------------------
+    |XXXX|XXXX|XXXX|X...|
+    |XXXX|XXXX|XXXX|XX..|
+    |XXXX|XXXX|XXXX|XXX.|
+    |XXXX|XXXX|XXXX|XXXX|
+    ---------------------
+
     Args:
-        boxes_ptr: Pointer to boxes tensor, shape: (N, 4) in (x1, y1, x2, y2) format.
+        boxes_ptr: Pointer to boxes tensor, sorted by scores, shape: (N, 4) in (x1, y1, x2, y2) format.
         iou_matrix_ptr: Pointer to IoU matrix tensor, shape: (N, N).
         num_boxes: Number of boxes.
         boxes_stride: Stride for boxes tensor.
         iou_matrix_stride: Stride for IoU matrix tensor.
         cxpr_block_size: Block size for processing.
     """
-    row_idx = tl.program_id(0)
+    row_block_start = tl.program_id(0) * cxpr_block_size
     col_block_start = tl.program_id(1) * cxpr_block_size
 
-    # Load the reference box (row_idx)
-    box1_offset = row_idx * boxes_stride
-    box1_x1 = tl.load(boxes_ptr + box1_offset + 0)
-    box1_y1 = tl.load(boxes_ptr + box1_offset + 1)
-    box1_x2 = tl.load(boxes_ptr + box1_offset + 2)
-    box1_y2 = tl.load(boxes_ptr + box1_offset + 3)
+    # Skip this block if we are entirely in the lower-triangular part of the matrix
+    if row_block_start > col_block_start:
+        return
 
+    # Process a block of rows
+    row_offsets = row_block_start + tl.arange(0, cxpr_block_size)
+    row_mask = row_offsets < num_boxes
+
+    # Load the reference boxes
+    # Shape: (cxpr_block_size,)
+    box1_offsets = row_offsets * boxes_stride
+    box1_x1 = tl.load(boxes_ptr + box1_offsets + 0, mask=row_mask, other=0.0)
+    box1_y1 = tl.load(boxes_ptr + box1_offsets + 1, mask=row_mask, other=0.0)
+    box1_x2 = tl.load(boxes_ptr + box1_offsets + 2, mask=row_mask, other=0.0)
+    box1_y2 = tl.load(boxes_ptr + box1_offsets + 3, mask=row_mask, other=0.0)
+
+    # Calculate areas of the reference boxes
     box1_area = (box1_x2 - box1_x1) * (box1_y2 - box1_y1)
 
     # Process a block of columns
@@ -64,19 +100,21 @@ def _calculate_iou_kernel(
     col_mask = col_offsets < num_boxes
 
     # Load boxes in the current block
+    # Shape: (cxpr_block_size,)
     box2_offsets = col_offsets * boxes_stride
-    box2_x1 = tl.load(boxes_ptr + box2_offsets + 0, mask=col_mask)
-    box2_y1 = tl.load(boxes_ptr + box2_offsets + 1, mask=col_mask)
-    box2_x2 = tl.load(boxes_ptr + box2_offsets + 2, mask=col_mask)
-    box2_y2 = tl.load(boxes_ptr + box2_offsets + 3, mask=col_mask)
+    box2_x1 = tl.load(boxes_ptr + box2_offsets + 0, mask=col_mask, other=0.0)
+    box2_y1 = tl.load(boxes_ptr + box2_offsets + 1, mask=col_mask, other=0.0)
+    box2_x2 = tl.load(boxes_ptr + box2_offsets + 2, mask=col_mask, other=0.0)
+    box2_y2 = tl.load(boxes_ptr + box2_offsets + 3, mask=col_mask, other=0.0)
 
+    # Calculate areas of the boxes
     box2_area = (box2_x2 - box2_x1) * (box2_y2 - box2_y1)
 
     # Calculate intersection
-    inter_x1 = tl.maximum(box1_x1, box2_x1)
-    inter_y1 = tl.maximum(box1_y1, box2_y1)
-    inter_x2 = tl.minimum(box1_x2, box2_x2)
-    inter_y2 = tl.minimum(box1_y2, box2_y2)
+    inter_x1 = tl.maximum(box1_x1[:, None], box2_x1[None, :])
+    inter_y1 = tl.maximum(box1_y1[:, None], box2_y1[None, :])
+    inter_x2 = tl.minimum(box1_x2[:, None], box2_x2[None, :])
+    inter_y2 = tl.minimum(box1_y2[:, None], box2_y2[None, :])
 
     # Check if there's valid intersection
     inter_w = tl.maximum(0.0, inter_x2 - inter_x1)
@@ -84,28 +122,32 @@ def _calculate_iou_kernel(
     inter_area = inter_w * inter_h
 
     # Calculate union and IoU
-    union_area = box1_area + box2_area - inter_area
+    # Shape: (cxpr_block_size, cxpr_block_size)
+    union_area = box1_area[:, None] + box2_area[None, :] - inter_area
     iou = tl.where(union_area > 0.0, inter_area / union_area, 0.0)
 
-    # Store IoU values
-    iou_output_offsets = row_idx * iou_matrix_stride + col_offsets
-    tl.store(iou_matrix_ptr + iou_output_offsets, iou, mask=col_mask)
+    # Store IoU values -> upper triangular part of the matrix
+    iou_output_offsets = row_offsets[:, None] * iou_matrix_stride + col_offsets[None, :]
+    iou_output_mask = row_mask[:, None] & col_mask[None, :] & (row_offsets[:, None] <= col_offsets[None, :])
+    tl.store(iou_matrix_ptr + iou_output_offsets, iou, mask=iou_output_mask)
 
 
 @triton.autotune(  # type: ignore[misc]
     configs=[
+        triton.Config({"cxpr_block_size": 32}),
         triton.Config({"cxpr_block_size": 64}),
         triton.Config({"cxpr_block_size": 128}),
         triton.Config({"cxpr_block_size": 256}),
         triton.Config({"cxpr_block_size": 512}),
         triton.Config({"cxpr_block_size": 1024}),
+        triton.Config({"cxpr_block_size": 2048}),
+        triton.Config({"cxpr_block_size": 4096}),
     ],
     key=["num_boxes"],
 )
 @triton.jit  # type: ignore[misc]
 def _nms_suppression_kernel(
     # Tensors
-    sorted_indices_ptr: tl.tensor,  # [N]
     iou_matrix_ptr: tl.tensor,  # [N, N]
     keep_mask_ptr: tl.tensor,  # [N]
     # Scalars
@@ -120,7 +162,6 @@ def _nms_suppression_kernel(
     """NMS suppression kernel.
 
     Args:
-        sorted_indices_ptr: Pointer to sorted indices tensor, shape: (N,).
         iou_matrix_ptr: Pointer to precomputed IoU matrix, shape: (N, N).
         keep_mask_ptr: Pointer to keep mask tensor, shape: (N,).
         num_boxes: Number of boxes.
@@ -130,36 +171,35 @@ def _nms_suppression_kernel(
         cxpr_num_boxes_padded: Padded number of boxes for block processing.
     """
     # Sequential NMS: for each box in sorted order, suppress later boxes
-    # Iterate through sorted indices
-    for i in range(num_boxes):
-        # Get the current box index from sorted indices
-        current_box_idx = tl.load(sorted_indices_ptr + i)
-
+    for current_box_idx in range(num_boxes):
         # Check if current box is still kept
         is_kept = tl.load(keep_mask_ptr + current_box_idx)
         if is_kept:
-            # IoU row offset for the current box
+            # IoU matrix row offset for the current box
+            # Because the IoU matrix is sorted by score, we will only consider boxes that come after the current box.
+            # This means we only need to read the upper triangular part of the IoU matrix.
             iou_row_offset = current_box_idx * iou_matrix_stride
 
             # Iterate blockwise through the columns
             for block_idx in range(triton.cdiv(cxpr_num_boxes_padded, cxpr_block_size)):
-                # Only need to consider later boxes, so start from i + 1 (i is the current box index)
-                block_start = i + 1 + block_idx * cxpr_block_size
+                # Only need to consider later boxes, so start from current_box + 1
+                block_start = current_box_idx + 1 + block_idx * cxpr_block_size
                 # Only process if the start of the block is within bounds
                 if block_start < num_boxes:
                     # Masked load of indices for the target boxes in the current block
                     target_box_offsets = block_start + tl.arange(0, cxpr_block_size)
                     target_box_mask = target_box_offsets < num_boxes
-                    target_box_indices = tl.load(sorted_indices_ptr + target_box_offsets, mask=target_box_mask)
 
                     # Load IoU values for the current block
-                    iou_values = tl.load(iou_matrix_ptr + iou_row_offset + target_box_indices, mask=target_box_mask)
+                    iou_values = tl.load(
+                        iou_matrix_ptr + iou_row_offset + target_box_offsets, mask=target_box_mask, other=0.0
+                    )
 
                     # Suppress boxes with lower scores that have high IoU
                     suppression_mask = tl.where(iou_values > iou_threshold, True, False)
 
                     # Conditionally store suppression result for high-IoU boxes
-                    tl.store(keep_mask_ptr + target_box_indices, False, mask=suppression_mask)
+                    tl.store(keep_mask_ptr + target_box_offsets, False, mask=suppression_mask)
 
 
 def nms_launcher(
@@ -190,17 +230,20 @@ def nms_launcher(
     num_boxes = boxes.size(0)
 
     # Sort boxes by scores in descending order
-    sorted_scores, sorted_indices = torch.sort(scores, descending=True)
+    _, sorted_indices = torch.sort(scores, descending=True)
+    sorted_boxes = boxes[sorted_indices]
 
-    # Calculate IoU of each each block against all other boxes in parallel. Process other boxes
-    # blockwise in chunks of size `cxpr_block_size`.
+    # Calculate IoU of each box against all other boxes in parallel. Process blockwise in both
+    # dimensions, in chunks of size `cxpr_block_size`.
     def stage1_grid(meta: dict[str, Any]) -> tuple[int, int]:
-        return (num_boxes, triton.cdiv(num_boxes, meta["cxpr_block_size"]))
+        num_blocks = triton.cdiv(num_boxes, meta["cxpr_block_size"])
+        return (num_blocks, num_blocks)
 
-    # Calculate IoU matrix using Triton kernel
+    # Calculate IoU matrix, which is an upper triangular matrix where each element (i, j) contains the IoU
+    # between box i and box j, where i <= j.
     _calculate_iou_kernel[stage1_grid](
         # Tensors
-        boxes_ptr=boxes,
+        boxes_ptr=sorted_boxes,
         iou_matrix_ptr=iou_matrix,
         # Scalars
         num_boxes=num_boxes,
@@ -214,7 +257,6 @@ def nms_launcher(
     stage2_grid = (1,)
     _nms_suppression_kernel[stage2_grid](
         # Tensors
-        sorted_indices_ptr=sorted_indices,
         iou_matrix_ptr=iou_matrix,
         keep_mask_ptr=keep_mask,
         # Scalars
@@ -227,4 +269,4 @@ def nms_launcher(
     )
 
     # Extract indices of kept boxes
-    return sorted_indices[keep_mask[sorted_indices]]
+    return sorted_indices[keep_mask]
