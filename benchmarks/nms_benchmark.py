@@ -46,7 +46,7 @@ def _create_tensors_with_iou(num_boxes: int, iou_thresh: float) -> tuple[torch.T
     "--iou-threshold",
     required=False,
     type=float,
-    default=0.2,
+    default=0.5,
     help="IoU threshold for boxes to be kept",
 )
 @click.option(
