@@ -34,7 +34,7 @@ def _create_tensors_with_iou(num_boxes: int, iou_thresh: float) -> tuple[torch.T
 
 @pytest.mark.parametrize("num_boxes", [10, 100, 1000, 4000])
 @pytest.mark.parametrize("iou_threshold", [0.2, 0.5, 0.8])
-@pytest.mark.parametrize("seed", range(3))
+@pytest.mark.parametrize("seed", range(10))
 def test_nms_conch_vs_reference(
     num_boxes: int,
     iou_threshold: float,
