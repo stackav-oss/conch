@@ -206,9 +206,11 @@ def _nms_suppression_kernel(
                 # Conditionally store suppression result for high-IoU boxes
                 tl.store(keep_mask_ptr + target_box_offsets, False, mask=suppression_mask)
 
-                # Potential race condition: we need to ensure all threads complete the store before the next
-                # iteration otherwise we may load stale data for whether or not a box has been suppressed.
-                tl.debug_barrier()
+            # Potential race condition: we need to ensure all threads complete the store before the next
+            # iteration otherwise we may load stale data for whether or not a box has been suppressed.
+            # Aside: `debug_barrier` is a poor name for this function, because it is not only used for debugging,
+            # but also to ensure synchronization between threads.
+            tl.debug_barrier()
 
 
 def nms_launcher(
