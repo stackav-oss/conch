@@ -34,6 +34,7 @@ _TABLE_OP_NAME_TO_BENCHMARK: Final = {
     "Int8 Static Quantization": "static_scaled_int8_quant_benchmark",
     "Mixed-precision GEMM [Int4 x FP16]": "mixed_precision_gemm_benchmark",
     "Scaled GEMM [Int8 x BF16]": "scaled_gemm_benchmark",
+    "Non-Max Suppression": "nms_benchmark",
     "vLLM: Copy Blocks": "copy_blocks_benchmark",
     "vLLM: Reshape and Cache": "reshape_and_cache_benchmark",
 }
@@ -48,7 +49,27 @@ _DEVICE_SPECIFIC_BLACKLIST: Final = {
 
 # Add any extra flags for each benchmark here
 _EXTRA_BENCHMARK_FLAGS: Final = {
+    "gelu_tanh_and_mul_benchmark": ["--compile-ref"],
+    "silu_and_mul_benchmark": ["--compile-ref"],
+    "rotary_embedding_benchmark": ["--compile-ref"],
+    "gemma_rms_norm_benchmark": ["--compile-ref"],
+    "rms_norm_benchmark": ["--compile-ref"],
     "varlen_attention_benchmark": ["--causal"],
+}
+
+
+_EXTRA_BENCHMARK_ENV: Final = {
+    "paged_attention_vs_flash_benchmark": {"CONCH_ENABLE_VLLM": "1"},
+    "varlen_attention_benchmark": {"CONCH_ENABLE_VLLM": "1"},
+    "bnb_dequantize_blockwise_benchmark": {"CONCH_ENABLE_BNB": "1", "CONCH_BENCH_ENABLE_ALL_REF": "1"},
+    "bnb_quantize_blockwise_benchmark": {"CONCH_ENABLE_BNB": "1", "CONCH_BENCH_ENABLE_ALL_REF": "1"},
+    "static_scaled_fp8_quant_benchmark": {"CONCH_ENABLE_VLLM": "1"},
+    "static_scaled_int8_quant_benchmark": {"CONCH_ENABLE_VLLM": "1"},
+    "mixed_precision_gemm_benchmark": {"CONCH_ENABLE_VLLM": "1", "CONCH_BENCH_ENABLE_ALL_REF": "1"},
+    "scaled_gemm_benchmark": {"CONCH_ENABLE_VLLM": "1", "CONCH_BENCH_ENABLE_ALL_REF": "1"},
+    "nms_benchmark": {"CONCH_ENABLE_TORCHVISION": "1"},
+    "copy_blocks_benchmark": {"CONCH_ENABLE_VLLM": "1"},
+    "reshape_and_cache_benchmark": {"CONCH_ENABLE_VLLM": "1"},
 }
 
 
@@ -66,10 +87,6 @@ _EXTRA_BENCHMARK_FLAGS: Final = {
 )
 def main(results_directory: Path, use_cached_results: bool) -> None:
     """Main function to plot benchmarking results."""
-    # Always run against fastest possible implementation
-    os.environ["CONCH_BENCH_ENABLE_ALL_REF"] = "1"
-    os.environ["CONCH_ENABLE_BNB"] = "1"
-    os.environ["CONCH_ENABLE_VLLM"] = "1"
     os.environ["VLLM_LOGGING_LEVEL"] = "CRITICAL"
 
     # Create directory for output if it doesn't exist already
@@ -96,6 +113,9 @@ def main(results_directory: Path, use_cached_results: bool) -> None:
             # Run benchmark and redirect output
             print(f"Running benchmark for {op_name}...")
 
+            # Some benchmarks need extra environment variables set
+            extra_env = _EXTRA_BENCHMARK_ENV[benchmark_name] if benchmark_name in _EXTRA_BENCHMARK_ENV else {}
+
             # Some benchmark args are flags to enable things that default false, so we add any per-benchmark here
             extra_flags = _EXTRA_BENCHMARK_FLAGS[benchmark_name] if benchmark_name in _EXTRA_BENCHMARK_FLAGS else []
 
@@ -104,7 +124,7 @@ def main(results_directory: Path, use_cached_results: bool) -> None:
                     ["python", f"benchmarks/{benchmark_name}.py", "--csv"] + extra_flags,
                     check=True,
                     stdout=results_file,
-                    env=os.environ,
+                    env=os.environ.copy() | extra_env,
                 )
 
         # Read the CSV file

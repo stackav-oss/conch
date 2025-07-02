@@ -20,6 +20,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
     ),
     # Enable bitsandbytes kernels for testing/benchmarking
     "CONCH_ENABLE_BNB": lambda: (os.environ.get("CONCH_ENABLE_BNB", "0").strip().lower() in ("1", "true")),
+    # Enable torchvision kernels for testing/benchmarking
+    "CONCH_ENABLE_TORCHVISION": lambda: (
+        os.environ.get("CONCH_ENABLE_TORCHVISION", "0").strip().lower() in ("1", "true")
+    ),
     # Enable vLLM kernels for testing/benchmarking
     "CONCH_ENABLE_VLLM": lambda: (os.environ.get("CONCH_ENABLE_VLLM", "0").strip().lower() in ("1", "true")),
 }
