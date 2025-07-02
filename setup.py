@@ -6,7 +6,6 @@ from typing import Final
 from setuptools import setup
 
 _TORCH_VERSION: Final = "2.7.0"
-_TORCHVISION_VERSION: Final = "0.22"
 _TRITON_VERSION: Final = "3.3.0"
 
 _REQUIREMENTS: Final = [
@@ -17,7 +16,6 @@ _REQUIREMENTS: Final = [
 # --extra-index-url https://download.pytorch.org/whl/cpu
 _DEFAULT_PLATFORM_REQUIREMENTS: Final = [
     f"torch=={_TORCH_VERSION}",
-    f"torchvision=={_TORCHVISION_VERSION}",
     f"triton>={_TRITON_VERSION}",
 ]
 
@@ -25,7 +23,6 @@ _DEFAULT_PLATFORM_REQUIREMENTS: Final = [
 # --extra-index-url https://download.pytorch.org/whl/rocm6.2.4
 _ROCM_PLATFORM_REQUIREMENTS: Final = [
     f"torch=={_TORCH_VERSION}+rocm6.2.4",
-    f"torchvision=={_TORCHVISION_VERSION}+rocm6.2.4",
     f"pytorch-triton-rocm>={_TRITON_VERSION}",
 ]
 
@@ -33,7 +30,6 @@ _ROCM_PLATFORM_REQUIREMENTS: Final = [
 # --extra-index-url https://download.pytorch.org/whl/xpu
 _XPU_PLATFORM_REQUIREMENTS: Final = [
     f"torch=={_TORCH_VERSION}+xpu",
-    f"torchvision=={_TORCHVISION_VERSION}+xpu",
     f"pytorch-triton-xpu>={_TRITON_VERSION}",
 ]
 

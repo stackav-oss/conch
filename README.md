@@ -32,6 +32,8 @@ Each operation is complete with a PyTorch-only reference implementation (and som
   - GEMM
     - Mixed-precision
     - Scaled
+- Vision
+  - Non-Max Suppression (NMS)
 - vLLM
   - KV cache operations
     - Copy blocks
@@ -99,6 +101,7 @@ We were inspired by and leverage components of the following libraries:
 
 - [bitsandbytes](https://github.com/bitsandbytes-foundation/bitsandbytes)
 - [GemLite](https://github.com/mobiusml/gemlite)
+- [Torchvision](https://github.com/pytorch/vision)
 - [vLLM](https://github.com/vllm-project/vllm)
 
 ## License
