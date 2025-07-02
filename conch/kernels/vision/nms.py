@@ -25,22 +25,23 @@ import triton.language as tl
     key=["num_boxes"],
 )
 @triton.jit  # type: ignore[misc]
-def _calculate_iou_kernel(
+def _create_iou_mask_kernel(
     # Tensors
     boxes_ptr: tl.tensor,  # [N, 4]
-    iou_matrix_ptr: tl.tensor,  # [N, N]
+    iou_mask_ptr: tl.tensor,  # [N, N]
     # Scalars
     num_boxes: int,
+    iou_threshold: float,
     # Strides
     boxes_stride: int,
-    iou_matrix_stride: int,
+    iou_mask_stride: int,
     # Constexprs
     cxpr_block_size: tl.constexpr,
 ) -> None:
-    """Calculate IoU matrix between all pairs of boxes.
+    """Determine if IoU between all pairs of boxes exceeds the given threshold.
 
-    Note: we only populate the upper-triangular portion of the IoU matrix.
-    For example: for N = 16 boxes, and cxpr_block_size = 4, the IoU matrix will look like this:
+    Note: we only populate the upper-triangular portion of the IoU mask.
+    For example: for N = 16 boxes, and cxpr_block_size = 4, the IoU mask will look like this:
 
     ---------------------
     |....|....|....|....|
@@ -64,12 +65,16 @@ def _calculate_iou_kernel(
     |XXXX|XXXX|XXXX|XXXX|
     ---------------------
 
+    The `X`s represent the unpopulated portion of the matrix, while the `.`s represent
+    the populated portion.
+
     Args:
         boxes_ptr: Pointer to boxes tensor, sorted by scores, shape: (N, 4) in (x1, y1, x2, y2) format.
-        iou_matrix_ptr: Pointer to IoU matrix tensor, shape: (N, N).
+        iou_mask_ptr: Pointer to IoU mask tensor, shape: (N, N).
         num_boxes: Number of boxes.
+        iou_threshold: IoU threshold for determining if two boxes overlap.
         boxes_stride: Stride for boxes tensor.
-        iou_matrix_stride: Stride for IoU matrix tensor.
+        iou_mask_stride: Stride for IoU mask tensor.
         cxpr_block_size: Block size for processing.
     """
     row_block_start = tl.program_id(0) * cxpr_block_size
@@ -125,10 +130,18 @@ def _calculate_iou_kernel(
     union_area = box1_area[:, None] + box2_area[None, :] - inter_area
     iou = tl.where(union_area > 0.0, inter_area / union_area, 0.0)
 
-    # Store IoU values -> upper triangular part of the matrix
-    iou_output_offsets = row_offsets[:, None] * iou_matrix_stride + col_offsets[None, :]
+    # Create a mask for IoU values that exceed the threshold
+    # Shape: (cxpr_block_size, cxpr_block_size)
+    exceeds_threshold = iou > iou_threshold
+
+    # Note: for debugging, if you want to store the actual IoU values instead of boolean,
+    # you can store `iou` instead of `exceeds_threshold`. You'll also need to update the
+    # `iou_mask_ptr` type to `boxes.dtype` or similar (instead of `torch.bool`).
+
+    # Store IoU mask -> upper triangular part of the matrix
+    iou_output_offsets = row_offsets[:, None] * iou_mask_stride + col_offsets[None, :]
     iou_output_mask = row_mask[:, None] & col_mask[None, :] & (row_offsets[:, None] < col_offsets[None, :])
-    tl.store(iou_matrix_ptr + iou_output_offsets, iou, mask=iou_output_mask)
+    tl.store(iou_mask_ptr + iou_output_offsets, exceeds_threshold, mask=iou_output_mask)
 
 
 @triton.autotune(  # type: ignore[misc]
@@ -146,24 +159,22 @@ def _calculate_iou_kernel(
 @triton.jit  # type: ignore[misc]
 def _nms_suppression_kernel(
     # Tensors
-    iou_matrix_ptr: tl.tensor,  # [N, N]
+    iou_mask_ptr: tl.tensor,  # [N, N]
     keep_mask_ptr: tl.tensor,  # [N]
     # Scalars
     num_boxes: tl.int32,
-    iou_threshold: float,
     # Strides
-    iou_matrix_stride: tl.int32,
+    iou_mask_stride: tl.int32,
     # Constexprs
     cxpr_block_size: tl.constexpr,
 ) -> None:
     """NMS suppression kernel.
 
     Args:
-        iou_matrix_ptr: Pointer to precomputed IoU matrix, shape: (N, N).
+        iou_mask_ptr: Pointer to precomputed IoU mask, shape: (N, N).
         keep_mask_ptr: Pointer to keep mask tensor, shape: (N,).
         num_boxes: Number of boxes.
-        iou_threshold: IoU threshold for suppression.
-        iou_matrix_stride: Stride for IoU matrix tensor.
+        iou_mask_stride: Stride for IoU mask tensor.
         cxpr_block_size: Block size for processing.
     """
     # Sequential NMS: for each box in sorted order, suppress later boxes
@@ -171,10 +182,10 @@ def _nms_suppression_kernel(
         # Check if current box is still kept
         is_kept = tl.load(keep_mask_ptr + current_box_idx)
         if is_kept:
-            # IoU matrix row offset for the current box
-            # Because the IoU matrix is sorted by score, we will only consider boxes that come after the current box.
-            # This means we only need to read the upper triangular part of the IoU matrix.
-            iou_row_offset = current_box_idx * iou_matrix_stride
+            # IoU mask row offset for the current box
+            # Because the IoU mask is sorted by score, we will only consider boxes that come after the current box.
+            # This means we only need to read the upper triangular part of the IoU mask.
+            iou_row_offset = current_box_idx * iou_mask_stride
 
             # Only process boxes that come after the current box
             next_box_idx = current_box_idx + 1
@@ -187,14 +198,10 @@ def _nms_suppression_kernel(
                 target_box_offsets = block_start + tl.arange(0, cxpr_block_size)
                 target_box_mask = target_box_offsets < num_boxes
 
-                # Load IoU values for the current block, out-of-bounds indices will get zeros for IoU score
-                # (which means they won't be suppressed)
-                iou_values = tl.load(
-                    iou_matrix_ptr + iou_row_offset + target_box_offsets, mask=target_box_mask, other=0.0
-                )
-
                 # Suppress boxes with lower scores that have high IoU
-                suppression_mask = iou_values > iou_threshold
+                suppression_mask = tl.load(
+                    iou_mask_ptr + iou_row_offset + target_box_offsets, mask=target_box_mask, other=False
+                )
 
                 # Conditionally store suppression result for high-IoU boxes
                 tl.store(keep_mask_ptr + target_box_offsets, False, mask=suppression_mask)
@@ -207,7 +214,7 @@ def _nms_suppression_kernel(
 def nms_launcher(
     boxes: torch.Tensor,
     scores: torch.Tensor,
-    iou_matrix: torch.Tensor,
+    iou_mask: torch.Tensor,
     keep_mask: torch.Tensor,
     iou_threshold: float,
 ) -> torch.Tensor:
@@ -216,7 +223,7 @@ def nms_launcher(
     Args:
         boxes: Boxes tensor of shape (N, 4) in (x1, y1, x2, y2) format.
         scores: Scores tensor of shape (N,).
-        iou_matrix: IoU matrix of shape (N, N).
+        iou_mask: Mask tensor of shape (N, N), indicating if the IoU between two boxes exceeds the threshold.
         keep_mask: Mask tensor of shape (N,) indicating which boxes are kept.
         iou_threshold: IoU threshold for suppression.
 
@@ -235,23 +242,23 @@ def nms_launcher(
     _, sorted_indices = torch.sort(scores, dim=0, stable=True, descending=True)
     sorted_boxes = boxes[sorted_indices].contiguous()
 
-    # Calculate IoU of each box against all other boxes in parallel. Process blockwise in both
-    # dimensions, in chunks of size `cxpr_block_size`.
+    # Determine if IoU of one box against all other boxes exceeds the threshold in parallel.
+    # Process blockwise in both dimensions, in chunks of size `cxpr_block_size`.
     def stage1_grid(meta: dict[str, Any]) -> tuple[int, int]:
         num_blocks = triton.cdiv(num_boxes, meta["cxpr_block_size"])
         return (num_blocks, num_blocks)
 
-    # Calculate IoU matrix, which is an upper triangular matrix where each element (i, j) contains the IoU
-    # between box i and box j, where i <= j.
-    _calculate_iou_kernel[stage1_grid](
+    # Create IoU mask in parallel, only upper-triangular part of the matrix is populated.
+    _create_iou_mask_kernel[stage1_grid](
         # Tensors
         boxes_ptr=sorted_boxes,
-        iou_matrix_ptr=iou_matrix,
+        iou_mask_ptr=iou_mask,
         # Scalars
         num_boxes=num_boxes,
+        iou_threshold=iou_threshold,
         # Strides
         boxes_stride=sorted_boxes.stride(0),
-        iou_matrix_stride=iou_matrix.stride(0),
+        iou_mask_stride=iou_mask.stride(0),
     )
 
     # For the suppression stage, we need to process sequentially, but we'll still take
@@ -259,13 +266,12 @@ def nms_launcher(
     stage2_grid = (1,)
     _nms_suppression_kernel[stage2_grid](
         # Tensors
-        iou_matrix_ptr=iou_matrix,
+        iou_mask_ptr=iou_mask,
         keep_mask_ptr=keep_mask,
         # Scalars
         num_boxes=num_boxes,
-        iou_threshold=iou_threshold,
         # Strides
-        iou_matrix_stride=iou_matrix.stride(0),
+        iou_mask_stride=iou_mask.stride(0),
     )
 
     # Extract indices of kept boxes

@@ -14,13 +14,13 @@ def nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float) -> torc
     to their intersection-over-union (IoU).
 
     NMS iteratively removes lower scoring boxes which have an
-    IoU greater than ``iou_threshold`` with another (higher scoring)
+    IoU greater than `iou_threshold` with another (higher scoring)
     box.
 
     Args:
         boxes (Tensor[N, 4])): boxes to perform NMS on. They
-            are expected to be in ``(x1, y1, x2, y2)`` format with ``0 <= x1 < x2`` and
-            ``0 <= y1 < y2``.
+            are expected to be in `(x1, y1, x2, y2)` format with `0 <= x1 < x2` and
+            `0 <= y1 < y2`.
         scores (Tensor[N]): scores for each one of the boxes
         iou_threshold (float): discards all overlapping boxes with IoU > iou_threshold
 
@@ -34,8 +34,10 @@ def nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float) -> torc
     if num_boxes == 0:
         return torch.empty(0, dtype=torch.long, device=device)
 
-    # Storage for pre-computation of IoU matrix
-    iou_matrix = torch.zeros((num_boxes, num_boxes), dtype=boxes.dtype, device=device)
+    # Storage for pre-computation of IoU mask
+    # This is a boolean matrix indicating whether the IoU between two boxes exceeds the threshold.
+    iou_mask = torch.empty((num_boxes, num_boxes), dtype=torch.bool, device=device)
+    iou_mask.fill_(False)
 
     # Initialize keep mask - all boxes are initially kept
     keep_mask = torch.empty(num_boxes, dtype=torch.bool, device=device)
@@ -44,7 +46,7 @@ def nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float) -> torc
     return nms_launcher(
         boxes=boxes,
         scores=scores,
-        iou_matrix=iou_matrix,
+        iou_mask=iou_mask,
         keep_mask=keep_mask,
         iou_threshold=iou_threshold,
     )
