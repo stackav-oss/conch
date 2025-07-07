@@ -40,3 +40,31 @@ def bev_pool(
         output[output_idx] = image_feats_interval_sum
 
     return output
+
+
+def bev_pool_backward(
+    grad_output: torch.Tensor,
+    geom_feats: torch.Tensor,
+    interval_starts: torch.Tensor,
+    interval_lengths: torch.Tensor,
+) -> torch.Tensor:
+    num_points, _ = geom_feats.shape
+    _, _, _, _, num_channels = grad_output.shape
+    num_intervals = interval_starts.size(0)
+
+    x_grad = torch.zeros((num_points, num_channels), dtype=grad_output.dtype, device=grad_output.device)
+
+    for i in range(num_intervals):
+        interval_start = interval_starts[i]
+        interval_length = interval_lengths[i]
+
+        # XYZB -> BZXY
+        output_idx = (
+            geom_feats[interval_start, 3],
+            geom_feats[interval_start, 2],
+            geom_feats[interval_start, 0],
+            geom_feats[interval_start, 1],
+        )
+        x_grad[interval_start : interval_start + interval_length] += grad_output[output_idx]
+
+    return x_grad
