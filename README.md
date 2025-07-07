@@ -99,6 +99,7 @@ Check out the [developer instructions](./docs/getting_started/developer_environm
 
 We were inspired by and leverage components of the following libraries:
 
+- [BEVFusion](https://github.com/mit-han-lab/bevfusion)
 - [bitsandbytes](https://github.com/bitsandbytes-foundation/bitsandbytes)
 - [GemLite](https://github.com/mobiusml/gemlite)
 - [Torchvision](https://github.com/pytorch/vision)

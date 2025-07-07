@@ -53,7 +53,7 @@ def _create_bev_pool_backward_data(
             torch.randint(0, batch_size, (num_points,), device=device),  # Batch index
         ],
         dim=1,
-    ).long()
+    ).to(torch.int32)
 
     # Create a linear index for sorting and grouping
     linear_indices = (
@@ -72,8 +72,8 @@ def _create_bev_pool_backward_data(
     num_intervals = len(unique_indices)
 
     # Create interval starts and lengths
-    interval_starts = torch.zeros(num_intervals, device=device, dtype=torch.long)
-    interval_lengths = counts.long()
+    interval_starts = torch.zeros(num_intervals, device=device, dtype=torch.int32)
+    interval_lengths = counts.to(torch.int32)
 
     current_start = 0
     for i in range(num_intervals):
@@ -252,7 +252,13 @@ def main(
         interval_lengths,
     )
 
-    ref_output = bev_pool_backward_ref_fn(*args)
+    ref_output = bev_pool_backward_ref_fn(
+        *args,
+        batch_size=batch_size,
+        grid_cells_z=grid_cells_z,
+        grid_cells_x=grid_cells_x,
+        grid_cells_y=grid_cells_y,
+    )
     conch_output = bev_pool_backward_conch_fn(*args)
 
     # Accuracy checks
@@ -269,7 +275,13 @@ def main(
 
     # Benchmark implementations
     baseline_result = benchmark_it(
-        lambda: bev_pool_backward_ref_fn(*args),
+        lambda: bev_pool_backward_ref_fn(
+            *args,
+            batch_size=batch_size,
+            grid_cells_z=grid_cells_z,
+            grid_cells_x=grid_cells_x,
+            grid_cells_y=grid_cells_y,
+        ),
         tag="Baseline",
         metadata=metadata,
         iteration_time_ms=iteration_time_ms,

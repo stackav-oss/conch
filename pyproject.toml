@@ -57,6 +57,7 @@ follow_untyped_imports = true
 [[tool.mypy.overrides]]
 module = [
   "bitsandbytes.*",
+  "conch_cuda_ext.*",
   "vllm.*",
 ]
 allow_untyped_calls = true

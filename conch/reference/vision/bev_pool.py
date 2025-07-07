@@ -1,10 +1,14 @@
 # Copyright 2025 Stack AV Co.
 # SPDX-License-Identifier: Apache-2.0
 
+from importlib.util import find_spec
+
 import torch
 
+from conch import envs
 
-def bev_pool(
+
+def bev_pool_pytorch(
     image_feats: torch.Tensor,
     geom_feats: torch.Tensor,
     interval_starts: torch.Tensor,
@@ -42,7 +46,7 @@ def bev_pool(
     return output
 
 
-def bev_pool_backward(
+def bev_pool_backward_pytorch(
     grad_output: torch.Tensor,
     geom_feats: torch.Tensor,
     interval_starts: torch.Tensor,
@@ -68,3 +72,79 @@ def bev_pool_backward(
         x_grad[interval_start : interval_start + interval_length] += grad_output[output_idx]
 
     return x_grad
+
+
+def bev_pool(
+    image_feats: torch.Tensor,
+    geom_feats: torch.Tensor,
+    interval_starts: torch.Tensor,
+    interval_lengths: torch.Tensor,
+    batch_size: int,
+    grid_cells_z: int,
+    grid_cells_x: int,
+    grid_cells_y: int,
+) -> torch.Tensor:
+    """Cumulative sum pooling operator for 3D voxel grids."""
+    if envs.CONCH_ENABLE_CUDA_EXT:
+        if find_spec("conch_cuda_ext") is None:
+            raise ImportError("Conch CUDA extension is not available. Please build the extension first.")
+
+        from conch_cuda_ext.ops.vision.bev_pool.bev_pool import bev_pool_forward as bev_pool_fwd_cuda
+
+        return bev_pool_fwd_cuda(  # type: ignore[no-any-return]
+            image_feats,
+            geom_feats,
+            interval_lengths,
+            interval_starts,
+            batch_size,
+            grid_cells_z,
+            grid_cells_x,
+            grid_cells_y,
+        )
+
+    return bev_pool_pytorch(
+        image_feats=image_feats,
+        geom_feats=geom_feats,
+        interval_starts=interval_starts,
+        interval_lengths=interval_lengths,
+        batch_size=batch_size,
+        grid_cells_z=grid_cells_z,
+        grid_cells_x=grid_cells_x,
+        grid_cells_y=grid_cells_y,
+    )
+
+
+def bev_pool_backward(
+    grad_output: torch.Tensor,
+    geom_feats: torch.Tensor,
+    interval_starts: torch.Tensor,
+    interval_lengths: torch.Tensor,
+    batch_size: int,
+    grid_cells_z: int,
+    grid_cells_x: int,
+    grid_cells_y: int,
+) -> torch.Tensor:
+    """Cumulative sum pooling operator for 3D voxel grids."""
+    if envs.CONCH_ENABLE_CUDA_EXT:
+        if find_spec("conch_cuda_ext") is None:
+            raise ImportError("Conch CUDA extension is not available. Please build the extension first.")
+
+        from conch_cuda_ext.ops.vision.bev_pool.bev_pool import bev_pool_backward as bev_pool_bwd_cuda
+
+        return bev_pool_bwd_cuda(  # type: ignore[no-any-return]
+            grad_output,
+            geom_feats,
+            interval_lengths,
+            interval_starts,
+            batch_size,
+            grid_cells_z,
+            grid_cells_x,
+            grid_cells_y,
+        )
+
+    return bev_pool_backward_pytorch(
+        grad_output=grad_output,
+        geom_feats=geom_feats,
+        interval_starts=interval_starts,
+        interval_lengths=interval_lengths,
+    )

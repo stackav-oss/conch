@@ -39,10 +39,10 @@ def test_bev_pool_forward(
 
     image_feats = torch.randn(num_points, num_channels, device=device, dtype=torch.float32)
 
-    geom_feats_x = torch.randint(low=0, high=grid_cells_x, size=(num_points,), device=device, dtype=torch.long)
-    geom_feats_y = torch.randint(low=0, high=grid_cells_y, size=(num_points,), device=device, dtype=torch.long)
-    geom_feats_z = torch.randint(low=0, high=grid_cells_z, size=(num_points,), device=device, dtype=torch.long)
-    geom_feats_b = torch.randint(low=0, high=batch_size, size=(num_points,), device=device, dtype=torch.long)
+    geom_feats_x = torch.randint(low=0, high=grid_cells_x, size=(num_points,), device=device, dtype=torch.int32)
+    geom_feats_y = torch.randint(low=0, high=grid_cells_y, size=(num_points,), device=device, dtype=torch.int32)
+    geom_feats_z = torch.randint(low=0, high=grid_cells_z, size=(num_points,), device=device, dtype=torch.int32)
+    geom_feats_b = torch.randint(low=0, high=batch_size, size=(num_points,), device=device, dtype=torch.int32)
     geom_feats = torch.stack((geom_feats_x, geom_feats_y, geom_feats_z, geom_feats_b), dim=1)
 
     # Prepare input tensors
@@ -111,10 +111,10 @@ def test_bev_pool_backward(
 
     image_feats = torch.randn(num_points, num_channels, device=device, dtype=torch.float32)
 
-    geom_feats_x = torch.randint(low=0, high=grid_cells_x, size=(num_points,), device=device, dtype=torch.long)
-    geom_feats_y = torch.randint(low=0, high=grid_cells_y, size=(num_points,), device=device, dtype=torch.long)
-    geom_feats_z = torch.randint(low=0, high=grid_cells_z, size=(num_points,), device=device, dtype=torch.long)
-    geom_feats_b = torch.randint(low=0, high=batch_size, size=(num_points,), device=device, dtype=torch.long)
+    geom_feats_x = torch.randint(low=0, high=grid_cells_x, size=(num_points,), device=device, dtype=torch.int32)
+    geom_feats_y = torch.randint(low=0, high=grid_cells_y, size=(num_points,), device=device, dtype=torch.int32)
+    geom_feats_z = torch.randint(low=0, high=grid_cells_z, size=(num_points,), device=device, dtype=torch.int32)
+    geom_feats_b = torch.randint(low=0, high=batch_size, size=(num_points,), device=device, dtype=torch.int32)
     geom_feats = torch.stack((geom_feats_x, geom_feats_y, geom_feats_z, geom_feats_b), dim=1)
 
     # Prepare input tensors
@@ -151,6 +151,10 @@ def test_bev_pool_backward(
         geom_feats=geom_feats,
         interval_starts=interval_starts,
         interval_lengths=interval_lengths,
+        batch_size=batch_size,
+        grid_cells_z=grid_cells_z,
+        grid_cells_x=grid_cells_x,
+        grid_cells_y=grid_cells_y,
     )
 
     # Run the conch backward implementation

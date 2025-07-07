@@ -45,13 +45,13 @@ def _create_bev_pool_data(
     # Create geometry features with random but valid coordinates
     geom_feats = torch.stack(
         [
-            torch.randint(0, grid_cells_x, (num_points,), device=device),  # X coordinate
-            torch.randint(0, grid_cells_y, (num_points,), device=device),  # Y coordinate
-            torch.randint(0, grid_cells_z, (num_points,), device=device),  # Z coordinate
-            torch.randint(0, batch_size, (num_points,), device=device),  # Batch index
+            torch.randint(0, grid_cells_x, (num_points,), dtype=torch.int32, device=device),  # X coordinate
+            torch.randint(0, grid_cells_y, (num_points,), dtype=torch.int32, device=device),  # Y coordinate
+            torch.randint(0, grid_cells_z, (num_points,), dtype=torch.int32, device=device),  # Z coordinate
+            torch.randint(0, batch_size, (num_points,), dtype=torch.int32, device=device),  # Batch index
         ],
         dim=1,
-    ).long()
+    ).to(torch.int32)
 
     # Create a linear index for sorting and grouping
     linear_indices = (
@@ -70,8 +70,8 @@ def _create_bev_pool_data(
     num_intervals = len(unique_indices)
 
     # Create interval starts and lengths
-    interval_starts = torch.zeros(num_intervals, device=device, dtype=torch.long)
-    interval_lengths = counts.long()
+    interval_starts = torch.zeros(num_intervals, device=device, dtype=torch.int32)
+    interval_lengths = counts.to(torch.int32)
 
     current_start = 0
     for i in range(num_intervals):
