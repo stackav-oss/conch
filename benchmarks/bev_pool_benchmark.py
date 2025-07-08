@@ -3,6 +3,7 @@
 
 """BEV Pool benchmark."""
 
+import os
 import sys
 from typing import Final
 
@@ -217,6 +218,8 @@ def main(
         compile_conch: Flag to torch.compile() the Conch implementation.
         cuda_ref: Flag to enable CUDA reference implementation.
     """
+    os.environ["CONCH_ENABLE_CUDA_EXT"] = "1"
+
     seed: Final = 0
     seed_everything(seed)
 
@@ -294,6 +297,8 @@ def main(
             print(f"Conch output: {conch_output}", file=sys.stderr)
     else:
         print(f"Reference vs Conch: Results matched with atol={absolute_tolerance} :)", file=sys.stderr)
+
+    return
 
     # Benchmark implementations
     baseline_result = benchmark_it(

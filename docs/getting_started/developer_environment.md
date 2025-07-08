@@ -106,3 +106,13 @@ In order to use them, you can install Torchvision (`pip install torchvision`) an
 pip install torchvision==0.22
 CONCH_ENABLE_TORCHVISION=1 python benchmarks/nms_benchmark.py
 ```
+
+### Optional: Benchmarking against MMCV
+
+Some unit tests/benchmarks allow comparison to CUDA implementations of operations from MMCV (rather than PyTorch-reference implementations).
+In order to use them, you can install MMCV and set the environment variable `CONCH_ENABLE_MMCV=1`.
+
+```bash
+pip install -U openmim
+python -m mim install mmcv==2.0.0
+```

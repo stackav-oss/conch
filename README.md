@@ -102,6 +102,7 @@ We were inspired by and leverage components of the following libraries:
 - [BEVFusion](https://github.com/mit-han-lab/bevfusion)
 - [bitsandbytes](https://github.com/bitsandbytes-foundation/bitsandbytes)
 - [GemLite](https://github.com/mobiusml/gemlite)
+- [MMCV](https://github.com/open-mmlab/mmcv)
 - [Torchvision](https://github.com/pytorch/vision)
 - [vLLM](https://github.com/vllm-project/vllm)
 

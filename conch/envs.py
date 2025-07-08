@@ -22,6 +22,8 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "CONCH_ENABLE_BNB": lambda: (os.environ.get("CONCH_ENABLE_BNB", "0").strip().lower() in ("1", "true")),
     # Enable CUDA extension kernels for testing/benchmarking
     "CONCH_ENABLE_CUDA_EXT": lambda: (os.environ.get("CONCH_ENABLE_CUDA_EXT", "0").strip().lower() in ("1", "true")),
+    # Enable MMCV kernels for testing/benchmarking
+    "CONCH_ENABLE_MMCV": lambda: (os.environ.get("CONCH_ENABLE_MMCV", "0").strip().lower() in ("1", "true")),
     # Enable torchvision kernels for testing/benchmarking
     "CONCH_ENABLE_TORCHVISION": lambda: (
         os.environ.get("CONCH_ENABLE_TORCHVISION", "0").strip().lower() in ("1", "true")

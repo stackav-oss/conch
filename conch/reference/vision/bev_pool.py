@@ -91,6 +91,7 @@ def bev_pool(
 
         from conch_cuda_ext.ops.vision.bev_pool.bev_pool import bev_pool_forward as bev_pool_fwd_cuda
 
+        # return torch.ops.conch_cuda_ext.ops.vision.bev_pool.bev_pool_forward(  # type: ignore[no-any-return]
         return bev_pool_fwd_cuda(  # type: ignore[no-any-return]
             image_feats,
             geom_feats,
