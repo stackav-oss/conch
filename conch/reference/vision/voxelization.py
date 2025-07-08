@@ -10,6 +10,51 @@ import torch
 from conch import envs
 
 
+def _dynamic_voxelize(
+    points: torch.Tensor,
+    voxel_size: tuple[float, float, float],
+    coordinate_range: tuple[float, float, float, float, float, float],
+) -> torch.Tensor:
+    voxel_size_x, voxel_size_y, voxel_size_z = voxel_size
+    (
+        coordinate_range_x_min,
+        coordinate_range_y_min,
+        coordinate_range_z_min,
+        coordinate_range_x_max,
+        coordinate_range_y_max,
+        coordinate_range_z_max,
+    ) = coordinate_range
+
+    grid_size_x = int((coordinate_range_x_max - coordinate_range_x_min) / voxel_size_x)
+    grid_size_y = int((coordinate_range_y_max - coordinate_range_y_min) / voxel_size_y)
+    grid_size_z = int((coordinate_range_z_max - coordinate_range_z_min) / voxel_size_z)
+
+    coordinates_x = ((points[:, 0] - coordinate_range_x_min) / voxel_size_x).floor().long()
+    out_of_bounds_x = coordinates_x >= grid_size_x or coordinates_x < 0
+    coordinates_x = torch.where(
+        out_of_bounds_x - 1,
+        coordinates_x,
+    )
+
+    coordinates_y = ((points[:, 1] - coordinate_range_y_min) / voxel_size_y).floor().long()
+    out_of_bounds_y = coordinates_y >= grid_size_y or coordinates_y < 0
+    coordinates_y = torch.where(
+        out_of_bounds_y - 1,
+        coordinates_y,
+    )
+
+    coordinates_z = ((points[:, 2] - coordinate_range_z_min) / voxel_size_z).floor().long()
+    out_of_bounds_z = coordinates_z >= grid_size_z or coordinates_z < 0
+    coordinates_z = torch.where(
+        out_of_bounds_z - 1,
+        coordinates_z,
+    )
+
+    coordinates = torch.stack((coordinates_x, coordinates_y, coordinates_z), dim=1)
+
+    return coordinates
+
+
 def _voxelization_pytorch(
     points: torch.Tensor,
     voxel_size: tuple[int, int, int],
