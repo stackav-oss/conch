@@ -95,3 +95,14 @@ In order to use them, you can install vLLM (`pip install vllm`) and set the envi
 pip install vllm==0.9.1
 CONCH_ENABLE_VLLM=1 python benchmarks/paged_attention_benchmark.py
 ```
+
+### Optional: Benchmarking against Torchvision
+
+Some unit tests/benchmarks allow comparison to CUDA implementations of operations from Torchvision (rather than PyTorch-reference implementations).
+In order to use them, you can install Torchvision (`pip install torchvision`) and set the environment variable `CONCH_ENABLE_TORCHVISION=1`.
+
+```bash
+# Note: add `--extra-index-url https://download.pytorch.org/whl/rocm6.2.4` on ROCm
+pip install torchvision==0.22
+CONCH_ENABLE_TORCHVISION=1 python benchmarks/nms_benchmark.py
+```

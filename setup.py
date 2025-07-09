@@ -6,6 +6,7 @@ from typing import Final
 from setuptools import setup
 
 _TORCH_VERSION: Final = "2.7.0"
+_TRITON_VERSION: Final = "3.3.0"
 
 _REQUIREMENTS: Final = [
     "numpy>=1.26.4",
@@ -15,21 +16,21 @@ _REQUIREMENTS: Final = [
 # --extra-index-url https://download.pytorch.org/whl/cpu
 _DEFAULT_PLATFORM_REQUIREMENTS: Final = [
     f"torch=={_TORCH_VERSION}",
-    "triton>=3.3.0",
+    f"triton>={_TRITON_VERSION}",
 ]
 
 # For ROCm:
 # --extra-index-url https://download.pytorch.org/whl/rocm6.2.4
 _ROCM_PLATFORM_REQUIREMENTS: Final = [
     f"torch=={_TORCH_VERSION}+rocm6.2.4",
-    "pytorch-triton-rocm>=3.3.0",
+    f"pytorch-triton-rocm>={_TRITON_VERSION}",
 ]
 
 # For XPU:
 # --extra-index-url https://download.pytorch.org/whl/xpu
 _XPU_PLATFORM_REQUIREMENTS: Final = [
     f"torch=={_TORCH_VERSION}+xpu",
-    "pytorch-triton-xpu>=3.3.0",
+    f"pytorch-triton-xpu>={_TRITON_VERSION}",
 ]
 
 _PLATFORM_REQUIREMENTS: Final = {
