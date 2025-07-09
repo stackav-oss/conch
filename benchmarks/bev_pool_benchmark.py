@@ -90,7 +90,7 @@ def _create_bev_pool_data(
     "--num-points",
     required=False,
     type=int,
-    default=10000,
+    default=6000000,
     help="Number of input points",
 )
 @click.option(
@@ -104,28 +104,28 @@ def _create_bev_pool_data(
     "--batch-size",
     required=False,
     type=int,
-    default=2,
+    default=1,
     help="Batch size",
 )
 @click.option(
     "--grid-cells-z",
     required=False,
     type=int,
-    default=16,
+    default=20,
     help="Number of Z grid cells",
 )
 @click.option(
     "--grid-cells-x",
     required=False,
     type=int,
-    default=200,
+    default=800,
     help="Number of X grid cells",
 )
 @click.option(
     "--grid-cells-y",
     required=False,
     type=int,
-    default=200,
+    default=800,
     help="Number of Y grid cells",
 )
 @click.option(
@@ -238,6 +238,11 @@ def main(
         grid_cells_y=grid_cells_y,
         device=device,
     )
+
+    print(f"Number of intervals: {len(interval_starts)}", file=sys.stderr)
+    print(f"Min interval length: {interval_lengths.float().min().item()}", file=sys.stderr)
+    print(f"Mean interval length: {interval_lengths.float().mean().item()}", file=sys.stderr)
+    print(f"Max interval length: {interval_lengths.float().max().item()}", file=sys.stderr)
 
     # Compile functions if requested
     bev_pool_ref_fn = torch.compile(bev_pool_ref) if compile_ref else bev_pool_ref

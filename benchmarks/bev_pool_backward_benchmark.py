@@ -91,7 +91,7 @@ def _create_bev_pool_backward_data(
     "--num-points",
     required=False,
     type=int,
-    default=10000,
+    default=500000,
     help="Number of input points",
 )
 @click.option(
@@ -105,28 +105,28 @@ def _create_bev_pool_backward_data(
     "--batch-size",
     required=False,
     type=int,
-    default=2,
+    default=1,
     help="Batch size",
 )
 @click.option(
     "--grid-cells-z",
     required=False,
     type=int,
-    default=16,
+    default=32,
     help="Number of Z grid cells",
 )
 @click.option(
     "--grid-cells-x",
     required=False,
     type=int,
-    default=200,
+    default=250,
     help="Number of X grid cells",
 )
 @click.option(
     "--grid-cells-y",
     required=False,
     type=int,
-    default=200,
+    default=250,
     help="Number of Y grid cells",
 )
 @click.option(

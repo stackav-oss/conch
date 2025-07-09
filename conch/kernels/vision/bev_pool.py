@@ -3,6 +3,8 @@
 
 """Quick cumsum kernel for 3D voxel grids."""
 
+from typing import Any
+
 import torch
 import triton
 import triton.language as tl
@@ -18,6 +20,7 @@ def _bev_pool_kernel(
     interval_lengths_ptr: tl.tensor,
     # Scalars
     num_channels: tl.int32,
+    num_intervals: tl.int32,
     # Strides
     image_feats_stride: tl.int32,
     geom_feats_stride: tl.int32,
@@ -49,6 +52,7 @@ def _bev_pool_kernel(
         interval_starts_ptr: Pointer to the starting positions for pooled points, shape: (num_intervals,).
         interval_lengths_ptr: Pointer to the lengths of each pooled point, shape: (num_intervals,).
         num_channels: The number of channels in the image features.
+        num_intervals: The number of intervals to process.
         image_feats_stride: The stride of the image features tensor.
         geom_feats_stride: The stride of the geometry features tensor.
         output_batch_stride: The stride of the output tensor for the batch dimension.
@@ -56,62 +60,72 @@ def _bev_pool_kernel(
         output_x_stride: The stride of the output tensor for the x dimension.
         output_y_stride: The stride of the output tensor for the y dimension.
         cxpr_num_channels_padded: The number of channels padded to the next power of 2.
-        cxpr_block_size: The block size for processing points in parallel.
+        cxpr_block_size: The block size for processing intervals in parallel.
     """
-    # What is the index of the interval this program is processing?
-    interval_index = tl.program_id(0)
+    # What is the starting index of the block of intervals this program is processing?
+    interval_block_start = tl.program_id(0) * cxpr_block_size
+    # Offsets for each interval in the block
+    interval_block_offsets = interval_block_start + tl.arange(0, cxpr_block_size)
+    # Mask out-of-bounds intervals
+    interval_block_mask = interval_block_offsets < num_intervals
 
-    # Load current interval start and length
-    interval_start = tl.load(interval_starts_ptr + interval_index)
-    interval_length = tl.load(interval_lengths_ptr + interval_index)
+    # Load start and length for each interval in the block
+    interval_starts = tl.load(interval_starts_ptr + interval_block_offsets, mask=interval_block_mask, other=0)
+    interval_lengths = tl.load(interval_lengths_ptr + interval_block_offsets, mask=interval_block_mask, other=0)
 
     # Offsets and masks for the channels
     channel_offsets = tl.arange(0, cxpr_num_channels_padded)
     channel_mask = channel_offsets < num_channels
 
-    # Accumulator for the sum of image features for each channel for all points in the interval
-    output = tl.zeros([cxpr_num_channels_padded], dtype=image_feats_ptr.dtype.element_ty)
+    # Combine interval block mask with channel mask
+    output_mask = interval_block_mask[:, None] & channel_mask[None, :]
 
-    # Calculate the pointer to the start of the image features for the current interval
-    current_image_feats_ptr = image_feats_ptr + interval_start * image_feats_stride + channel_offsets[None, :]
+    # Accumulator for the sum of image features for each channel for all intervals in the block
+    output = tl.zeros([cxpr_block_size, cxpr_num_channels_padded], dtype=image_feats_ptr.dtype.element_ty)
 
-    # Iterate blockwise over the points in the interval
-    for block_index in range(tl.cdiv(interval_length, cxpr_block_size)):
-        # Offsets for the current block
-        block_offsets = block_index * cxpr_block_size + tl.arange(0, cxpr_block_size)
-        # Mask out any indices that are out of bounds for the interval length
-        block_mask = block_offsets < interval_length
+    # Calculate the pointer to the start of the image features for the current block of intervals
+    # Shape: (cxpr_block_size, cxpr_num_channels_padded)
+    current_image_feats_ptr = image_feats_ptr + interval_starts[:, None] * image_feats_stride + channel_offsets[None, :]
 
-        # Load image features, shape: (cxpr_block_size, num_channels)
+    # Determine the maximum interval length in the block
+    # This is used to determine how many points we need to process in the block
+    max_interval_length = tl.max(interval_lengths, axis=0)
+
+    # Iterate over the max number of points in any interval in the block
+    for point_index in range(max_interval_length):
+        # Mask for intervals where this point index is valid
+        index_mask = point_index < interval_lengths
+
+        # Load image features for the current point, shape: (cxpr_block_size, cxpr_num_channels_padded)
         image_feats = tl.load(
-            current_image_feats_ptr + block_offsets[:, None] * image_feats_stride,
-            mask=block_mask[:, None] & channel_mask[None, :],
+            current_image_feats_ptr + point_index * image_feats_stride,
+            mask=index_mask[:, None] & output_mask,
             other=0.0,
         )
 
-        # Calculate sum of image features for the current block, per channel
-        # Shape: (cxpr_num_channels_padded,)
-        output += tl.sum(image_feats, axis=0)
+        # Accumulate the image features into the output tensor
+        output += image_feats
 
-    # Load geometry coordinates for the first point in this interval
-    # Note: all points in the interval share the same geom_feats, so we only need to load the first point's geom_feats.
-    current_geom_feats_ptr = geom_feats_ptr + interval_start * geom_feats_stride
-    geom_x = tl.load(current_geom_feats_ptr + 0)  # X coordinate
-    geom_y = tl.load(current_geom_feats_ptr + 1)  # Y coordinate
-    geom_z = tl.load(current_geom_feats_ptr + 2)  # Z coordinate
-    geom_b = tl.load(current_geom_feats_ptr + 3)  # Batch index
+    # Load geometry coordinates for the first point in each interval
+    # Note: all points in each interval share the same geom_feats, so we only need to load the first point's geom_feats.
+    # geom_{x|y|z|b} shape: (cxpr_block_size,)
+    current_geom_feats_ptrs = geom_feats_ptr + interval_starts[:, None] * geom_feats_stride
+    geom_x = tl.load(current_geom_feats_ptrs + 0)  # X coordinates
+    geom_y = tl.load(current_geom_feats_ptrs + 1)  # Y coordinates
+    geom_z = tl.load(current_geom_feats_ptrs + 2)  # Z coordinates
+    geom_b = tl.load(current_geom_feats_ptrs + 3)  # Batch indices
 
-    # Calculate output tensor offset for shape [batch_size, grid_cells_z, grid_cells_x, grid_cells_y, num_channels]
-    batch_offset = geom_b * output_batch_stride
-    z_offset = geom_z * output_z_stride
-    x_offset = geom_x * output_x_stride
-    y_offset = geom_y * output_y_stride
+    # Calculate output tensor offsets for shape [batch_size, grid_cells_z, grid_cells_x, grid_cells_y, num_channels]
+    batch_offsets = geom_b * output_batch_stride
+    z_offsets = geom_z * output_z_stride
+    x_offsets = geom_x * output_x_stride
+    y_offsets = geom_y * output_y_stride
 
     # Store the accumulated output for the current interval
     tl.store(
-        output_ptr + batch_offset + z_offset + x_offset + y_offset + channel_offsets,
+        output_ptr + batch_offsets + z_offsets + x_offsets + y_offsets + channel_offsets[None, :],
         output,
-        mask=channel_mask,
+        mask=output_mask,
     )
 
 
@@ -125,6 +139,7 @@ def _bev_pool_backward_kernel(
     interval_lengths_ptr: tl.tensor,
     # Scalars
     num_channels: tl.int32,
+    num_intervals: tl.int32,
     # Strides
     x_grad_stride: tl.int32,
     grad_output_batch_stride: tl.int32,
@@ -148,6 +163,7 @@ def _bev_pool_backward_kernel(
         interval_starts_ptr: Pointer to the starting positions for pooled points.
         interval_lengths_ptr: Pointer to the lengths of each pooled point.
         num_channels: The number of channels in the image features.
+        num_intervals: The number of intervals to process.
         x_grad_stride: The stride of the x_grad tensor.
         grad_output_batch_stride: The stride of the grad_output tensor for the batch dimension.
         grad_output_z_stride: The stride of the grad_output tensor for the z dimension.
@@ -157,58 +173,65 @@ def _bev_pool_backward_kernel(
         cxpr_num_channels_padded: The number of channels padded to the next power of 2.
         cxpr_block_size: The block size for processing points in parallel.
     """
-    # What is the index of the interval this program is processing?
-    interval_index = tl.program_id(0)
+    # What is the starting index of the block of intervals this program is processing?
+    interval_block_start = tl.program_id(0) * cxpr_block_size
+    # Offsets for each interval in the block
+    interval_block_offsets = interval_block_start + tl.arange(0, cxpr_block_size)
+    # Mask out-of-bounds intervals
+    interval_block_mask = interval_block_offsets < num_intervals
 
-    # Load current interval start and length
-    interval_start = tl.load(interval_starts_ptr + interval_index)
-    interval_length = tl.load(interval_lengths_ptr + interval_index)
+    # Load start and length for each interval in the block
+    interval_starts = tl.load(interval_starts_ptr + interval_block_offsets, mask=interval_block_mask, other=0)
+    interval_lengths = tl.load(interval_lengths_ptr + interval_block_offsets, mask=interval_block_mask, other=0)
 
     # Offsets and masks for the channels
     channel_offsets = tl.arange(0, cxpr_num_channels_padded)
     channel_mask = channel_offsets < num_channels
 
-    # Load geometry coordinates for the first point in this interval
-    # Note: all points in the interval share the same geom_feats, so we only need to load the first point's geom_feats.
-    current_geom_feats_ptr = geom_feats_ptr + interval_start * geom_feats_stride
-    geom_x = tl.load(current_geom_feats_ptr + 0)  # X coordinate
-    geom_y = tl.load(current_geom_feats_ptr + 1)  # Y coordinate
-    geom_z = tl.load(current_geom_feats_ptr + 2)  # Z coordinate
-    geom_b = tl.load(current_geom_feats_ptr + 3)  # Batch index
+    # Combine interval block mask with channel mask
+    output_mask = interval_block_mask[:, None] & channel_mask[None, :]
 
-    # Offset for the entry in the grad_output tensor for this interval
-    grad_output_offset = (
+    # Load geometry coordinates for the first point in each interval
+    # Note: all points in each interval share the same geom_feats, so we only need to load the first point's geom_feats.
+    current_geom_feats_ptrs = geom_feats_ptr + interval_starts[:, None] * geom_feats_stride
+    # geom_{x|y|z|b} shape: (cxpr_block_size,)
+    geom_x = tl.load(current_geom_feats_ptrs + 0)  # X coordinates
+    geom_y = tl.load(current_geom_feats_ptrs + 1)  # Y coordinates
+    geom_z = tl.load(current_geom_feats_ptrs + 2)  # Z coordinates
+    geom_b = tl.load(current_geom_feats_ptrs + 3)  # Batch indices
+
+    # Offsets for the entry in the grad_output tensor for each interval
+    grad_output_offsets = (
         geom_b * grad_output_batch_stride
         + geom_z * grad_output_z_stride
         + geom_x * grad_output_x_stride
         + geom_y * grad_output_y_stride
     )
 
-    # Load gradient output, shape: (num_channels,)
+    # Load gradient output, shape: (cxpr_block_size, cxpr_num_channels_padded)
     grad_output = tl.load(
-        grad_output_ptr + grad_output_offset + channel_offsets,
-        mask=channel_mask,
+        grad_output_ptr + grad_output_offsets + channel_offsets[None, :],
+        mask=output_mask,
         other=0.0,
     )
 
-    # Broadcast the grad_output to match the block size and number of channels
-    # This is necessary to ensure we can write the gradients in blocks
-    grad_output_expanded = grad_output[None, :].broadcast_to(cxpr_block_size, cxpr_num_channels_padded)
-
     # Pointer to the start of the output for this block
-    current_x_grad_ptr = x_grad_ptr + interval_start * x_grad_stride + channel_offsets
+    current_x_grad_ptr = x_grad_ptr + interval_starts[:, None] * x_grad_stride + channel_offsets[None, :]
 
-    for block_index in range(tl.cdiv(interval_length, cxpr_block_size)):
-        # Offsets for the current block
-        block_offsets = block_index * cxpr_block_size + tl.arange(0, cxpr_block_size)
-        # Mask out any indices that are out of bounds for the interval length
-        block_mask = block_offsets < interval_length
+    # Determine the maximum interval length in the block
+    # This is used to determine how many points we need to process in the block
+    max_interval_length = tl.max(interval_lengths, axis=0)
 
-        # Store gradients for the current block
+    # Iterate over the max number of points in any interval in the block
+    for point_index in range(max_interval_length):
+        # Mask for intervals where this point index is valid
+        index_mask = point_index < interval_lengths
+
+        # Store gradients for the current point, shape: (cxpr_block_size, cxpr_num_channels_padded)
         tl.store(
-            current_x_grad_ptr + block_offsets[:, None] * x_grad_stride,
-            grad_output_expanded,
-            mask=block_mask[:, None] & channel_mask[None, :],
+            current_x_grad_ptr + point_index * x_grad_stride,
+            grad_output,
+            mask=index_mask[:, None] & output_mask,
         )
 
 
@@ -231,8 +254,9 @@ def bev_pool_launcher(
     _, num_channels = image_feats.shape
     num_intervals = interval_lengths.size(0)
 
-    # Process each interval in parallel
-    grid = (num_intervals,)
+    def grid(meta: dict[str, Any]) -> tuple[int, ...]:
+        # Process each interval in parallel, blockwise
+        return (triton.cdiv(num_intervals, meta["cxpr_block_size"]),)
 
     _bev_pool_kernel[grid](
         # Pointers to tensors
@@ -243,6 +267,7 @@ def bev_pool_launcher(
         interval_lengths_ptr=interval_lengths,
         # Scalars
         num_channels=num_channels,
+        num_intervals=num_intervals,
         # Strides
         image_feats_stride=image_feats.stride(0),
         geom_feats_stride=geom_feats.stride(0),
@@ -252,10 +277,8 @@ def bev_pool_launcher(
         output_y_stride=output.stride(3),
         # Constexprs
         cxpr_num_channels_padded=triton.next_power_of_2(num_channels),
-        # TODO(jmanning): Autotune?
-        # The tricky thing here is the optimal block size depends on the average/maximum interval length,
-        # not the number of intervals or number of points.
-        # It also just may depend on the platform/device what the optimal block size is.
+        # TODO(jmanning): We _could_ autotune based on the number of intervals,
+        # but that would likely trigger many recompilations.
         cxpr_block_size=64,
     )
 
@@ -279,8 +302,9 @@ def bev_pool_backward_launcher(
     num_intervals = interval_starts.size(0)
     _, num_channels = x_grad.shape
 
-    # Process each interval in parallel
-    grid = (num_intervals,)
+    def grid(meta: dict[str, Any]) -> tuple[int, ...]:
+        # Process each interval in parallel, blockwise
+        return (triton.cdiv(num_intervals, meta["cxpr_block_size"]),)
 
     _bev_pool_backward_kernel[grid](
         # Pointers to tensors
@@ -291,6 +315,7 @@ def bev_pool_backward_launcher(
         interval_lengths_ptr=interval_lengths,
         # Scalars
         num_channels=num_channels,
+        num_intervals=num_intervals,
         # Strides
         x_grad_stride=x_grad.stride(0),
         grad_output_batch_stride=grad_output.stride(0),
