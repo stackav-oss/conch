@@ -7,8 +7,6 @@ Kernel based on CUDA torchvision NMS implementation:
 https://github.com/pytorch/vision/blob/0721867e42841171254c7acaa45fbaf8ee16d3d7/torchvision/csrc/ops/cuda/nms_kernel.cu
 """
 
-from typing import Any
-
 import torch
 import triton
 import triton.language as tl
@@ -77,71 +75,64 @@ def _create_iou_mask_kernel(
         iou_mask_stride: Stride for IoU mask tensor.
         cxpr_block_size: Block size for processing.
     """
-    row_block_start = tl.program_id(0) * cxpr_block_size
-    col_block_start = tl.program_id(1) * cxpr_block_size
+    # What row of the matrix are we processing?
+    # Each row corresponds to a box, and we process one row at a time.
+    row_index = tl.program_id(0)
 
-    # Skip this block if we are entirely in the lower-triangular part of the matrix
-    if row_block_start > col_block_start:
-        return
+    # Load the reference box
+    box1_offset = row_index * boxes_stride
+    box1_x1 = tl.load(boxes_ptr + box1_offset + 0)
+    box1_y1 = tl.load(boxes_ptr + box1_offset + 1)
+    box1_x2 = tl.load(boxes_ptr + box1_offset + 2)
+    box1_y2 = tl.load(boxes_ptr + box1_offset + 3)
 
-    # Process a block of rows
-    row_offsets = row_block_start + tl.arange(0, cxpr_block_size)
-    row_mask = row_offsets < num_boxes
-
-    # Load the reference boxes
-    # Shape: (cxpr_block_size,)
-    box1_offsets = row_offsets * boxes_stride
-    box1_x1 = tl.load(boxes_ptr + box1_offsets + 0, mask=row_mask, other=0.0)
-    box1_y1 = tl.load(boxes_ptr + box1_offsets + 1, mask=row_mask, other=0.0)
-    box1_x2 = tl.load(boxes_ptr + box1_offsets + 2, mask=row_mask, other=0.0)
-    box1_y2 = tl.load(boxes_ptr + box1_offsets + 3, mask=row_mask, other=0.0)
-
-    # Calculate areas of the reference boxes
+    # Calculate area of the reference box
     box1_area = (box1_x2 - box1_x1) * (box1_y2 - box1_y1)
 
-    # Process a block of columns
-    col_offsets = col_block_start + tl.arange(0, cxpr_block_size)
-    col_mask = col_offsets < num_boxes
+    # Process all of the columns, blockwise
+    for col_block_start in range(row_index, num_boxes, cxpr_block_size):
+        # Column offsets for the current block
+        col_offsets = col_block_start + tl.arange(0, cxpr_block_size)
+        col_mask = col_offsets < num_boxes
 
-    # Load boxes in the current block
-    # Shape: (cxpr_block_size,)
-    box2_offsets = col_offsets * boxes_stride
-    box2_x1 = tl.load(boxes_ptr + box2_offsets + 0, mask=col_mask, other=0.0)
-    box2_y1 = tl.load(boxes_ptr + box2_offsets + 1, mask=col_mask, other=0.0)
-    box2_x2 = tl.load(boxes_ptr + box2_offsets + 2, mask=col_mask, other=0.0)
-    box2_y2 = tl.load(boxes_ptr + box2_offsets + 3, mask=col_mask, other=0.0)
+        # Load boxes in the current block
+        # Shape: (cxpr_block_size,)
+        box2_offsets = col_offsets * boxes_stride
+        box2_x1 = tl.load(boxes_ptr + box2_offsets + 0, mask=col_mask, other=0.0)
+        box2_y1 = tl.load(boxes_ptr + box2_offsets + 1, mask=col_mask, other=0.0)
+        box2_x2 = tl.load(boxes_ptr + box2_offsets + 2, mask=col_mask, other=0.0)
+        box2_y2 = tl.load(boxes_ptr + box2_offsets + 3, mask=col_mask, other=0.0)
 
-    # Calculate areas of the boxes
-    box2_area = (box2_x2 - box2_x1) * (box2_y2 - box2_y1)
+        # Calculate areas of the boxes
+        box2_area = (box2_x2 - box2_x1) * (box2_y2 - box2_y1)
 
-    # Calculate intersection
-    inter_x1 = tl.maximum(box1_x1[:, None], box2_x1[None, :])
-    inter_y1 = tl.maximum(box1_y1[:, None], box2_y1[None, :])
-    inter_x2 = tl.minimum(box1_x2[:, None], box2_x2[None, :])
-    inter_y2 = tl.minimum(box1_y2[:, None], box2_y2[None, :])
+        # Calculate intersection
+        inter_x1 = tl.maximum(box1_x1, box2_x1)
+        inter_y1 = tl.maximum(box1_y1, box2_y1)
+        inter_x2 = tl.minimum(box1_x2, box2_x2)
+        inter_y2 = tl.minimum(box1_y2, box2_y2)
 
-    # Check if there's valid intersection
-    inter_w = tl.maximum(0.0, inter_x2 - inter_x1)
-    inter_h = tl.maximum(0.0, inter_y2 - inter_y1)
-    inter_area = inter_w * inter_h
+        # Check if there's valid intersection
+        inter_w = tl.maximum(0.0, inter_x2 - inter_x1)
+        inter_h = tl.maximum(0.0, inter_y2 - inter_y1)
+        inter_area = inter_w * inter_h
 
-    # Calculate union and IoU
-    # Shape: (cxpr_block_size, cxpr_block_size)
-    union_area = box1_area[:, None] + box2_area[None, :] - inter_area
-    iou = tl.where(union_area > 0.0, inter_area / union_area, 0.0)
+        # Calculate union and IoU
+        # Shape: (cxpr_block_size,)
+        union_area = box1_area + box2_area - inter_area
+        iou = tl.where(union_area > 0.0, inter_area / union_area, 0.0)
 
-    # Create a mask for IoU values that exceed the threshold
-    # Shape: (cxpr_block_size, cxpr_block_size)
-    exceeds_threshold = iou > iou_threshold
+        # Create a mask for IoU values that exceed the threshold
+        # Shape: (cxpr_block_size,)
+        exceeds_threshold = iou > iou_threshold
 
-    # Note: for debugging, if you want to store the actual IoU values instead of boolean,
-    # you can store `iou` instead of `exceeds_threshold`. You'll also need to update the
-    # `iou_mask_ptr` type to `boxes.dtype` or similar (instead of `torch.bool`).
+        # Note: for debugging, if you want to store the actual IoU values instead of boolean,
+        # you can store `iou` instead of `exceeds_threshold`. You'll also need to update the
+        # `iou_mask_ptr` type to `boxes.dtype` or similar (instead of `torch.bool`).
 
-    # Store IoU mask -> upper triangular part of the matrix
-    iou_output_offsets = row_offsets[:, None] * iou_mask_stride + col_offsets[None, :]
-    iou_output_mask = row_mask[:, None] & col_mask[None, :] & (row_offsets[:, None] < col_offsets[None, :])
-    tl.store(iou_mask_ptr + iou_output_offsets, exceeds_threshold, mask=iou_output_mask)
+        # Store IoU mask -> upper triangular part of the matrix
+        iou_output_offsets = row_index * iou_mask_stride + col_offsets
+        tl.store(iou_mask_ptr + iou_output_offsets, exceeds_threshold, mask=col_mask)
 
 
 @triton.autotune(  # type: ignore[misc]
@@ -244,11 +235,9 @@ def nms_launcher(
     _, sorted_indices = torch.sort(scores, dim=0, stable=True, descending=True)
     sorted_boxes = boxes[sorted_indices].contiguous()
 
-    # Determine if IoU of one box against all other boxes exceeds the threshold in parallel.
-    # Process blockwise in both dimensions, in chunks of size `cxpr_block_size`.
-    def stage1_grid(meta: dict[str, Any]) -> tuple[int, int]:
-        num_blocks = triton.cdiv(num_boxes, meta["cxpr_block_size"])
-        return (num_blocks, num_blocks)
+    # For each box, create a mask indicating which boxes have IoU with it that exceeds the threshold.
+    # Process other boxes blockwise, in chunks of size `cxpr_block_size`.
+    stage1_grid = (num_boxes,)
 
     # Create IoU mask in parallel, only upper-triangular part of the matrix is populated.
     _create_iou_mask_kernel[stage1_grid](
