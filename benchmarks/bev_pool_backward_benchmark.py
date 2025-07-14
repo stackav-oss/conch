@@ -91,7 +91,7 @@ def _create_bev_pool_backward_data(
     "--num-points",
     required=False,
     type=int,
-    default=500000,
+    default=6000000,
     help="Number of input points",
 )
 @click.option(
@@ -112,21 +112,21 @@ def _create_bev_pool_backward_data(
     "--grid-cells-z",
     required=False,
     type=int,
-    default=32,
+    default=20,
     help="Number of Z grid cells",
 )
 @click.option(
     "--grid-cells-x",
     required=False,
     type=int,
-    default=250,
+    default=800,
     help="Number of X grid cells",
 )
 @click.option(
     "--grid-cells-y",
     required=False,
     type=int,
-    default=250,
+    default=800,
     help="Number of Y grid cells",
 )
 @click.option(
@@ -177,6 +177,11 @@ def _create_bev_pool_backward_data(
     is_flag=True,
     help="Flag to torch.compile() the Conch impl",
 )
+@click.option(
+    "--cuda-ref",
+    is_flag=True,
+    help="Flag to enable CUDA reference implementation",
+)
 def main(
     num_points: int,
     num_channels: int,
@@ -192,6 +197,7 @@ def main(
     csv: bool,
     compile_ref: bool,
     compile_conch: bool,
+    cuda_ref: bool,
 ) -> None:
     """Benchmark BEV Pool backward pass.
 
@@ -210,6 +216,7 @@ def main(
         csv: Flag to indicate whether or not to print results in CSV format.
         compile_ref: Flag to torch.compile() the reference implementation.
         compile_conch: Flag to torch.compile() the Conch implementation.
+        cuda_ref: Flag to enable CUDA reference implementation.
     """
     seed: Final = 0
     seed_everything(seed)
@@ -241,8 +248,21 @@ def main(
     )
 
     # Compile functions if requested
-    bev_pool_backward_ref_fn = torch.compile(bev_pool_backward_ref) if compile_ref else bev_pool_backward_ref
-    bev_pool_backward_conch_fn = torch.compile(bev_pool_backward_conch) if compile_conch else bev_pool_backward_conch
+    bev_pool_backward_compiled_fn = None
+    bev_pool_backward_cuda_fn = None
+
+    if compile_ref:
+        # Compile the reference implementation if requested
+        bev_pool_backward_compiled_fn = torch.compile(bev_pool_backward_ref)
+
+    if cuda_ref:
+        from conch_cuda_ext.ops.vision.bev_pool.bev_pool import bev_pool_backward as bev_pool_bwd_cuda
+
+        bev_pool_backward_cuda_fn = bev_pool_bwd_cuda
+
+    bev_pool_backward_conch_compiled_fn = None
+    if compile_conch:
+        bev_pool_backward_conch_compiled_fn = torch.compile(bev_pool_backward_conch)
 
     # Test both implementations
     args = (
@@ -252,14 +272,14 @@ def main(
         interval_lengths,
     )
 
-    ref_output = bev_pool_backward_ref_fn(
+    ref_output = bev_pool_backward_ref(
         *args,
-        batch_size=batch_size,
-        grid_cells_z=grid_cells_z,
-        grid_cells_x=grid_cells_x,
-        grid_cells_y=grid_cells_y,
+        batch_size,
+        grid_cells_z,
+        grid_cells_x,
+        grid_cells_y,
     )
-    conch_output = bev_pool_backward_conch_fn(*args)
+    conch_output = bev_pool_backward_conch(*args)
 
     # Accuracy checks
     if not torch.allclose(ref_output, conch_output, atol=absolute_tolerance):
@@ -275,7 +295,7 @@ def main(
 
     # Benchmark implementations
     baseline_result = benchmark_it(
-        lambda: bev_pool_backward_ref_fn(
+        lambda: bev_pool_backward_ref(
             *args,
             batch_size=batch_size,
             grid_cells_z=grid_cells_z,
@@ -289,17 +309,67 @@ def main(
     )
 
     conch_result = benchmark_it(
-        lambda: bev_pool_backward_conch_fn(*args),
+        lambda: bev_pool_backward_conch(*args),
         tag="Conch",
         metadata=metadata,
         iteration_time_ms=iteration_time_ms,
         warmup_time_ms=warmup_time_ms,
     )
 
+    reference_compiled_result = None
+    reference_cuda_result = None
+    conch_compiled_result = None
+
+    if bev_pool_backward_compiled_fn:
+        reference_compiled_result = benchmark_it(
+            lambda: bev_pool_backward_compiled_fn(
+                *args,
+                batch_size=batch_size,
+                grid_cells_z=grid_cells_z,
+                grid_cells_x=grid_cells_x,
+                grid_cells_y=grid_cells_y,
+            ),
+            tag="Reference (Compiled)",
+            metadata=metadata,
+            iteration_time_ms=iteration_time_ms,
+            warmup_time_ms=warmup_time_ms,
+        )
+
+    if bev_pool_backward_cuda_fn:
+        reference_cuda_result = benchmark_it(
+            # Note: cannot use kwargs for CUDA fn
+            lambda: bev_pool_backward_cuda_fn(
+                *args,
+                batch_size,
+                grid_cells_z,
+                grid_cells_x,
+                grid_cells_y,
+            ),
+            tag="CUDA",
+            metadata=metadata,
+            iteration_time_ms=iteration_time_ms,
+            warmup_time_ms=warmup_time_ms,
+        )
+
+    if bev_pool_backward_conch_compiled_fn:
+        conch_compiled_result = benchmark_it(
+            lambda: bev_pool_backward_conch_compiled_fn(*args),
+            tag="Conch (Compiled)",
+            metadata=metadata,
+            iteration_time_ms=iteration_time_ms,
+            warmup_time_ms=warmup_time_ms,
+        )
+
     # Print results
     conch_result.print_parameters(csv=csv)
     conch_result.print_results(csv=csv)
     baseline_result.print_results(csv=csv)
+    if reference_compiled_result:
+        reference_compiled_result.print_results(csv=csv)
+    if reference_cuda_result:
+        reference_cuda_result.print_results(csv=csv)
+    if conch_compiled_result:
+        conch_compiled_result.print_results(csv=csv)
 
 
 if __name__ == "__main__":

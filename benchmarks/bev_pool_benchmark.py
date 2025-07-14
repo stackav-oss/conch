@@ -176,6 +176,11 @@ def _create_bev_pool_data(
     is_flag=True,
     help="Flag to torch.compile() the Conch impl",
 )
+@click.option(
+    "--cuda-ref",
+    is_flag=True,
+    help="Flag to enable CUDA reference implementation",
+)
 def main(
     num_points: int,
     num_channels: int,
@@ -191,6 +196,7 @@ def main(
     csv: bool,
     compile_ref: bool,
     compile_conch: bool,
+    cuda_ref: bool,
 ) -> None:
     """Benchmark BEV Pool.
 
@@ -209,6 +215,7 @@ def main(
         csv: Flag to indicate whether or not to print results in CSV format.
         compile_ref: Flag to torch.compile() the reference implementation.
         compile_conch: Flag to torch.compile() the Conch implementation.
+        cuda_ref: Flag to enable CUDA reference implementation.
     """
     seed: Final = 0
     seed_everything(seed)
@@ -245,8 +252,21 @@ def main(
     print(f"Max interval length: {interval_lengths.float().max().item()}", file=sys.stderr)
 
     # Compile functions if requested
-    bev_pool_ref_fn = torch.compile(bev_pool_ref) if compile_ref else bev_pool_ref
-    bev_pool_conch_fn = torch.compile(bev_pool_conch) if compile_conch else bev_pool_conch
+    bev_pool_forward_compiled_fn = None
+    bev_pool_forward_cuda_fn = None
+
+    if compile_ref:
+        # Compile the reference implementation if requested
+        bev_pool_forward_compiled_fn = torch.compile(bev_pool_ref)
+
+    if cuda_ref:
+        from conch_cuda_ext.ops.vision.bev_pool.bev_pool import bev_pool_forward as bev_pool_fwd_cuda
+
+        bev_pool_forward_cuda_fn = bev_pool_fwd_cuda
+
+    bev_pool_forward_conch_compiled_fn = None
+    if compile_conch:
+        bev_pool_forward_conch_compiled_fn = torch.compile(bev_pool_conch)
 
     # Test both implementations
     args = (
@@ -260,8 +280,8 @@ def main(
         grid_cells_y,
     )
 
-    ref_output = bev_pool_ref_fn(*args)
-    conch_output = bev_pool_conch_fn(*args)
+    ref_output = bev_pool_ref(*args)
+    conch_output = bev_pool_conch(*args)
 
     # Accuracy checks
     if not torch.allclose(ref_output, conch_output, atol=absolute_tolerance):
@@ -277,7 +297,7 @@ def main(
 
     # Benchmark implementations
     baseline_result = benchmark_it(
-        lambda: bev_pool_ref_fn(*args),
+        lambda: bev_pool_ref(*args),
         tag="Baseline",
         metadata=metadata,
         iteration_time_ms=iteration_time_ms,
@@ -285,17 +305,54 @@ def main(
     )
 
     conch_result = benchmark_it(
-        lambda: bev_pool_conch_fn(*args),
+        lambda: bev_pool_conch(*args),
         tag="Conch",
         metadata=metadata,
         iteration_time_ms=iteration_time_ms,
         warmup_time_ms=warmup_time_ms,
     )
 
+    reference_compiled_result = None
+    reference_cuda_result = None
+    conch_compiled_result = None
+
+    if bev_pool_forward_compiled_fn:
+        reference_compiled_result = benchmark_it(
+            lambda: bev_pool_forward_compiled_fn(*args),
+            tag="Reference (Compiled)",
+            metadata=metadata,
+            iteration_time_ms=iteration_time_ms,
+            warmup_time_ms=warmup_time_ms,
+        )
+
+    if bev_pool_forward_cuda_fn:
+        reference_cuda_result = benchmark_it(
+            lambda: bev_pool_forward_cuda_fn(*args),
+            tag="CUDA",
+            metadata=metadata,
+            iteration_time_ms=iteration_time_ms,
+            warmup_time_ms=warmup_time_ms,
+        )
+
+    if bev_pool_forward_conch_compiled_fn:
+        conch_compiled_result = benchmark_it(
+            lambda: bev_pool_forward_conch_compiled_fn(*args),
+            tag="Conch (Compiled)",
+            metadata=metadata,
+            iteration_time_ms=iteration_time_ms,
+            warmup_time_ms=warmup_time_ms,
+        )
+
     # Print results
     conch_result.print_parameters(csv=csv)
     conch_result.print_results(csv=csv)
     baseline_result.print_results(csv=csv)
+    if reference_compiled_result:
+        reference_compiled_result.print_results(csv=csv)
+    if reference_cuda_result:
+        reference_cuda_result.print_results(csv=csv)
+    if conch_compiled_result:
+        conch_compiled_result.print_results(csv=csv)
 
 
 if __name__ == "__main__":
