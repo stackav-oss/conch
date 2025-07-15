@@ -1,0 +1,24 @@
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["setuptools>=42", "wheel", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "conch-cuda-ext"
+authors = [
+  { name="Jacob Manning", email="jmanning+oss@stackav.com" },
+  { name="Ryan Hsu", email="rhsu+oss@stackav.com" },
+]
+description = "Conch CUDA Extension"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "Apache-2.0"
+
+[project.urls]
+Homepage = "https://github.com/stackav-oss/conch"
+Issues = "https://github.com/stackav-oss/conch/issues"

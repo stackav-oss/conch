@@ -10,4 +10,12 @@ dist/
 results/
 
 .coverage
+
 .vscode
+
+# Ignore any shared libraries
+*.so
+
+# Ignore HIP-ified CUDA kernels
+conch_cuda_ext/**/*_hip.cc
+conch_cuda_ext/**/*.hip
