@@ -15,6 +15,20 @@ def _dynamic_voxelize(
     voxel_size: tuple[float, float, float],
     coordinate_range: tuple[float, float, float, float, float, float],
 ) -> torch.Tensor:
+    """Convert points to voxel coordinates.
+
+    Args:
+        points: The points to convert, shape: (N, ndim). Points[:, :3] contain xyz points
+            and points[:, 3:] contain other information like reflectivity.
+        voxel_size: The size of each voxel, shape: (3).
+        coordinate_range: The coordinate range of voxel, shape: (6).
+            The order is (x_min, y_min, z_min, x_max, y_max, z_max).
+
+    Returns:
+        torch.Tensor: The voxel coordinates, shape: (N, 3). Each row contains
+            the voxel coordinates (z, y, x) for the corresponding point.
+            If a point is out of bounds, the corresponding voxel coordinate will be -1.
+    """
     voxel_size_x, voxel_size_y, voxel_size_z = voxel_size
     (
         coordinate_range_x_min,
@@ -29,28 +43,32 @@ def _dynamic_voxelize(
     grid_size_y = int((coordinate_range_y_max - coordinate_range_y_min) / voxel_size_y)
     grid_size_z = int((coordinate_range_z_max - coordinate_range_z_min) / voxel_size_z)
 
-    coordinates_x = ((points[:, 0] - coordinate_range_x_min) / voxel_size_x).floor().long()
-    out_of_bounds_x = coordinates_x >= grid_size_x or coordinates_x < 0
+    coordinates_x = ((points[:, 0] - coordinate_range_x_min) / voxel_size_x).floor().to(torch.int32)
+    out_of_bounds_x = torch.logical_or(coordinates_x >= grid_size_x, coordinates_x < 0)
     coordinates_x = torch.where(
-        out_of_bounds_x - 1,
+        out_of_bounds_x,
+        -1,
         coordinates_x,
     )
 
-    coordinates_y = ((points[:, 1] - coordinate_range_y_min) / voxel_size_y).floor().long()
-    out_of_bounds_y = coordinates_y >= grid_size_y or coordinates_y < 0
+    coordinates_y = ((points[:, 1] - coordinate_range_y_min) / voxel_size_y).floor().to(torch.int32)
+    out_of_bounds_y = torch.logical_or(coordinates_y >= grid_size_y, coordinates_y < 0)
     coordinates_y = torch.where(
-        out_of_bounds_y - 1,
+        out_of_bounds_y,
+        -1,
         coordinates_y,
     )
 
-    coordinates_z = ((points[:, 2] - coordinate_range_z_min) / voxel_size_z).floor().long()
-    out_of_bounds_z = coordinates_z >= grid_size_z or coordinates_z < 0
+    coordinates_z = ((points[:, 2] - coordinate_range_z_min) / voxel_size_z).floor().to(torch.int32)
+    out_of_bounds_z = torch.logical_or(coordinates_z >= grid_size_z, coordinates_z < 0)
     coordinates_z = torch.where(
-        out_of_bounds_z - 1,
+        out_of_bounds_z,
+        -1,
         coordinates_z,
     )
 
-    coordinates = torch.stack((coordinates_x, coordinates_y, coordinates_z), dim=1)
+    # Note: (z, y, x) order is used for voxel coordinates
+    coordinates = torch.stack((coordinates_z, coordinates_y, coordinates_x), dim=1)
 
     return coordinates
 
@@ -174,19 +192,39 @@ def _voxelization_pytorch(
         return voxels, voxel_coordinates, torch.ones(num_voxels, dtype=torch.int32, device=points.device)
 
 
+def _dynamic_voxelize_mmcv(
+    points: torch.Tensor,
+    voxel_size: tuple[int, int, int],
+    coordinate_range: tuple[float, float, float, float, float, float],
+) -> torch.Tensor:
+    n_dim = 3
+    coors = torch.zeros((points.size(0), n_dim), dtype=torch.int32, device=points.device)
+
+    from conch_cuda_ext.ops.vision.voxelization.voxelization import dynamic_voxelize_forward
+
+    dynamic_voxelize_forward(points, coors, list(voxel_size), list(coordinate_range), n_dim)
+
+    return coors
+
+
 def _voxelization_mmcv(
     points: torch.Tensor,
     voxel_size: tuple[int, int, int],
     coordinate_range: tuple[float, float, float, float, float, float],
     max_points_per_voxel: int = 35,
     max_voxels: int = 20000,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     from conch_cuda_ext.ops.vision.voxelization.voxelization import dynamic_voxelize_forward, hard_voxelize_forward
 
     if max_points_per_voxel == -1 or max_voxels == -1:
-        coors = points.new_zeros(size=(points.size(0), 3), dtype=torch.int)
-        dynamic_voxelize_forward(points, coors, list(voxel_size), list(coordinate_range), 3)
-        return coors
+        # coors = points.new_zeros(size=(points.size(0), 3), dtype=torch.int)
+        # dynamic_voxelize_forward(points, coors, list(voxel_size), list(coordinate_range), 3)
+        # return coors
+        return _dynamic_voxelize_mmcv(
+            points,
+            voxel_size,
+            coordinate_range,
+        )
     else:
         voxels = points.new_zeros(size=(max_voxels, max_points_per_voxel, points.size(1)))
         coors = points.new_zeros(size=(max_voxels, 3), dtype=torch.int)
