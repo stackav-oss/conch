@@ -28,5 +28,5 @@ for boxes in ${num_boxes[@]}; do
     csv_flag=" "
   fi
 
-  python benchmarks/nms_benchmark.py $csv_flag --num-boxes $boxes > $output_file
+  python benchmarks/nms_benchmark.py $csv_flag --gpu-ref --compile-ref --vectorize-ref --num-boxes $boxes > $output_file
 done
