@@ -73,6 +73,60 @@ def _dynamic_voxelize(
     return coordinates
 
 
+def _is_valid_coordinate(coordinate: torch.Tensor) -> bool:
+    """Check if the coordinate is valid (not -1).
+
+    Args:
+        coordinate (torch.Tensor): The coordinate to check.
+
+    Returns:
+        bool: True if the coordinate is valid, False otherwise.
+    """
+    return torch.all(coordinate != -1)
+
+
+def _point_to_voxel_index(
+    points: torch.Tensor,
+    coordinates: torch.Tensor,
+    max_num_points_per_voxel: int = 35,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    """
+    num_points = points.size(0)
+
+    point_to_voxel_idx = torch.zeros(num_points, dtype=torch.int32, device=points.device)
+    point_to_point_idx = torch.zeros(num_points, dtype=torch.int32, device=points.device)
+    
+    for point_idx in range(num_points):
+        num = 0
+        voxel_coord = coordinates[point_idx]
+
+        # if voxel_coord[0] >= 0:
+        #     point_to_voxel_idx[point_idx] = voxel_coord[0]
+        if not _is_valid_coordinate(voxel_coord):
+            # point_to_voxel_idx[point_idx] = -1
+            # point_to_point_idx[point_idx] = -1
+            continue
+            
+        # Iterate through previous points
+        for i in range(point_idx):
+            if not _is_valid_coordinate(coordinates[i]):
+                continue
+
+            if torch.equal(coordinates[i], voxel_coord):
+                if num == 0:
+                    point_to_point_idx[point_idx] = i
+
+                # point_to_voxel_idx[point_idx] = point_to_voxel_idx[i]
+                num += 1
+                if num >= max_num_points_per_voxel:
+                    break
+                # break
+        # point_to_point_idx[point_idx] = point_idx
+
+    return point_to_voxel_idx, point_to_point_idx
+
+
 def _voxelization_pytorch(
     points: torch.Tensor,
     voxel_size: tuple[int, int, int],
@@ -241,10 +295,11 @@ def _voxelization_mmcv(
             3,
         )
         # select the valid voxels
-        voxels_out = voxels[:voxel_num]
-        coors_out = coors[:voxel_num]
-        num_points_per_voxel_out = num_points_per_voxel[:voxel_num]
-        return voxels_out, coors_out, num_points_per_voxel_out
+        # voxels_out = voxels[:voxel_num]
+        # coors_out = coors[:voxel_num]
+        # num_points_per_voxel_out = num_points_per_voxel[:voxel_num]
+        # return voxels_out, coors_out, num_points_per_voxel_out
+        return voxels, coors, num_points_per_voxel
 
 
 def voxelization(
