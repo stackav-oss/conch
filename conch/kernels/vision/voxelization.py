@@ -82,10 +82,17 @@ def _generate_dense_voxels_kernel(
     # print("voxel_z = ", voxel_z)
 
     # Determine if voxel indices are valid
-    valid_x = (voxel_x >= 0) and (voxel_x < grid_dim_x)
-    valid_y = (voxel_y >= 0) and (voxel_y < grid_dim_y)
-    valid_z = (voxel_z >= 0) and (voxel_z < grid_dim_z)
-    valid_coordinate_mask = ((block_mask and valid_x) and valid_y) and valid_z
+    # valid_x = (voxel_x >= 0) and (voxel_x < grid_dim_x)
+    # valid_y = (voxel_y >= 0) and (voxel_y < grid_dim_y)
+    # valid_z = (voxel_z >= 0) and (voxel_z < grid_dim_z)
+    # valid_coordinate_mask = ((block_mask and valid_x) and valid_y) and valid_z
+    # valid_x = (voxel_x >= 0) & (voxel_x <= grid_dim_x)
+    # valid_y = (voxel_y >= 0) & (voxel_y <= grid_dim_y)
+    # valid_z = (voxel_z >= 0) & (voxel_z <= grid_dim_z)
+    valid_x = (voxel_x >= 0) & (voxel_x < grid_dim_x)
+    valid_y = (voxel_y >= 0) & (voxel_y < grid_dim_y)
+    valid_z = (voxel_z >= 0) & (voxel_z < grid_dim_z)
+    valid_coordinate_mask = ((block_mask & valid_x) & valid_y) & valid_z
 
     # print("valid_x = ", valid_x)
     # print("valid_y = ", valid_y)
@@ -100,7 +107,9 @@ def _generate_dense_voxels_kernel(
     flat_voxel_indices = (voxel_z * grid_dim_x * grid_dim_y) + (voxel_y * grid_dim_x) + voxel_x
     # print("flat_voxel_indices = BEFORE ", flat_voxel_indices)
     # Mask out any invalid indices
-    valid_voxel_mask = flat_voxel_indices >= 0 and flat_voxel_indices < max_num_voxels
+    # valid_voxel_mask = flat_voxel_indices >= 0 and flat_voxel_indices < max_num_voxels
+    # valid_voxel_mask = valid_coordinate_mask & (flat_voxel_indices >= 0) & (flat_voxel_indices < max_num_voxels)
+    valid_voxel_mask = valid_coordinate_mask & (flat_voxel_indices < max_num_voxels)
     # Clamp offsets between (0, max_num_voxels - 1) so that we don't accidentally read invalid addresses
     # flat_voxel_indices = tl.minimum(tl.maximum(flat_voxel_indices, 0), max_num_voxels - 1)
     # print("flat_voxel_indices AFTER = ", flat_voxel_indices)
@@ -113,7 +122,8 @@ def _generate_dense_voxels_kernel(
     # of the number of points in that voxel. This operation also returns the previous number of points in each
     # voxel, which we will use for storing the point features (x, y, z, ...) in the output
     # Shape: (cxpr_block_size,)
-    indices_in_voxel = tl.atomic_add(dense_num_points_per_voxel_ptr + flat_voxel_indices, 1, mask=valid_coordinate_mask & valid_voxel_mask)
+    # indices_in_voxel = tl.atomic_add(dense_num_points_per_voxel_ptr + flat_voxel_indices, 1, mask=valid_coordinate_mask & valid_voxel_mask)
+    indices_in_voxel = tl.atomic_add(dense_num_points_per_voxel_ptr + flat_voxel_indices, 1, mask=valid_voxel_mask)
 
     # print("indices_in_voxel = ", indices_in_voxel)
 
@@ -121,7 +131,8 @@ def _generate_dense_voxels_kernel(
     # to write the point features to the output tensor
     output_offsets = flat_voxel_indices * point_features_voxel_stride + indices_in_voxel * point_features_point_stride
     points_per_voxel_mask = indices_in_voxel < max_num_points_per_voxel
-    output_mask = valid_coordinate_mask & points_per_voxel_mask
+    # output_mask = valid_coordinate_mask & valid_voxel_mask & points_per_voxel_mask
+    output_mask = valid_voxel_mask & points_per_voxel_mask
 
     # print("output_offsets = ", output_offsets)
     # print("output_mask = ", output_mask)
@@ -154,12 +165,15 @@ def _generate_sparse_voxels_kernel(
     grid_dim_y: int,
     max_num_points_per_voxel: int,
     max_num_voxels: int,
+    num_extra_features: int,
     # Strides
     voxel_indices_stride: int,
-    dense_point_features_stride: int,
-    point_features_stride: int,
+    point_features_voxel_stride: int,
+    point_features_point_stride: int,
+    # point_features_stride: int,
     # Constants
     cxpr_block_size: tl.constexpr,
+    cxpr_num_extra_features_padded: tl.constexpr,
 ) -> None:
     """Convert dense voxels into sparse/contiguous non-empty voxels.
     output voxel/points ordering is nondeterministic.
@@ -185,27 +199,51 @@ def _generate_sparse_voxels_kernel(
     voxel_y = (flat_voxel_indices // grid_dim_x) % grid_dim_y
     voxel_z = flat_voxel_indices // (grid_dim_y * grid_dim_x)
 
-    # store 3d indices
-    tl.store(voxel_indices_ptr + current_voxel_offsets * voxel_indices_stride + 0, voxel_x, mask=valid_voxel_mask)
+    # store 3d indices -> in Z/Y/X format because life is weird
+    # tl.store(voxel_indices_ptr + current_voxel_offsets * voxel_indices_stride + 0, voxel_x, mask=valid_voxel_mask)
+    # tl.store(voxel_indices_ptr + current_voxel_offsets * voxel_indices_stride + 1, voxel_y, mask=valid_voxel_mask)
+    # tl.store(voxel_indices_ptr + current_voxel_offsets * voxel_indices_stride + 2, voxel_z, mask=valid_voxel_mask)
+    tl.store(voxel_indices_ptr + current_voxel_offsets * voxel_indices_stride + 0, voxel_z, mask=valid_voxel_mask)
     tl.store(voxel_indices_ptr + current_voxel_offsets * voxel_indices_stride + 1, voxel_y, mask=valid_voxel_mask)
-    tl.store(voxel_indices_ptr + current_voxel_offsets * voxel_indices_stride + 2, voxel_z, mask=valid_voxel_mask)
+    tl.store(voxel_indices_ptr + current_voxel_offsets * voxel_indices_stride + 2, voxel_x, mask=valid_voxel_mask)
 
-    # copy from nvidia opensource code, index is padded to int4 type
-    # tl.store(voxel_indices_ptr + current_voxel_offsets * 4 + 3, 0, mask=valid_voxel_mask)
+    # First three features are always XYZ
+    extra_features_offsets = 3 + tl.arange(0, cxpr_num_extra_features_padded)
+    extra_features_mask = extra_features_offsets < 3 + num_extra_features
 
     # store all feature points, even if they are 0 because Triton
     for point_idx in range(max_num_points_per_voxel):
-        input_idx = flat_voxel_indices * max_num_points_per_voxel + point_idx
-        point_x = tl.load(dense_point_features_ptr + input_idx * dense_point_features_stride + 0, mask=valid_voxel_mask)
-        point_y = tl.load(dense_point_features_ptr + input_idx * dense_point_features_stride + 1, mask=valid_voxel_mask)
-        point_z = tl.load(dense_point_features_ptr + input_idx * dense_point_features_stride + 2, mask=valid_voxel_mask)
-        # point_w = tl.load(dense_point_features_ptr + input_idx * dense_point_features_stride + 3, mask=valid_voxel_mask)
+    # for point_idx in range(tl.max(num_points_in_voxel)):
+        # Only load/store if this index in each voxel is valid
+        this_point_mask = valid_voxel_mask & point_idx < num_points_in_voxel
+        # this_mask = valid_voxel_mask & this_point_mask
 
-        output_idx = current_voxel_offsets * max_num_points_per_voxel + point_idx
-        tl.store(point_features_ptr + output_idx * point_features_stride + 0, point_x, mask=valid_voxel_mask)
-        tl.store(point_features_ptr + output_idx * point_features_stride + 1, point_y, mask=valid_voxel_mask)
-        tl.store(point_features_ptr + output_idx * point_features_stride + 2, point_z, mask=valid_voxel_mask)
-        # tl.store(point_features_ptr + output_idx * 4 + 3, point_w, mask=valid_voxel_mask)
+        # Offsets to read from
+        input_offsets = flat_voxel_indices * point_features_voxel_stride + point_idx * point_features_point_stride
+
+        block_x = tl.load(dense_point_features_ptr + input_offsets + 0, mask=this_point_mask)
+        block_y = tl.load(dense_point_features_ptr + input_offsets + 1, mask=this_point_mask)
+        block_z = tl.load(dense_point_features_ptr + input_offsets + 2, mask=this_point_mask)
+        block_extras = tl.load(
+            dense_point_features_ptr + input_offsets[:, None] + extra_features_offsets[None, :],
+            mask=this_point_mask[:, None] & extra_features_mask[None, :],
+            other=0,
+        )
+        # print("block_extras = ", block_extras)
+        # block_w = tl.load(dense_point_features_ptr + input_offsets * dense_point_features_stride + 3, mask=valid_voxel_mask)
+
+        # Offsets to store to
+        output_offsets = current_voxel_offsets * point_features_voxel_stride + point_idx * point_features_point_stride
+
+        tl.store(point_features_ptr + output_offsets + 0, block_x, mask=this_point_mask)
+        tl.store(point_features_ptr + output_offsets + 1, block_y, mask=this_point_mask)
+        tl.store(point_features_ptr + output_offsets + 2, block_z, mask=this_point_mask)
+        # tl.store(point_features_ptr + output_offsets * 4 + 3, block_w, mask=valid_voxel_mask)
+        tl.store(
+            point_features_ptr + output_offsets[:, None] + extra_features_offsets[None, :],
+            block_extras,
+            mask=this_point_mask[:, None] & extra_features_mask[None, :],
+        )
 
 
 def dense_voxelization_launcher(
@@ -235,9 +273,13 @@ def dense_voxelization_launcher(
 
     voxel_size_x, voxel_size_y, voxel_size_z = voxel_size
 
-    grid_size_x = int((max_x - min_x) / voxel_size_x)
-    grid_size_y = int((max_y - min_y) / voxel_size_y)
-    grid_size_z = int((max_z - min_z) / voxel_size_z)
+    grid_size_x = int(round((max_x - min_x) / voxel_size_x))
+    grid_size_y = int(round((max_y - min_y) / voxel_size_y))
+    grid_size_z = int(round((max_z - min_z) / voxel_size_z))
+
+    # print(f"{voxel_size_x = }")
+    # print(f"{voxel_size_y = }")
+    # print(f"{voxel_size_z = }")
 
     # print(f"{grid_size_x = }")
     # print(f"{grid_size_y = }")
@@ -282,7 +324,7 @@ def dense_voxelization_launcher(
         cxpr_num_extra_features_padded=triton.next_power_of_2(num_features),
     )
 
-    # torch.cuda.synchronize()
+    torch.cuda.synchronize()
 
     # print(f"{num_points_per_voxel = }")
 
@@ -316,9 +358,12 @@ def sparse_voxelization_launcher(
 
     voxel_size_x, voxel_size_y, voxel_size_z = voxel_size
 
-    grid_size_x = int((max_x - min_x) / voxel_size_x)
-    grid_size_y = int((max_y - min_y) / voxel_size_y)
-    grid_size_z = int((max_z - min_z) / voxel_size_z)
+    # grid_size_x = int((max_x - min_x) / voxel_size_x)
+    # grid_size_y = int((max_y - min_y) / voxel_size_y)
+    # grid_size_z = int((max_z - min_z) / voxel_size_z)
+    grid_size_x = int(round((max_x - min_x) / voxel_size_x))
+    grid_size_y = int(round((max_y - min_y) / voxel_size_y))
+    grid_size_z = int(round((max_z - min_z) / voxel_size_z))
 
     # print(f"{grid_size_x = }")
     # print(f"{grid_size_y = }")
@@ -356,17 +401,18 @@ def sparse_voxelization_launcher(
         # grid_dim_z=grid_size_z,
         max_num_points_per_voxel=max_points_per_voxel,
         max_num_voxels=max_voxels,
-        # num_extra_features=num_features,
+        num_extra_features=num_features,
         # Strides
         voxel_indices_stride=voxel_indices.stride(0),
-        dense_point_features_stride=dense_point_features.stride(0),
-        point_features_stride=point_features.stride(0),
-        # point_features_voxel_stride=point_features.stride(0),
-        # point_features_point_stride=point_features.stride(1),
+        # dense_point_features_voxel_stride=dense_point_features.stride(0),
+        # dense_point_features_point_stride=dense_point_features.stride(1),
+        # point_features_stride=point_features.stride(0),
+        point_features_voxel_stride=point_features.stride(0),
+        point_features_point_stride=point_features.stride(1),
         # points_stride=points.stride(0),
         # Constexprs
         cxpr_block_size=32,
-        # cxpr_num_extra_features_padded=triton.next_power_of_2(num_features),
+        cxpr_num_extra_features_padded=triton.next_power_of_2(num_features),
     )
 
     # torch.cuda.synchronize()

@@ -295,11 +295,11 @@ def _voxelization_mmcv(
             3,
         )
         # select the valid voxels
-        # voxels_out = voxels[:voxel_num]
-        # coors_out = coors[:voxel_num]
-        # num_points_per_voxel_out = num_points_per_voxel[:voxel_num]
-        # return voxels_out, coors_out, num_points_per_voxel_out
-        return voxels, coors, num_points_per_voxel
+        voxels_out = voxels[:voxel_num]
+        coors_out = coors[:voxel_num]
+        num_points_per_voxel_out = num_points_per_voxel[:voxel_num]
+        return voxels_out, coors_out, num_points_per_voxel_out
+        # return voxels, coors, num_points_per_voxel
 
 
 def voxelization(

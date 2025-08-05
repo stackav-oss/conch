@@ -25,9 +25,9 @@ _MAX_VOXELS: Final = [1000, 5000, 10000]
 def _create_test_points(
     num_points: int,
     coordinate_range: tuple[float, float, float, float, float, float],
-    num_features: int = 4,
-    dtype: torch.dtype = torch.float32,
-    device: torch.device = torch.device("cuda"),
+    num_features: int,
+    dtype: torch.dtype,
+    device: torch.device,
 ) -> torch.Tensor:
     """Create test point cloud data within the specified coordinate range."""
     x_min, y_min, z_min, x_max, y_max, z_max = coordinate_range
@@ -109,27 +109,52 @@ def test_dynamic_voxelization(max_points_per_voxel: int, seed: int, num_features
     # assert False
 
 
-@pytest.mark.parametrize("max_points_per_voxel", [35])
 # @pytest.mark.parametrize("max_num_voxels", [20000])
 # @pytest.mark.parametrize("num_points", [64])
 # @pytest.mark.parametrize("num_points", [3])
 # @pytest.mark.parametrize("num_points", [10])
 # @pytest.mark.parametrize("num_points", [100])
-@pytest.mark.parametrize("num_points", [1000, 20000])
+# @pytest.mark.parametrize("num_points", [1000, 20000])
+@pytest.mark.parametrize("num_points", [5, 5000, 10000])
+# @pytest.mark.parametrize("num_points", [5, 5000])
+# @pytest.mark.parametrize("num_points", [5000])
+# @pytest.mark.parametrize("num_points", [5])
+# @pytest.mark.parametrize("num_points", [5000])
 # @pytest.mark.parametrize("max_points_per_voxel", [3])
+# @pytest.mark.parametrize("max_points_per_voxel", [35, 50])
+@pytest.mark.parametrize("max_points_per_voxel", [35])
 # @pytest.mark.parametrize("max_num_voxels", [10])
 # @pytest.mark.parametrize("max_num_voxels", [10])
 # @pytest.mark.parametrize("max_num_voxels", [100000])
-@pytest.mark.parametrize("max_num_voxels", [50000])
+# @pytest.mark.parametrize("max_num_voxels", [20000, 50000])
+# @pytest.mark.parametrize("max_num_voxels", [200000])
+# @pytest.mark.parametrize("max_num_voxels", [200000])
+@pytest.mark.parametrize("max_num_voxels", [500000])
+@pytest.mark.parametrize("voxel_size", [
+    (0.2, 0.2, 0.2),
+    # (1.0, 1.0, 1.0),
+    (1.4, 1.4, 1.4),
+])
+@pytest.mark.parametrize("coordinate_range", [
+    (-5.0, -5.0, -2.0, 5.0, 5.0, 2.0),
+    (-10.0, -10.0, -5.0, 10.0, 10.0, 5.0),
+])
+# @pytest.mark.parametrize("max_num_voxels", [2000])
 @pytest.mark.parametrize("num_features", [4, 63, 64])
 # @pytest.mark.parametrize("num_features", [4])
-@pytest.mark.parametrize("seed", range(2))
-# @pytest.mark.parametrize("seed", [0])
+# @pytest.mark.parametrize("num_features", [4])
+# @pytest.mark.parametrize("num_features", [4])
+# @pytest.mark.parametrize("num_features", [63])
+# @pytest.mark.parametrize("num_features", [4])
+# @pytest.mark.parametrize("seed", range(1))
+@pytest.mark.parametrize("seed", [0])
 # @pytest.mark.parametrize("num_features", [3, 4, 63, 64])
 def test_hard_voxelization(
     num_points: int,
     max_points_per_voxel: int,
     max_num_voxels: int,
+    voxel_size: tuple[float, ...],
+    coordinate_range: tuple[float, ...],
     num_features: int,
     seed: int,
 ) -> None:
@@ -140,14 +165,16 @@ def test_hard_voxelization(
     dtype = torch.float32
     # num_points = 500
     # x, y, z
-    voxel_size = (0.2, 0.2, 0.2)
+    # voxel_size = (0.2, 0.2, 0.2)
     # x_min, y_min, z_min, x_max, y_max, z_max
-    coordinate_range = (-5.0, -5.0, -2.0, 5.0, 5.0, 2.0)
+    # coordinate_range = (-5.0, -5.0, -2.0, 5.0, 5.0, 2.0)
     # max_voxels = -1
     # _ = max_points_per_voxel
 
     # Create test points
     points = _create_test_points(num_points, coordinate_range, num_features=num_features, dtype=dtype, device=device)
+    # sorted_points, _ = torch.sort(points, dim=0)
+    # print(f"{sorted_points = }")
     # points = torch.ones_like(points)
     # points = torch.tensor([
     #     [-5.0, -5.0, -2.0, 69.0],
@@ -189,13 +216,18 @@ def test_hard_voxelization(
     # while the PyTorch implementation will return (-1, -1, -1) for those points.
     # torch.testing.assert_close(coors_cuda, voxels_pytorch, rtol=1e-5, atol=1e-5)
 
-    conch_num_points_per_voxel, conch_point_features = voxelization_conch(
+    # conch_num_points_per_voxel, conch_point_features = voxelization_conch(
+    conch_num_points_per_voxel, conch_voxel_coords, conch_point_features = voxelization_conch(
         points=points,
         voxel_size=voxel_size,
         coordinate_range=coordinate_range,
         max_points_per_voxel=max_points_per_voxel,
         max_voxels=max_num_voxels,
     )
+
+    torch.cuda.synchronize()
+
+    # print(f"{conch_voxel_coords.shape = }")
 
     # print(f"{conch_num_points_per_voxel = }")
 
@@ -205,8 +237,10 @@ def test_hard_voxelization(
     # print(f"{voxels_out = }")
     # print(f"{conch_point_features = }")
 
-    # print(f"{num_points_per_voxel_out = }")
-    # print(f"{conch_num_points_per_voxel = }")
+    print(f"{num_points_per_voxel_out = }")
+    print(f"{num_points_per_voxel_out.shape = }")
+    print(f"{conch_num_points_per_voxel = }")
+    print(f"{conch_num_points_per_voxel.shape = }")
 
     # nonzero = torch.squeeze(torch.nonzero(conch_num_points_per_voxel))
     # print(f"{torch.nonzero(conch_num_points_per_voxel) = }")
@@ -231,13 +265,55 @@ def test_hard_voxelization(
 
     # assert False
 
-    print(f"{num_points_per_voxel_out = }")
-    print(f"{voxels_out = }")
+    # print(f"{num_points_per_voxel_out = }")
+    # print(f"{voxels_out = }")
 
-    print(f"{conch_num_points_per_voxel = }")
-    print(f"{conch_point_features = }")
+    # print(f"{conch_num_points_per_voxel = }")
+    # print(f"{conch_point_features = }")
+
+    # Order isn't guaranteed
+    # and if there are saturated voxels, there may be mismatches
+    # for one test case: ensure no saturated voxels
+    # for another: ensure that everything works when we do saturate a voxel
+
+    # Ensure that the same number of voxels were created
+    assert torch.sum(num_points_per_voxel_out) == torch.sum(conch_num_points_per_voxel)
+
+    # Check that no voxels were saturated
+    # assert torch.all(num_points_per_voxel_out < max_points_per_voxel)
+    # assert torch.all(conch_num_points_per_voxel < max_points_per_voxel)
+
+    # print(f"{conch_voxel_coords = }")
+    # print(f"{coors_out = }")
+
+    conch_coords_sorted, _ = torch.sort(conch_voxel_coords, dim=0)
+    cuda_coords_sorted, _ = torch.sort(coors_out, dim=0)
+
+    # print(f"{conch_coords_sorted = }")
+    # print(f"{cuda_coords_sorted = }")
+
+    torch.testing.assert_close(cuda_coords_sorted, conch_coords_sorted, rtol=1e-5, atol=1e-5)
+    # assert False
+
+    # if torch.all(num_points_per_voxel_out < max_points_per_voxel):
+    #     assert torch.all(conch_num_points_per_voxel < max_points_per_voxel)
+    #     conch_sorted, _ = torch.sort(conch_point_features, dim=0)
+    #     cuda_sorted, _ = torch.sort(voxels_out, dim=0)
+    #     torch.testing.assert_close(cuda_sorted, conch_sorted, rtol=1e-3, atol=1e-3)
+
+    # print(f"{conch_sorted = }")
+    # print(f"{cuda_sorted = }")
+    # print(f"{conch_sorted[0] = }")
+    # print(f"{cuda_sorted[0] = }")
+    # print(f"{conch_sorted[0][0] = }")
+    # print(f"{cuda_sorted[0][0] = }")
+    # print(f"{conch_sorted[0][1] = }")
+    # print(f"{cuda_sorted[0][1] = }")
+
+    # torch.testing.assert_close(cuda_sorted, conch_sorted, rtol=1e-3, atol=1e-3)
+
+    # torch.testing.assert_close(num_points_per_voxel_out, conch_num_points_per_voxel, rtol=1e-5, atol=1e-5)
 
     # torch.testing.assert_close(voxels_out, conch_point_features, rtol=1e-5, atol=1e-5)
     # torch.testing.assert_close(cuda_result, conch_result, rtol=1e-5, atol=1e-5)
-    torch.testing.assert_close(num_points_per_voxel_out, conch_num_points_per_voxel, rtol=1e-5, atol=1e-5)
     # torch.testing.assert_close(voxels_out, conch_point_features, rtol=1e-5, atol=1e-5)

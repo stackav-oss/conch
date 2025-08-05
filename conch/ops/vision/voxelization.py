@@ -29,9 +29,11 @@ def voxelization(
     num_points, num_features = points.shape
 
     # For each possible voxel, how many points fell into that voxel
-    dense_num_points_per_voxel = torch.zeros((max_voxels,), dtype=torch.int32, device="cuda")
+    dense_num_points_per_voxel = torch.zeros((max_voxels,), dtype=torch.int32, device=points.device)
     # For each voxel, what were the features of the points (x, y, z, ...) that fell into that voxel
     dense_point_features = torch.zeros((max_voxels, max_points_per_voxel, num_features), dtype=points.dtype, device=points.device)
+
+    # torch.cuda.synchronize()
 
     dense_voxelization_launcher(
         dense_num_points_per_voxel=dense_num_points_per_voxel,
@@ -43,11 +45,20 @@ def voxelization(
         max_voxels=max_voxels,
     )
 
+    # torch.cuda.synchronize()
+
+    # print(f"{dense_num_points_per_voxel = }")
+    # print(f"{dense_point_features = }")
+
+    # nonzero = torch.squeeze(torch.nonzero(dense_num_points_per_voxel))
+    # print(f"{torch.nonzero(dense_num_points_per_voxel) = }")
+    # print(f"{torch.nonzero(dense_point_features) = }")
+
     # Sparse output
-    num_filled_voxels = torch.zeros((1), dtype=torch.int32, device="cuda")
+    num_filled_voxels = torch.zeros((1), dtype=torch.int32, device=points.device)
     num_points_per_voxel = torch.empty_like(dense_num_points_per_voxel)
     point_features = torch.empty_like(dense_point_features)
-    voxel_indices = torch.empty((max_voxels, num_features), dtype=torch.int32, device="cuda")
+    voxel_indices = torch.empty((max_voxels, 3), dtype=torch.int32, device=points.device)
 
     sparse_voxelization_launcher(
         num_filled_voxels=num_filled_voxels,
@@ -60,5 +71,7 @@ def voxelization(
         coordinate_range=coordinate_range,
     )
 
+    # print(f"{num_filled_voxels = }")
+
     # return num_points_per_voxel, point_features
-    return num_points_per_voxel, point_features
+    return num_points_per_voxel[:num_filled_voxels], voxel_indices[:num_filled_voxels], point_features[:num_filled_voxels]
