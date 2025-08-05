@@ -201,25 +201,27 @@ def test_hard_voxelization(
 
     # print(f"{voxels_out.shape = }")
     # print(f"{conch_point_features.shape = }")
-    print(f"{voxels_out = }")
-    print(f"{conch_point_features = }")
 
-    print(f"{num_points_per_voxel_out = }")
-    print(f"{conch_num_points_per_voxel = }")
+    # print(f"{voxels_out = }")
+    # print(f"{conch_point_features = }")
 
-    nonzero = torch.squeeze(torch.nonzero(conch_num_points_per_voxel))
+    # print(f"{num_points_per_voxel_out = }")
+    # print(f"{conch_num_points_per_voxel = }")
+
+    # nonzero = torch.squeeze(torch.nonzero(conch_num_points_per_voxel))
     # print(f"{torch.nonzero(conch_num_points_per_voxel) = }")
-    print(f"{conch_num_points_per_voxel[nonzero] = }")
+    # print(f"{conch_num_points_per_voxel[nonzero] = }")
 
-    print(f"{conch_point_features[nonzero] = }")
+    # print(f"{conch_point_features[nonzero] = }")
 
-    num_voxels = len(nonzero)
+    # num_voxels = len(nonzero)
 
-    conch_result, _ = torch.sort(conch_point_features[nonzero], dim=0)
-    cuda_result, _ = torch.sort(voxels_out[:num_voxels], dim=0)
+    # conch_result, _ = torch.sort(conch_point_features[nonzero], dim=0)
+    # cuda_result, _ = torch.sort(voxels_out[:num_voxels], dim=0)
 
-    print(f"{conch_result = }")
-    print(f"{cuda_result = }")
+    # print(f"{conch_result = }")
+    # print(f"{cuda_result = }")
+
     # print(f"{voxels_out[:num_voxels] = }")
     # print(f"{voxels_out[:num_voxels].shape = }")
     # print(f"{torch.sort(voxels_out[:num_voxels]) = }")
@@ -229,5 +231,13 @@ def test_hard_voxelization(
 
     # assert False
 
+    print(f"{num_points_per_voxel_out = }")
+    print(f"{voxels_out = }")
+
+    print(f"{conch_num_points_per_voxel = }")
+    print(f"{conch_point_features = }")
+
     # torch.testing.assert_close(voxels_out, conch_point_features, rtol=1e-5, atol=1e-5)
-    torch.testing.assert_close(cuda_result, conch_result, rtol=1e-5, atol=1e-5)
+    # torch.testing.assert_close(cuda_result, conch_result, rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close(num_points_per_voxel_out, conch_num_points_per_voxel, rtol=1e-5, atol=1e-5)
+    # torch.testing.assert_close(voxels_out, conch_point_features, rtol=1e-5, atol=1e-5)

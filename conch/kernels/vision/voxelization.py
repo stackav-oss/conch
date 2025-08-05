@@ -13,8 +13,8 @@ import triton.language as tl
 @triton.jit
 def _generate_dense_voxels_kernel(
     # Output tensors
-    num_points_per_voxel_ptr: tl.tensor,
-    point_features_ptr: tl.tensor,
+    dense_num_points_per_voxel_ptr: tl.tensor,
+    dense_point_features_ptr: tl.tensor,
     # Input tensors
     points_ptr: tl.tensor,
     # Scalars
@@ -113,7 +113,7 @@ def _generate_dense_voxels_kernel(
     # of the number of points in that voxel. This operation also returns the previous number of points in each
     # voxel, which we will use for storing the point features (x, y, z, ...) in the output
     # Shape: (cxpr_block_size,)
-    indices_in_voxel = tl.atomic_add(num_points_per_voxel_ptr + flat_voxel_indices, 1, mask=valid_coordinate_mask & valid_voxel_mask)
+    indices_in_voxel = tl.atomic_add(dense_num_points_per_voxel_ptr + flat_voxel_indices, 1, mask=valid_coordinate_mask & valid_voxel_mask)
 
     # print("indices_in_voxel = ", indices_in_voxel)
 
@@ -128,20 +128,89 @@ def _generate_dense_voxels_kernel(
     # print("extra_output_offsets = ", output_offsets[:, None] + extra_features_offsets[None, :])
 
     # Store x, y, z features for the current block
-    tl.store(point_features_ptr + output_offsets + 0, block_x, mask=output_mask)
-    tl.store(point_features_ptr + output_offsets + 1, block_y, mask=output_mask)
-    tl.store(point_features_ptr + output_offsets + 2, block_z, mask=output_mask)
+    tl.store(dense_point_features_ptr + output_offsets + 0, block_x, mask=output_mask)
+    tl.store(dense_point_features_ptr + output_offsets + 1, block_y, mask=output_mask)
+    tl.store(dense_point_features_ptr + output_offsets + 2, block_z, mask=output_mask)
     # Store extra features for the current block
     tl.store(
-        point_features_ptr + output_offsets[:, None] + extra_features_offsets[None, :],
+        dense_point_features_ptr + output_offsets[:, None] + extra_features_offsets[None, :],
         block_extras,
         mask=output_mask[:, None] & extra_features_mask[None, :],
     )
 
 
-def voxelization_launcher(
-    num_points_per_voxel: torch.Tensor,
-    point_features: torch.Tensor,
+@triton.jit
+def _generate_sparse_voxels_kernel(
+    # Output tensors
+    num_filled_voxels_ptr: tl.tensor,
+    num_points_per_voxel_ptr: tl.tensor,
+    point_features_ptr: tl.tensor,
+    voxel_indices_ptr: tl.tensor,
+    # Input tensors
+    dense_point_features_ptr: tl.tensor,
+    dense_num_points_per_voxel_ptr: tl.tensor,
+    # Scalars
+    grid_dim_x: int,
+    grid_dim_y: int,
+    max_num_points_per_voxel: int,
+    max_num_voxels: int,
+    # Strides
+    voxel_indices_stride: int,
+    dense_point_features_stride: int,
+    point_features_stride: int,
+    # Constants
+    cxpr_block_size: tl.constexpr,
+) -> None:
+    """Convert dense voxels into sparse/contiguous non-empty voxels.
+    output voxel/points ordering is nondeterministic.
+    """
+    block_index = tl.program_id(0)
+
+    flat_voxel_indices = block_index * cxpr_block_size + tl.arange(0, cxpr_block_size)
+    flat_voxel_mask = flat_voxel_indices < max_num_voxels
+
+    num_points_in_voxel = tl.load(
+        dense_num_points_per_voxel_ptr + flat_voxel_indices, mask=flat_voxel_mask, other=0
+    )
+    num_points_in_voxel = tl.minimum(num_points_in_voxel, max_num_points_per_voxel)
+    valid_voxel_mask = num_points_in_voxel > 0
+
+    current_voxel_offsets = tl.atomic_add(num_filled_voxels_ptr + tl.zeros_like(valid_voxel_mask), 1, mask=valid_voxel_mask)
+
+    # store num_points_per_voxel with clipping
+    tl.store(num_points_per_voxel_ptr + current_voxel_offsets, num_points_in_voxel, mask=valid_voxel_mask)
+
+    # convert flat voxel index to 3d coordinates
+    voxel_x = flat_voxel_indices % grid_dim_x
+    voxel_y = (flat_voxel_indices // grid_dim_x) % grid_dim_y
+    voxel_z = flat_voxel_indices // (grid_dim_y * grid_dim_x)
+
+    # store 3d indices
+    tl.store(voxel_indices_ptr + current_voxel_offsets * voxel_indices_stride + 0, voxel_x, mask=valid_voxel_mask)
+    tl.store(voxel_indices_ptr + current_voxel_offsets * voxel_indices_stride + 1, voxel_y, mask=valid_voxel_mask)
+    tl.store(voxel_indices_ptr + current_voxel_offsets * voxel_indices_stride + 2, voxel_z, mask=valid_voxel_mask)
+
+    # copy from nvidia opensource code, index is padded to int4 type
+    # tl.store(voxel_indices_ptr + current_voxel_offsets * 4 + 3, 0, mask=valid_voxel_mask)
+
+    # store all feature points, even if they are 0 because Triton
+    for point_idx in range(max_num_points_per_voxel):
+        input_idx = flat_voxel_indices * max_num_points_per_voxel + point_idx
+        point_x = tl.load(dense_point_features_ptr + input_idx * dense_point_features_stride + 0, mask=valid_voxel_mask)
+        point_y = tl.load(dense_point_features_ptr + input_idx * dense_point_features_stride + 1, mask=valid_voxel_mask)
+        point_z = tl.load(dense_point_features_ptr + input_idx * dense_point_features_stride + 2, mask=valid_voxel_mask)
+        # point_w = tl.load(dense_point_features_ptr + input_idx * dense_point_features_stride + 3, mask=valid_voxel_mask)
+
+        output_idx = current_voxel_offsets * max_num_points_per_voxel + point_idx
+        tl.store(point_features_ptr + output_idx * point_features_stride + 0, point_x, mask=valid_voxel_mask)
+        tl.store(point_features_ptr + output_idx * point_features_stride + 1, point_y, mask=valid_voxel_mask)
+        tl.store(point_features_ptr + output_idx * point_features_stride + 2, point_z, mask=valid_voxel_mask)
+        # tl.store(point_features_ptr + output_idx * 4 + 3, point_w, mask=valid_voxel_mask)
+
+
+def dense_voxelization_launcher(
+    dense_num_points_per_voxel: torch.Tensor,
+    dense_point_features: torch.Tensor,
     points: torch.Tensor,
     voxel_size: tuple[int, int, int],
     coordinate_range: tuple[float, float, float, float, float, float],
@@ -183,8 +252,8 @@ def voxelization_launcher(
 
     _generate_dense_voxels_kernel[grid](
         # Outputs
-        num_points_per_voxel_ptr=num_points_per_voxel,
-        point_features_ptr=point_features,
+        dense_num_points_per_voxel_ptr=dense_num_points_per_voxel,
+        dense_point_features_ptr=dense_point_features,
         # Inputs
         points_ptr=points,
         # Scalars
@@ -205,12 +274,99 @@ def voxelization_launcher(
         max_num_voxels=max_voxels,
         num_extra_features=num_features,
         # Strides
-        point_features_voxel_stride=point_features.stride(0),
-        point_features_point_stride=point_features.stride(1),
+        point_features_voxel_stride=dense_point_features.stride(0),
+        point_features_point_stride=dense_point_features.stride(1),
         points_stride=points.stride(0),
         # Constexprs
         cxpr_block_size=32,
         cxpr_num_extra_features_padded=triton.next_power_of_2(num_features),
+    )
+
+    # torch.cuda.synchronize()
+
+    # print(f"{num_points_per_voxel = }")
+
+
+def sparse_voxelization_launcher(
+    num_filled_voxels: torch.Tensor,
+    num_points_per_voxel: torch.Tensor,
+    point_features: torch.Tensor,
+    voxel_indices: torch.Tensor,
+    dense_num_points_per_voxel: torch.Tensor,
+    dense_point_features: torch.Tensor,
+    voxel_size: tuple[int, int, int],
+    coordinate_range: tuple[float, float, float, float, float, float],
+) -> None:
+    max_voxels, max_points_per_voxel, num_features = dense_point_features.shape
+    # num_points, _ = point_features
+
+    # print(f"{num_points_per_voxel = }")
+
+    assert num_features > 3
+    num_features -= 3
+
+    (
+        min_x,
+        min_y,
+        min_z,
+        max_x,
+        max_y,
+        max_z,
+    ) = coordinate_range
+
+    voxel_size_x, voxel_size_y, voxel_size_z = voxel_size
+
+    grid_size_x = int((max_x - min_x) / voxel_size_x)
+    grid_size_y = int((max_y - min_y) / voxel_size_y)
+    grid_size_z = int((max_z - min_z) / voxel_size_z)
+
+    # print(f"{grid_size_x = }")
+    # print(f"{grid_size_y = }")
+    # print(f"{grid_size_z = }")
+
+    def grid(meta: dict[str, Any]) -> tuple[int, ...]:
+        return (triton.cdiv(max_voxels, meta["cxpr_block_size"]),)
+
+    # print(f"{point_features.shape = }")
+    # print(f"{point_features.stride(0) = }")
+    # print(f"{point_features.stride(1) = }")
+
+    _generate_sparse_voxels_kernel[grid](
+        # Output tensors
+        num_filled_voxels_ptr=num_filled_voxels,
+        num_points_per_voxel_ptr=num_points_per_voxel,
+        point_features_ptr=point_features,
+        voxel_indices_ptr=voxel_indices,
+        # Input tensors
+        dense_num_points_per_voxel_ptr=dense_num_points_per_voxel,
+        dense_point_features_ptr=dense_point_features,
+        # Scalars
+        # num_points=num_points,
+        # min_x=min_x,
+        # min_y=min_y,
+        # min_z=min_z,
+        # max_x=max_x,
+        # max_y=max_y,
+        # max_z=max_z,
+        # voxel_dim_x=voxel_size_x,
+        # voxel_dim_y=voxel_size_y,
+        # voxel_dim_z=voxel_size_z,
+        grid_dim_x=grid_size_x,
+        grid_dim_y=grid_size_y,
+        # grid_dim_z=grid_size_z,
+        max_num_points_per_voxel=max_points_per_voxel,
+        max_num_voxels=max_voxels,
+        # num_extra_features=num_features,
+        # Strides
+        voxel_indices_stride=voxel_indices.stride(0),
+        dense_point_features_stride=dense_point_features.stride(0),
+        point_features_stride=point_features.stride(0),
+        # point_features_voxel_stride=point_features.stride(0),
+        # point_features_point_stride=point_features.stride(1),
+        # points_stride=points.stride(0),
+        # Constexprs
+        cxpr_block_size=32,
+        # cxpr_num_extra_features_padded=triton.next_power_of_2(num_features),
     )
 
     # torch.cuda.synchronize()

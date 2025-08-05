@@ -5,7 +5,7 @@
 
 import torch
 
-from conch.kernels.vision.voxelization import voxelization_launcher
+from conch.kernels.vision.voxelization import dense_voxelization_launcher, sparse_voxelization_launcher
 
 
 def voxelization(
@@ -29,13 +29,13 @@ def voxelization(
     num_points, num_features = points.shape
 
     # For each possible voxel, how many points fell into that voxel
-    num_points_per_voxel = torch.zeros((max_voxels,), dtype=torch.int32, device="cuda")
+    dense_num_points_per_voxel = torch.zeros((max_voxels,), dtype=torch.int32, device="cuda")
     # For each voxel, what were the features of the points (x, y, z, ...) that fell into that voxel
-    point_features = torch.zeros((max_voxels, max_points_per_voxel, num_features), dtype=points.dtype, device=points.device)
+    dense_point_features = torch.zeros((max_voxels, max_points_per_voxel, num_features), dtype=points.dtype, device=points.device)
 
-    voxelization_launcher(
-        num_points_per_voxel=num_points_per_voxel,
-        point_features=point_features,
+    dense_voxelization_launcher(
+        dense_num_points_per_voxel=dense_num_points_per_voxel,
+        dense_point_features=dense_point_features,
         points=points,
         voxel_size=voxel_size,
         coordinate_range=coordinate_range,
@@ -43,4 +43,22 @@ def voxelization(
         max_voxels=max_voxels,
     )
 
+    # Sparse output
+    num_filled_voxels = torch.zeros((1), dtype=torch.int32, device="cuda")
+    num_points_per_voxel = torch.empty_like(dense_num_points_per_voxel)
+    point_features = torch.empty_like(dense_point_features)
+    voxel_indices = torch.empty((max_voxels, num_features), dtype=torch.int32, device="cuda")
+
+    sparse_voxelization_launcher(
+        num_filled_voxels=num_filled_voxels,
+        num_points_per_voxel=num_points_per_voxel,
+        point_features=point_features,
+        voxel_indices=voxel_indices,
+        dense_num_points_per_voxel=dense_num_points_per_voxel,
+        dense_point_features=dense_point_features,
+        voxel_size=voxel_size,
+        coordinate_range=coordinate_range,
+    )
+
+    # return num_points_per_voxel, point_features
     return num_points_per_voxel, point_features
