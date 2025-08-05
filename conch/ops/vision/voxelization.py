@@ -28,8 +28,10 @@ def voxelization(
     """
     num_points, num_features = points.shape
 
+    # For each possible voxel, how many points fell into that voxel
     num_points_per_voxel = torch.zeros((max_voxels,), dtype=torch.int32, device="cuda")
-    point_features = torch.empty((max_voxels, max_points_per_voxel, num_features), dtype=points.dtype, device=points.device)
+    # For each voxel, what were the features of the points (x, y, z, ...) that fell into that voxel
+    point_features = torch.zeros((max_voxels, max_points_per_voxel, num_features), dtype=points.dtype, device=points.device)
 
     voxelization_launcher(
         num_points_per_voxel=num_points_per_voxel,

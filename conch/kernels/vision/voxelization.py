@@ -3,6 +3,8 @@
 
 """Voxelization implementation."""
 
+from typing import Any
+
 import torch
 import triton
 import triton.language as tl
@@ -33,61 +35,108 @@ def _generate_dense_voxels_kernel(
     max_num_voxels: int,
     num_extra_features: int,
     # Strides
-    point_features_stride: int,
+    point_features_voxel_stride: int,
+    point_features_point_stride: int,
     points_stride: int,
     # Constexprs
     cxpr_block_size: tl.constexpr,
     cxpr_num_extra_features_padded: tl.constexpr,
 ) -> None:
-    """Group valid points into dense voxels"""
-    block_idx = tl.program_id(0)
+    """Group points into dense voxels."""
+    # What block of the data is this program processing?
+    block_index = tl.program_id(0)
 
-    point_offsets = block_idx * cxpr_block_size + tl.arange(0, cxpr_block_size)
-    point_mask = point_offsets < num_points
+    # Process a block of points at a time
+    block_offsets = block_index * cxpr_block_size + tl.arange(0, cxpr_block_size)
+    block_mask = block_offsets < num_points
 
-    extra_offsets = 3 + tl.arange(0, cxpr_num_extra_features_padded)
-    extra_mask = extra_offsets < 3 + num_extra_features
+    # First three features are always XYZ
+    extra_features_offsets = 3 + tl.arange(0, cxpr_num_extra_features_padded)
+    extra_features_mask = extra_features_offsets < 3 + num_extra_features
 
-    point_x = tl.load(points_ptr + point_offsets * points_stride + 0, mask=point_mask, other=max_x + voxel_dim_x)
-    point_y = tl.load(points_ptr + point_offsets * points_stride + 1, mask=point_mask, other=max_y + voxel_dim_y)
-    point_z = tl.load(points_ptr + point_offsets * points_stride + 2, mask=point_mask, other=max_z + voxel_dim_z)
-    # point_w = tl.load(points_ptr + point_offsets * points_stride + 3, mask=point_mask, other=0)
-    point_extras = tl.load(points_ptr + point_offsets[:, None] * points_stride + extra_offsets[None, :], mask=point_mask[:, None] & extra_mask[None, :], other=0)
+    # Load x, y, z features for the current block
+    # Shape: (cxpr_block_size,)
+    block_x = tl.load(points_ptr + block_offsets * points_stride + 0, mask=block_mask, other=max_x + voxel_dim_x)
+    block_y = tl.load(points_ptr + block_offsets * points_stride + 1, mask=block_mask, other=max_y + voxel_dim_y)
+    block_z = tl.load(points_ptr + block_offsets * points_stride + 2, mask=block_mask, other=max_z + voxel_dim_z)
+    # Load extra features for the current block
+    # Shape: (cxpr_block_size, cxpr_num_extra_features_padded)
+    block_extras = tl.load(
+        points_ptr + block_offsets[:, None] * points_stride + extra_features_offsets[None, :],
+        mask=block_mask[:, None] & extra_features_mask[None, :],
+        other=0,
+    )
 
-    # voxel_x = tl.math.floor((point_x - min_x) / voxel_dim_x).to(tl.int32)
-    # voxel_y = tl.math.floor((point_y - min_y) / voxel_dim_y).to(tl.int32)
-    # voxel_z = tl.math.floor((point_z - min_z) / voxel_dim_z).to(tl.int32)
-    voxel_x = tl.floor((point_x - min_x) / voxel_dim_x).to(tl.int32)
-    voxel_y = tl.floor((point_y - min_y) / voxel_dim_y).to(tl.int32)
-    voxel_z = tl.floor((point_z - min_z) / voxel_dim_z).to(tl.int32)
+    # print("block_x = ", block_x)
+    # print("block_y = ", block_y)
+    # print("block_z = ", block_z)
 
+    # Calculate voxel indices for each point
+    # Shape: (cxpr_block_size,)
+    voxel_x = tl.floor((block_x - min_x) / voxel_dim_x).to(tl.int32)
+    voxel_y = tl.floor((block_y - min_y) / voxel_dim_y).to(tl.int32)
+    voxel_z = tl.floor((block_z - min_z) / voxel_dim_z).to(tl.int32)
+
+    # print("voxel_x = ", voxel_x)
+    # print("voxel_y = ", voxel_y)
+    # print("voxel_z = ", voxel_z)
+
+    # Determine if voxel indices are valid
     valid_x = (voxel_x >= 0) and (voxel_x < grid_dim_x)
     valid_y = (voxel_y >= 0) and (voxel_y < grid_dim_y)
     valid_z = (voxel_z >= 0) and (voxel_z < grid_dim_z)
-    valid_point = ((point_mask and valid_x) and valid_y) and valid_z
+    valid_coordinate_mask = ((block_mask and valid_x) and valid_y) and valid_z
 
-    # Triton atomics do not take masks... manually protect
-    # flat_voxel_idx = (voxel_z * grid_dim_y + voxel_y) * grid_dim_x + voxel_x
-    flat_voxel_idx = (voxel_z * grid_dim_x * grid_dim_y) + (voxel_y * grid_dim_x) + voxel_x
-    # flat_voxel_idx = tl.minimum(flat_voxel_idx, tl.full((cxpr_block_size,), max_num_voxels - 1, tl.int32))
-    valid_voxel = flat_voxel_idx >= 0 and flat_voxel_idx < max_num_voxels
-    flat_voxel_idx = tl.minimum(tl.maximum(flat_voxel_idx, 0), max_num_voxels - 1)
-    # flat_voxel_idx = tl.clamp(flat_voxel_idx, min=0, max=max_num_voxels - 1)
+    # print("valid_x = ", valid_x)
+    # print("valid_y = ", valid_y)
+    # print("valid_z = ", valid_z)
 
-    # point_idx_in_voxel = tl.atomic_add(num_points_per_voxel_ptr + flat_voxel_idx, valid_point.to(tl.int32))
-    point_idx_in_voxel = tl.atomic_add(num_points_per_voxel_ptr + flat_voxel_idx, 1, mask=valid_point & valid_voxel)
+    # print("grid_dim_x = ", grid_dim_x)
+    # print("grid_dim_y = ", grid_dim_y)
+    # print("grid_dim_z = ", grid_dim_z)
 
-    # output_idx = flat_voxel_idx * max_num_points_per_voxel + point_idx_in_voxel
-    output_idx = flat_voxel_idx * point_features_stride + point_idx_in_voxel
-    output_mask = valid_point & point_idx_in_voxel < max_num_points_per_voxel
-    # tl.store(point_features_ptr + output_idx * 4 + 0, point_x, mask=output_mask)
-    # tl.store(point_features_ptr + output_idx * 4 + 1, point_y, mask=output_mask)
-    # tl.store(point_features_ptr + output_idx * 4 + 2, point_z, mask=output_mask)
-    # tl.store(point_features_ptr + output_idx * 4 + 3, point_w, mask=output_mask)
-    tl.store(point_features_ptr + output_idx + 0, point_x, mask=output_mask)
-    tl.store(point_features_ptr + output_idx + 1, point_y, mask=output_mask)
-    tl.store(point_features_ptr + output_idx + 2, point_z, mask=output_mask)
-    tl.store(point_features_ptr + output_idx[:, None] + extra_offsets[None, :], point_extras, mask=output_mask[:, None] & extra_mask[None, :])
+    # "Flatten" voxel indices from 3D -> 1D
+    # Shape: (cxpr_block_size,)
+    flat_voxel_indices = (voxel_z * grid_dim_x * grid_dim_y) + (voxel_y * grid_dim_x) + voxel_x
+    # print("flat_voxel_indices = BEFORE ", flat_voxel_indices)
+    # Mask out any invalid indices
+    valid_voxel_mask = flat_voxel_indices >= 0 and flat_voxel_indices < max_num_voxels
+    # Clamp offsets between (0, max_num_voxels - 1) so that we don't accidentally read invalid addresses
+    # flat_voxel_indices = tl.minimum(tl.maximum(flat_voxel_indices, 0), max_num_voxels - 1)
+    # print("flat_voxel_indices AFTER = ", flat_voxel_indices)
+
+    # print("valid_coordinate_mask = ", valid_coordinate_mask)
+    # print("valid_voxel_mask = ", valid_voxel_mask)
+    # print("atomic_mask = ", valid_coordinate_mask & valid_voxel_mask)
+
+    # For each flat voxel index that corresponds to a point in the current block, perform an atomic increment
+    # of the number of points in that voxel. This operation also returns the previous number of points in each
+    # voxel, which we will use for storing the point features (x, y, z, ...) in the output
+    # Shape: (cxpr_block_size,)
+    indices_in_voxel = tl.atomic_add(num_points_per_voxel_ptr + flat_voxel_indices, 1, mask=valid_coordinate_mask & valid_voxel_mask)
+
+    # print("indices_in_voxel = ", indices_in_voxel)
+
+    # Use the previous number of points in each voxel and the flat voxel indices to find the appropriate offsets
+    # to write the point features to the output tensor
+    output_offsets = flat_voxel_indices * point_features_voxel_stride + indices_in_voxel * point_features_point_stride
+    points_per_voxel_mask = indices_in_voxel < max_num_points_per_voxel
+    output_mask = valid_coordinate_mask & points_per_voxel_mask
+
+    # print("output_offsets = ", output_offsets)
+    # print("output_mask = ", output_mask)
+    # print("extra_output_offsets = ", output_offsets[:, None] + extra_features_offsets[None, :])
+
+    # Store x, y, z features for the current block
+    tl.store(point_features_ptr + output_offsets + 0, block_x, mask=output_mask)
+    tl.store(point_features_ptr + output_offsets + 1, block_y, mask=output_mask)
+    tl.store(point_features_ptr + output_offsets + 2, block_z, mask=output_mask)
+    # Store extra features for the current block
+    tl.store(
+        point_features_ptr + output_offsets[:, None] + extra_features_offsets[None, :],
+        block_extras,
+        mask=output_mask[:, None] & extra_features_mask[None, :],
+    )
 
 
 def voxelization_launcher(
@@ -100,6 +149,8 @@ def voxelization_launcher(
     max_voxels: int = 20000,
 ) -> None:
     num_points, num_features = points.shape
+
+    # print(f"{num_points_per_voxel = }")
 
     assert num_features > 3
     num_features -= 3
@@ -119,8 +170,16 @@ def voxelization_launcher(
     grid_size_y = int((max_y - min_y) / voxel_size_y)
     grid_size_z = int((max_z - min_z) / voxel_size_z)
 
-    def grid(meta):
+    # print(f"{grid_size_x = }")
+    # print(f"{grid_size_y = }")
+    # print(f"{grid_size_z = }")
+
+    def grid(meta: dict[str, Any]) -> tuple[int, ...]:
         return (triton.cdiv(num_points, meta["cxpr_block_size"]),)
+
+    # print(f"{point_features.shape = }")
+    # print(f"{point_features.stride(0) = }")
+    # print(f"{point_features.stride(1) = }")
 
     _generate_dense_voxels_kernel[grid](
         # Outputs
@@ -145,8 +204,15 @@ def voxelization_launcher(
         max_num_points_per_voxel=max_points_per_voxel,
         max_num_voxels=max_voxels,
         num_extra_features=num_features,
-        point_features_stride=point_features.stride(0),
+        # Strides
+        point_features_voxel_stride=point_features.stride(0),
+        point_features_point_stride=point_features.stride(1),
         points_stride=points.stride(0),
+        # Constexprs
         cxpr_block_size=32,
         cxpr_num_extra_features_padded=triton.next_power_of_2(num_features),
     )
+
+    # torch.cuda.synchronize()
+
+    # print(f"{num_points_per_voxel = }")

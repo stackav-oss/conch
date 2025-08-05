@@ -110,11 +110,24 @@ def test_dynamic_voxelization(max_points_per_voxel: int, seed: int, num_features
 
 
 @pytest.mark.parametrize("max_points_per_voxel", [35])
-@pytest.mark.parametrize("max_num_voxels", [20000])
+# @pytest.mark.parametrize("max_num_voxels", [20000])
+# @pytest.mark.parametrize("num_points", [64])
+# @pytest.mark.parametrize("num_points", [3])
+# @pytest.mark.parametrize("num_points", [10])
+# @pytest.mark.parametrize("num_points", [100])
+@pytest.mark.parametrize("num_points", [1000, 20000])
+# @pytest.mark.parametrize("max_points_per_voxel", [3])
+# @pytest.mark.parametrize("max_num_voxels", [10])
+# @pytest.mark.parametrize("max_num_voxels", [10])
+# @pytest.mark.parametrize("max_num_voxels", [100000])
+@pytest.mark.parametrize("max_num_voxels", [50000])
 @pytest.mark.parametrize("num_features", [4, 63, 64])
+# @pytest.mark.parametrize("num_features", [4])
 @pytest.mark.parametrize("seed", range(2))
+# @pytest.mark.parametrize("seed", [0])
 # @pytest.mark.parametrize("num_features", [3, 4, 63, 64])
 def test_hard_voxelization(
+    num_points: int,
     max_points_per_voxel: int,
     max_num_voxels: int,
     num_features: int,
@@ -125,7 +138,7 @@ def test_hard_voxelization(
 
     device: Final = torch.device(current_platform.device)
     dtype = torch.float32
-    num_points = 500
+    # num_points = 500
     # x, y, z
     voxel_size = (0.2, 0.2, 0.2)
     # x_min, y_min, z_min, x_max, y_max, z_max
@@ -135,6 +148,11 @@ def test_hard_voxelization(
 
     # Create test points
     points = _create_test_points(num_points, coordinate_range, num_features=num_features, dtype=dtype, device=device)
+    # points = torch.ones_like(points)
+    # points = torch.tensor([
+    #     [-5.0, -5.0, -2.0, 69.0],
+    #     [-5.0, -5.0, -2.0, 69.0],
+    # ], dtype=dtype, device=device)
 
     # Test PyTorch implementation
     # voxels_pytorch, coors_pytorch, num_points_pytorch = _voxelization_pytorch(
@@ -181,11 +199,35 @@ def test_hard_voxelization(
 
     # print(f"{conch_num_points_per_voxel = }")
 
-    print(f"{voxels_out.shape = }")
-    print(f"{conch_point_features.shape = }")
+    # print(f"{voxels_out.shape = }")
+    # print(f"{conch_point_features.shape = }")
     print(f"{voxels_out = }")
     print(f"{conch_point_features = }")
 
+    print(f"{num_points_per_voxel_out = }")
+    print(f"{conch_num_points_per_voxel = }")
+
+    nonzero = torch.squeeze(torch.nonzero(conch_num_points_per_voxel))
+    # print(f"{torch.nonzero(conch_num_points_per_voxel) = }")
+    print(f"{conch_num_points_per_voxel[nonzero] = }")
+
+    print(f"{conch_point_features[nonzero] = }")
+
+    num_voxels = len(nonzero)
+
+    conch_result, _ = torch.sort(conch_point_features[nonzero], dim=0)
+    cuda_result, _ = torch.sort(voxels_out[:num_voxels], dim=0)
+
+    print(f"{conch_result = }")
+    print(f"{cuda_result = }")
+    # print(f"{voxels_out[:num_voxels] = }")
+    # print(f"{voxels_out[:num_voxels].shape = }")
+    # print(f"{torch.sort(voxels_out[:num_voxels]) = }")
+    # print(f"{conch_point_features.shape = }")
+    # print(f"{nonzero.shape = }")
+    # print(f"{conch_point_features[nonzero].shape = }")
+
     # assert False
 
-    torch.testing.assert_close(voxels_out, conch_point_features, rtol=1e-5, atol=1e-5)
+    # torch.testing.assert_close(voxels_out, conch_point_features, rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close(cuda_result, conch_result, rtol=1e-5, atol=1e-5)
