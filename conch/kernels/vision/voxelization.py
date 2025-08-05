@@ -11,6 +11,58 @@ import triton.language as tl
 
 
 @triton.jit
+def _point_to_voxel_idx_kernel(
+    voxel_coordinates_ptr: tl.tensor,
+    num_filled_voxels_ptr: tl.tensor,
+    num_points: int,
+    cxpr_block_size: tl.constexpr,
+) -> None:
+    point_index = tl.program_id(0)
+
+    this_x = tl.load(voxel_coordinates_ptr + point_index * voxel_coordinates_stride + 0)
+    this_y = tl.load(voxel_coordinates_ptr + point_index * voxel_coordinates_stride + 1)
+    this_z = tl.load(voxel_coordinates_ptr + point_index * voxel_coordinates_stride + 2)
+
+    if this_x < 0 or this_y < 0 or this_z < 0:
+        return
+
+    num_matches = 0
+
+    voxel_idx = tl.atomic_cas(map_ptr + point_index, -1, point_index)
+
+    for block_index in range(point_index, tl.cdiv(num_points, cxpr_block_size)):
+        block_offsets = block_index * cxpr_block_size + tl.arange(0, cxpr_block_size)
+        block_mask = block_offsets < num_points
+
+        block_x = tl.load(
+            voxel_coordinates_ptr + block_offsets * voxel_coordinates_stride + 0,
+            mask=block_mask,
+            other=-1,
+        )
+        block_y = tl.load(
+            voxel_coordinates_ptr + block_offsets * voxel_coordinates_stride + 1,
+            mask=block_mask,
+            other=-1,
+        )
+        block_z = tl.load(
+            voxel_coordinates_ptr + block_offsets * voxel_coordinates_stride + 2,
+            mask=block_mask,
+            other=-1,
+        )
+
+        x_match = block_x == this_x
+        y_match = block_y == this_y
+        z_match = block_z == this_z
+
+        all_matched = (x_match & y_match) & z_match
+        num_matches += tl.sum(all_matched.to(tl.int32))
+
+        tl.atomic_cas(map_ptr + block_offsets, -1, voxel_idx, mask=all_matched)
+
+
+
+
+@triton.jit
 def _generate_dense_voxels_kernel(
     # Output tensors
     dense_num_points_per_voxel_ptr: tl.tensor,

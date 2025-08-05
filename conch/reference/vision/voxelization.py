@@ -73,6 +73,27 @@ def _dynamic_voxelize(
     return coordinates
 
 
+def idk():
+    point_voxel_indices = _dynamic_voxelize()
+
+    # mask for points within bound, can skip select step when most points are valid
+    mask = point_voxel_indices < param.max_num_voxels
+    # value
+    raw_indices_selected = torch.masked_select(point_raw_indices, mask)
+    # key
+    voxel_indices_selected = torch.masked_select(point_voxel_indices, mask)
+    print(f"num valid points {raw_indices_selected.size(dim=0)} total {num_points}")
+
+    # group points into voxels with sort_by_key(), use stable to keep original points ordering
+    sorted_voxel_indices, permute_indices = torch.sort(voxel_indices_selected, stable=True)
+    sorted_raw_indices = raw_indices_selected[permute_indices]
+    # run length encode
+    voxel_indices, num_points_per_voxel = torch.unique(sorted_voxel_indices, return_counts=True)
+
+    print(f"num filled voxels {voxel_indices.size(dim=0)}")
+    return num_points_per_voxel, sorted_raw_indices, voxel_indices
+
+
 def _is_valid_coordinate(coordinate: torch.Tensor) -> bool:
     """Check if the coordinate is valid (not -1).
 
