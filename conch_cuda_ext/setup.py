@@ -66,6 +66,14 @@ setup(
                 "bev_pool_kernel.cu",
             ],
         ),
+        make_cuda_ext(
+            name="voxelization",
+            module="ops.vision.voxelization",
+            sources=[
+                "voxelization.cc",
+                "voxelization_kernel.cu", # do not use the same for cc/cu files
+            ],
+        ),
     ],
     cmdclass={"build_ext": BuildExtension},
     zip_safe=False,
