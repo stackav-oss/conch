@@ -7,8 +7,9 @@ import torch
 import triton
 import triton.language as tl
 
+
 @triton.jit
-def filter_and_label_points_kernel(  # noqa: PLR0913, D417
+def filter_and_label_points_triton_kernel(  # noqa: PLR0913, D417
     # input
     points_ptr: torch.Tensor,
     num_points: int,
@@ -61,7 +62,7 @@ def filter_and_label_points_kernel(  # noqa: PLR0913, D417
 
 
 @triton.jit
-def generate_dense_voxels_kernel(  # noqa: PLR0913, D417
+def generate_dense_voxels_triton_kernel(  # noqa: PLR0913, D417
     # input
     points_ptr: torch.Tensor,
     num_points: int,
@@ -126,7 +127,7 @@ def generate_dense_voxels_kernel(  # noqa: PLR0913, D417
 
 
 @triton.jit
-def generate_voxels_kernel(  # noqa: PLR0913, D417
+def generate_voxels_triton_kernel(  # noqa: PLR0913, D417
     # input
     dense_point_features_ptr: torch.Tensor,
     dense_num_points_per_voxel_ptr: torch.Tensor,
@@ -201,7 +202,7 @@ def generate_voxels_kernel(  # noqa: PLR0913, D417
 
 
 @triton.jit
-def collect_point_features_kernel(  # noqa: PLR0913, D417
+def collect_point_features_triton_kernel(  # noqa: PLR0913, D417
     # input
     points_ptr: torch.Tensor,
     num_features_per_point: int,

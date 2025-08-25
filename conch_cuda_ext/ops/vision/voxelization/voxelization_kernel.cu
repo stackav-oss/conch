@@ -4,7 +4,7 @@
 // derived from https://github.com/NVIDIA-AI-IOT/CUDA-PointPillars/blob/main/src/pointpillar/lidar-voxelization.cu
 
 __global__ void generate_dense_voxels_kernel(
-    const float4 *points,
+    const float4* points,
     int num_points,
     float min_x_range,
     float min_y_range,
@@ -19,8 +19,8 @@ __global__ void generate_dense_voxels_kernel(
     int grid_y_size,
     int grid_z_size,
     int max_num_points_per_voxel,
-    int *num_points_per_dense_voxel,
-    float4 *dense_voxels)
+    int* num_points_per_dense_voxel,
+    float4* dense_voxels)
 {
   const int point_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if(point_idx >= num_points)
@@ -28,16 +28,17 @@ __global__ void generate_dense_voxels_kernel(
 
   const auto point = points[point_idx];
 
-  if(point.x<min_x_range||point.x>=max_x_range
-    || point.y<min_y_range||point.y>=max_y_range
-    || point.z<min_z_range||point.z>=max_z_range)
+  const auto voxel_x = static_cast<int32_t>(floorf((point.x - min_x_range)/voxel_x_size));
+  if (voxel_x < 0 || voxel_x >= grid_x_size)
+    return;
+  const auto voxel_y = static_cast<int32_t>(floorf((point.y - min_y_range)/voxel_y_size));
+  if (voxel_y < 0 || voxel_y >= grid_y_size)
+    return;
+  const auto voxel_z = static_cast<int32_t>(floorf((point.z - min_z_range)/voxel_z_size));
+  if (voxel_z < 0 || voxel_z >= grid_z_size)
     return;
 
-  const int voxel_x = floorf((point.x - min_x_range)/voxel_x_size);
-  const int voxel_y = floorf((point.y - min_y_range)/voxel_y_size);
-  const int voxel_z = floorf((point.z - min_z_range)/voxel_z_size);
   const auto voxel_idx = (voxel_z * grid_y_size + voxel_y) * grid_x_size + voxel_x;
-
   const auto point_idx_in_voxel = atomicAdd(num_points_per_dense_voxel + voxel_idx, 1);
 
   if(point_idx_in_voxel < max_num_points_per_voxel)
@@ -45,7 +46,7 @@ __global__ void generate_dense_voxels_kernel(
 }
 
 void generate_dense_voxels(
-    const float *points,
+    const float* points,
     int num_points,
     float min_x_range,
     float min_y_range,
@@ -60,8 +61,8 @@ void generate_dense_voxels(
     int grid_y_size,
     int grid_z_size,
     int max_num_points_per_voxel,
-    int *num_points_per_dense_voxel,
-    float *dense_voxels)
+    int* num_points_per_dense_voxel,
+    float* dense_voxels)
 {
   constexpr int block_dim = 256;
   const int grid_dim = (num_points+block_dim-1)/block_dim;
@@ -103,13 +104,10 @@ __global__ void generate_base_features_kernel(
   if(dense_voxel_idx >= max_num_voxels)
     return;
 
-//  const auto dense_voxel_idx = voxel_y * grid_x_size + voxel_x;
-
-  auto num_points_in_voxel = num_points_per_dense_voxel[dense_voxel_idx];
-  if(num_points_in_voxel==0)
+  const auto actual_num_points_in_voxel = num_points_per_dense_voxel[dense_voxel_idx];
+  if(actual_num_points_in_voxel==0)
     return;
-  //num_points_in_voxel = num_points_in_voxel<max_num_points_per_voxel?num_points_in_voxel:max_num_points_per_voxel;
-  num_points_in_voxel = min(num_points_in_voxel, max_num_points_per_voxel);
+  const auto num_points_in_voxel = min(actual_num_points_in_voxel, max_num_points_per_voxel);
 
   const auto voxel_idx = atomicAdd(num_filled_voxels, 1);
   num_points_per_voxel[voxel_idx] = num_points_in_voxel;

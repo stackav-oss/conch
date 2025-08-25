@@ -1,3 +1,6 @@
+# Copyright 2025 Stack AV Co.
+# SPDX-License-Identifier: Apache-2.0
+
 # pyright: reportPrivateUsage=false
 """Test voxelization."""
 
@@ -5,7 +8,12 @@ import pytest
 import torch
 
 from conch.ops.vision.voxelization import (
-        VoxelizationParameter, generate_voxels, voxelization_stable, collect_point_features,)
+    VoxelizationParameter,
+    collect_point_features,
+    generate_voxels,
+    voxelization_stable,
+)
+
 
 def voxel_coords_to_flat_indices(coords: torch.Tensor, grid_dim: tuple[int, int, int]) -> torch.Tensor:
     """Convert 3d voxel coordinates to flat indices."""

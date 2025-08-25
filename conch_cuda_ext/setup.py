@@ -71,7 +71,7 @@ setup(
             module="ops.vision.voxelization",
             sources=[
                 "voxelization.cc",
-                "voxelization_kernel.cu", # do not use the same for cc/cu files
+                "voxelization_kernel.cu",  # do not use the same for cc/cu files
             ],
         ),
     ],

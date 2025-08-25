@@ -5,15 +5,16 @@
 
 from dataclasses import dataclass
 
+import torch
+import triton
+
 from conch.kernels.vision.voxelization import (
-generate_dense_voxels_kernel,
-generate_voxels_kernel,
-filter_and_label_points_kernel,
-collect_point_features_kernel,
+    collect_point_features_triton_kernel,
+    filter_and_label_points_triton_kernel,
+    generate_dense_voxels_triton_kernel,
+    generate_voxels_triton_kernel,
 )
 
-import triton
-import torch
 
 @dataclass
 class VoxelizationParameter:
@@ -47,6 +48,7 @@ class VoxelizationParameter:
         grid_y = round((self.max_range[1] - self.min_range[1]) / self.voxel_dim[1])
         grid_z = round((self.max_range[2] - self.min_range[2]) / self.voxel_dim[2])
         return (grid_x, grid_y, grid_z)
+
 
 def generate_voxels(
     points: torch.Tensor, param: VoxelizationParameter
@@ -88,7 +90,7 @@ def generate_voxels(
 
     # first generate dense voxels
     grid = (triton.cdiv(num_points, block_size),)
-    generate_dense_voxels_kernel[grid](
+    generate_dense_voxels_triton_kernel[grid](
         points,
         num_points,
         param.min_range[0],
@@ -112,7 +114,7 @@ def generate_voxels(
 
     # compress into contiguous/sparse filled voxels
     grid = (triton.cdiv(param.max_num_voxels, block_size),)
-    generate_voxels_kernel[grid](
+    generate_voxels_triton_kernel[grid](
         dense_point_features,
         dense_num_points_per_voxel,
         param.grid_dim[0],
@@ -134,6 +136,7 @@ def generate_voxels(
         point_features[:total_filled_voxels, :, :],
         voxel_indices[:total_filled_voxels, :],
     )
+
 
 def filter_and_label_points_torch(  # noqa: PLR0913, D417
     points: torch.Tensor,
@@ -176,7 +179,6 @@ def filter_and_label_points_torch(  # noqa: PLR0913, D417
     point_voxel_indices[:] = torch.where(valid_point, flat_voxel_idx, max_num_voxels)
 
 
-
 def voxelization_stable(
     points: torch.Tensor, param: VoxelizationParameter, use_triton: bool = True
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -208,7 +210,7 @@ def voxelization_stable(
         block_size = 256
         num_threads_per_warp = 32
         grid = (triton.cdiv(num_points, block_size),)
-        filter_and_label_points_kernel[grid](
+        filter_and_label_points_triton_kernel[grid](
             points,
             num_points,
             num_features_per_point,
@@ -333,7 +335,7 @@ def collect_point_features(
         block_size = 256
         num_threads_per_warp = 32
         grid = (triton.cdiv(num_filled_voxels, block_size),)
-        collect_point_features_kernel[grid](
+        collect_point_features_triton_kernel[grid](
             points,
             num_features_per_point,
             segment_offsets,

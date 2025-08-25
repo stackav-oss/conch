@@ -38,7 +38,7 @@ void generate_base_features(
     int* voxel_indices,
     int* num_points_per_voxel);
 
-at::Tensor generate_voxels(
+std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> generate_voxels(
   const at::Tensor points,
   float min_x_range,
   float min_y_range,
@@ -52,10 +52,10 @@ at::Tensor generate_voxels(
   int grid_x_size,
   int grid_y_size,
   int grid_z_size,
-  int max_num_points_per_voxel) {
+  int max_num_points_per_voxel,
+  int max_num_voxels) {
   const auto num_points = static_cast<int>(points.size(0));
   const auto num_features_per_point = points.size(1);
-  const auto max_num_voxels = grid_x_size * grid_y_size;
   assert(num_features_per_point == 4);
 
   const at::cuda::OptionalCUDAGuard device_guard(device_of(points));
@@ -63,9 +63,14 @@ at::Tensor generate_voxels(
   const auto float_tensor_options = torch::TensorOptions().dtype(points.dtype()).device(points.device());
   const auto int_tensor_options = torch::TensorOptions().dtype(torch::kInt32).device(points.device());
 
-  // dense output, must init to 0
-  at::Tensor dense_voxels = torch::zeros({max_num_voxels, max_num_points_per_voxel, num_features_per_point}, float_tensor_options);
-  at::Tensor num_points_per_dense_voxel = torch::zeros({1}, int_tensor_options);
+  // atomic counters init to 0
+  at::Tensor num_filled_voxels = torch::zeros({1}, int_tensor_options);
+  at::Tensor num_points_per_dense_voxel = torch::zeros({max_num_voxels}, int_tensor_options);
+
+  at::Tensor dense_voxels = torch::empty({max_num_voxels, max_num_points_per_voxel, num_features_per_point}, float_tensor_options);
+  at::Tensor voxel_features = torch::empty({max_num_voxels, max_num_points_per_voxel, num_features_per_point}, float_tensor_options);
+  at::Tensor voxel_indices = torch::empty({max_num_voxels, 4}, int_tensor_options);
+  at::Tensor num_points_per_voxel = torch::empty({max_num_voxels}, int_tensor_options);
 
   generate_dense_voxels(
     points.data_ptr<float>(),
@@ -86,13 +91,6 @@ at::Tensor generate_voxels(
     num_points_per_dense_voxel.data_ptr<int>(),
     dense_voxels.data_ptr<float>());
 
-  // atomic counter, must init to 0
-  at::Tensor num_filled_voxels = torch::zeros({1}, int_tensor_options);
-
-  at::Tensor voxel_features = torch::empty({max_num_voxels, max_num_points_per_voxel, num_features_per_point}, float_tensor_options);
-  at::Tensor voxel_indices = torch::empty({max_num_voxels, 4}, int_tensor_options);
-  at::Tensor num_points_per_voxel = torch::empty({max_num_voxels}, int_tensor_options);
-
   generate_base_features(
         num_points_per_dense_voxel.data_ptr<int>(),
         dense_voxels.data_ptr<float>(),
@@ -108,8 +106,7 @@ at::Tensor generate_voxels(
 
   // synchronize
   const auto num_filled_voxels_cpu = num_filled_voxels.cpu();
-  // slice output based on num_filled_voxels
-  return num_filled_voxels_cpu;
+  return {num_filled_voxels_cpu, voxel_features, voxel_indices, num_points_per_voxel};
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
