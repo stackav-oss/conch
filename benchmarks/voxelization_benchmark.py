@@ -8,13 +8,9 @@ from typing import Final
 import click
 import torch
 
-from conch.ops.vision.voxelization import (
-    VoxelizationParameter,
-    collect_point_features,
-    generate_voxels,
-    voxelization_stable,
-)
+from conch.ops.vision.voxelization import VoxelizationParameter, generate_voxels
 from conch.platforms import current_platform
+from conch.reference.vision.voxelization import collect_point_features, voxelization_stable
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 
@@ -83,6 +79,11 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Flag for printing results in CSV format",
 )
 @click.option(
+    "--compile-ref",
+    is_flag=True,
+    help="Flag to torch.compile() the reference impl",
+)
+@click.option(
     "--cuda-ref",
     is_flag=True,
     help="Flag to enable CUDA reference implementation",
@@ -97,6 +98,7 @@ def main(
     warmup_time_ms: int,
     gpu: str,
     csv: bool,
+    compile_ref: bool,
     cuda_ref: bool,
 ) -> None:
     """Benchmark voxelization.
@@ -106,11 +108,12 @@ def main(
         max_num_points_per_voxel: Max number of points per voxel for output feature tensor.
         voxel_dim: Voxel dimensions for x,y,z
         grid_range: Grid boundary for x,y,z
-        torch_ref: Flag to enable torch reference implementation.
+        torch_ref: Flag to use pure torch reference implementation instead of hybrid triton/torch.
         iteration_time_ms: Time in milliseconds to run benchmark.
         warmup_time_ms: Time in milliseconds to warmup before recording times.
         gpu: Which gpu to run on.
         csv: Flag to indicate whether or not to print results in CSV format.
+        compile_ref: Flag to torch.compile() the pure torch reference implementation.
         cuda_ref: Flag to enable CUDA reference implementation.
     """
 
@@ -137,7 +140,7 @@ def main(
     def generate_voxels_torch(
         points: torch.Tensor, param: VoxelizationParameter
     ) -> tuple[torch.tensor, torch.tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """triton/torch hybrid, 2-step, stable voxelization first then generate a feature tensor."""
+        """reference triton/torch hybrid, 2-step, stable voxelization first then generate a feature tensor."""
         use_triton = not torch_ref
         actual_num_points_per_voxel, point_raw_indices, flat_voxel_indices = voxelization_stable(
             points, param, use_triton=use_triton
@@ -223,11 +226,29 @@ def main(
             warmup_time_ms=warmup_time_ms,
         )
 
+    reference_compiled_result = None
+    reference_compiled_fn = None
+
+    if compile_ref and torch_ref:
+        # Compile the reference implementation if requested
+        reference_compiled_fn = torch.compile(generate_voxels_torch)
+
+    if reference_compiled_fn:
+        baseline_result = benchmark_it(
+            lambda: reference_compiled_fn(*args),
+            tag="Baseline (Torch compiled)",
+            metadata=metadata,
+            iteration_time_ms=iteration_time_ms,
+            warmup_time_ms=warmup_time_ms,
+        )
+
     conch_result.print_parameters(csv=csv)
     conch_result.print_results(csv=csv)
     baseline_result.print_results(csv=csv)
     if reference_cuda_result:
         reference_cuda_result.print_results(csv=csv)
+    if reference_compiled_result:
+        reference_compiled_result.print_results(csv=csv)
 
 
 if __name__ == "__main__":

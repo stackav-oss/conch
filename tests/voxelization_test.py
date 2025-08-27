@@ -7,12 +7,8 @@
 import pytest
 import torch
 
-from conch.ops.vision.voxelization import (
-    VoxelizationParameter,
-    collect_point_features,
-    generate_voxels,
-    voxelization_stable,
-)
+from conch.ops.vision.voxelization import VoxelizationParameter, generate_voxels
+from conch.reference.vision.voxelization import collect_point_features, voxelization_stable
 
 
 def voxel_coords_to_flat_indices(coords: torch.Tensor, grid_dim: tuple[int, int, int]) -> torch.Tensor:
@@ -25,7 +21,7 @@ def voxel_coords_to_flat_indices(coords: torch.Tensor, grid_dim: tuple[int, int,
     return (voxel_z * grid_dim_y + voxel_y) * grid_dim_x + voxel_x
 
 
-# wether or not use Triton for the reference Torch impl
+# whether or not use Triton for the reference Torch implementation
 @pytest.mark.parametrize("use_triton", [True, False])
 def test_voxelization(use_triton: bool) -> None:
     """Test triton/pytorch voxelization."""
@@ -70,7 +66,7 @@ def test_voxelization(use_triton: bool) -> None:
     assert point_features_stable.shape == (num_filled_voxels, param.max_num_points_per_voxel, num_features_per_point)
     assert voxel_indices.shape == (num_filled_voxels, 4)
 
-    # for nondeterministic output, sort voxels by row major flat indices
+    # for non-deterministic output, sort voxels by row major flat indices
     flat_voxel_indices = voxel_coords_to_flat_indices(voxel_indices, param.grid_dim)
     flat_voxel_indices_sorted, permute_indices = torch.sort(flat_voxel_indices, stable=True)
 
