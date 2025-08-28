@@ -68,9 +68,9 @@ def generate_voxels(
     # same as original nvidia cuda impl
     num_elements_per_voxel_index = 4
 
-    # dense (must set to 0s)
+    # dense
     dense_num_points_per_voxel = torch.zeros((param.max_num_voxels), dtype=torch.int32, device=device)
-    dense_point_features = torch.zeros(
+    dense_point_features = torch.empty(
         (param.max_num_voxels, param.max_num_points_per_voxel, num_features_per_point), dtype=torch.float, device=device
     )
 

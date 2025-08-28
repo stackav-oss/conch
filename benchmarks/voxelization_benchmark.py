@@ -27,7 +27,7 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Number of input points",
 )
 @click.option(
-    "--max_num_points_per_voxel",
+    "--max-num-points-per-voxel",
     required=False,
     type=int,
     default=4,
@@ -41,7 +41,7 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     help="Voxel dimension same for x,y,z",
 )
 @click.option(
-    "--grid_range",
+    "--grid-range",
     required=False,
     type=float,
     default=50,
@@ -56,14 +56,14 @@ from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
     "--iteration-time-ms",
     required=False,
     type=int,
-    default=10000,
+    default=100,
     help="Time in milliseconds to run benchmark",
 )
 @click.option(
     "--warmup-time-ms",
     required=False,
     type=int,
-    default=100,
+    default=10,
     help="Time in milliseconds to warmup before recording times",
 )
 @click.option(

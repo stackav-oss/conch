@@ -136,10 +136,11 @@ def generate_voxels_triton_kernel(  # noqa: PLR0913, D417
     # store all feature points, including padded 0s
     for point_idx in range(0, max_num_points_per_voxel):
         input_idx = flat_voxel_idx * max_num_points_per_voxel + point_idx
-        point_x = tl.load(dense_point_features_ptr + input_idx * 4 + 0, mask=valid_voxel)
-        point_y = tl.load(dense_point_features_ptr + input_idx * 4 + 1, mask=valid_voxel)
-        point_z = tl.load(dense_point_features_ptr + input_idx * 4 + 2, mask=valid_voxel)
-        point_w = tl.load(dense_point_features_ptr + input_idx * 4 + 3, mask=valid_voxel)
+        valid_point = (point_idx < num_points_in_voxel) and valid_voxel
+        point_x = tl.load(dense_point_features_ptr + input_idx * 4 + 0, mask=valid_point, other=0)
+        point_y = tl.load(dense_point_features_ptr + input_idx * 4 + 1, mask=valid_point, other=0)
+        point_z = tl.load(dense_point_features_ptr + input_idx * 4 + 2, mask=valid_point, other=0)
+        point_w = tl.load(dense_point_features_ptr + input_idx * 4 + 3, mask=valid_point, other=0)
 
         output_idx = voxel_idx * max_num_points_per_voxel + point_idx
         tl.store(point_features_ptr + output_idx * 4 + 0, point_x, mask=valid_voxel)
