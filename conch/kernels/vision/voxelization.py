@@ -8,8 +8,8 @@ import triton
 import triton.language as tl
 
 
-@triton.jit
-def generate_dense_voxels_triton_kernel(  # noqa: PLR0913, D417
+@triton.jit  # type: ignore[misc]
+def generate_dense_voxels_triton_kernel(
     # input
     points_ptr: torch.Tensor,
     num_points: int,
@@ -73,8 +73,8 @@ def generate_dense_voxels_triton_kernel(  # noqa: PLR0913, D417
     tl.store(dense_point_features_ptr + output_idx * 4 + 3, point_w, mask=output_mask)
 
 
-@triton.jit
-def generate_voxels_triton_kernel(  # noqa: PLR0913, D417
+@triton.jit  # type: ignore[misc]
+def generate_voxels_triton_kernel(
     # input
     dense_point_features_ptr: torch.Tensor,
     dense_num_points_per_voxel_ptr: torch.Tensor,

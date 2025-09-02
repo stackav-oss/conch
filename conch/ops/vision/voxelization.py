@@ -61,10 +61,9 @@ def generate_voxels(
             empty points are filled with 0.
             voxel_indices, shape [num_filled_voxels, 4], only first 3 fields are used for x,y,z indices.
     """
-    assert points.is_cuda
     device = points.device
     num_points, num_features_per_point = points.shape
-    assert num_features_per_point == 4  # noqa: PLR2004
+    assert num_features_per_point == 4
     # same as original nvidia cuda impl
     num_elements_per_voxel_index = 4
 
@@ -105,7 +104,7 @@ def generate_voxels(
         dense_num_points_per_voxel,
         dense_point_features,
         cxpr_block_size=block_size,
-        num_warps=block_size // num_threads_per_warp,  # pyright: ignore[reportCallIssue]
+        num_warps=block_size // num_threads_per_warp,
     )
 
     # compress into contiguous/sparse filled voxels
@@ -122,7 +121,7 @@ def generate_voxels(
         point_features,
         voxel_indices,
         cxpr_block_size=block_size,
-        num_warps=block_size // num_threads_per_warp,  # pyright: ignore[reportCallIssue]
+        num_warps=block_size // num_threads_per_warp,
     )
 
     total_filled_voxels = num_filled_voxels.cpu()[0]
