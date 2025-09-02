@@ -1,14 +1,17 @@
 # Copyright 2025 Stack AV Co.
 # SPDX-License-Identifier: Apache-2.0
 
-# pyright: reportPrivateUsage=false
 """Test voxelization."""
+
+from typing import Final
 
 import pytest
 import torch
 
 from conch.ops.vision.voxelization import VoxelizationParameter, generate_voxels
+from conch.platforms import current_platform
 from conch.reference.vision.voxelization import collect_point_features, voxelization_stable
+from conch.third_party.vllm.utils import seed_everything
 
 
 def voxel_coords_to_flat_indices(coords: torch.Tensor, grid_dim: tuple[int, int, int]) -> torch.Tensor:
@@ -23,18 +26,28 @@ def voxel_coords_to_flat_indices(coords: torch.Tensor, grid_dim: tuple[int, int,
 
 # whether or not use Triton for the reference Torch implementation
 @pytest.mark.parametrize("use_triton", [True, False])
-def test_voxelization(use_triton: bool) -> None:
+@pytest.mark.parametrize("num_points", [1000, 500000])
+@pytest.mark.parametrize("range_xyz", [50.0, 80.0])
+@pytest.mark.parametrize("voxel_dim", [2.5, 5.0])
+@pytest.mark.parametrize("max_num_points_per_voxel", [4, 10])
+def test_voxelization(
+    use_triton: bool, num_points: int, range_xyz: float, voxel_dim: float, max_num_points_per_voxel: int
+) -> None:
     """Test triton/pytorch voxelization."""
-    num_points = 500000
+    seed: Final = 0
+    seed_everything(seed)
+
+    device: Final = torch.device(current_platform.device)
+    torch.set_default_device(device)
+
     num_features_per_point = 4
-    range_xyz = 50.0
-    points = torch.randn((num_points, num_features_per_point), device="cuda") * range_xyz
+    points = torch.randn((num_points, num_features_per_point)) * range_xyz
 
     param = VoxelizationParameter(
         min_range=(-range_xyz, -range_xyz, -range_xyz),
         max_range=(range_xyz, range_xyz, range_xyz),
-        voxel_dim=(2.5, 2.5, 2.5),
-        max_num_points_per_voxel=4,
+        voxel_dim=(voxel_dim, voxel_dim, voxel_dim),
+        max_num_points_per_voxel=max_num_points_per_voxel,
     )
 
     print(f"Grid dimensions: {param.grid_dim}")

@@ -9,8 +9,9 @@ import triton.language as tl
 
 from conch.ops.vision.voxelization import VoxelizationParameter
 
-@triton.jit
-def filter_and_label_points_triton_kernel(  # noqa: PLR0913, D417
+
+@triton.jit  # type: ignore[misc]
+def filter_and_label_points_triton_kernel(
     # input
     points_ptr: torch.Tensor,
     num_points: int,
@@ -62,7 +63,7 @@ def filter_and_label_points_triton_kernel(  # noqa: PLR0913, D417
     tl.store(point_voxel_indices_ptr + point_idx, flat_voxel_idx, mask=point_mask)
 
 
-def filter_and_label_points_torch(  # noqa: PLR0913, D417
+def filter_and_label_points_torch(
     points: torch.Tensor,
     min_range: tuple[float, float, float],
     voxel_dim: tuple[float, float, float],
@@ -122,7 +123,6 @@ def voxelization_stable(
             contiguous with segment size specified in num_points_per_voxel.
             flat_voxel_indices, shape [num_filled_voxels].
     """
-    assert points.is_cuda
     device = points.device
     num_points, num_features_per_point = points.shape
 
@@ -154,7 +154,7 @@ def voxelization_stable(
             param.max_num_voxels,
             point_voxel_indices,
             cxpr_block_size=block_size,
-            num_warps=block_size // num_threads_per_warp,  # pyright: ignore[reportCallIssue]
+            num_warps=block_size // num_threads_per_warp,
         )
     else:
         filter_and_label_points_torch(
@@ -177,8 +177,8 @@ def voxelization_stable(
     return num_points_per_voxel.to(torch.int32), sorted_raw_indices, voxel_indices
 
 
-@triton.jit
-def collect_point_features_triton_kernel(  # noqa: PLR0913, D417
+@triton.jit  # type: ignore[misc]
+def collect_point_features_triton_kernel(
     # input
     points_ptr: torch.Tensor,
     num_features_per_point: int,
@@ -227,7 +227,7 @@ def collect_point_features_triton_kernel(  # noqa: PLR0913, D417
             tl.store(point_features_ptr + output_idx * num_features_per_point + feature_idx, value, mask=voxel_mask)
 
 
-def collect_point_features_torch(  # noqa: PLR0913, D417
+def collect_point_features_torch(
     points: torch.Tensor,
     num_points_per_voxel: torch.Tensor,
     segment_offsets: torch.Tensor,
@@ -287,7 +287,6 @@ def collect_point_features(
         filled with 0.
         capped_num_points_per_voxel: shape [num_filled_voxels], number of points in each voxel after max capping.
     """
-    assert points.is_cuda
     device = points.device
     num_points, num_features_per_point = points.shape
 
@@ -319,7 +318,7 @@ def collect_point_features(
             point_features,
             capped_num_points_per_voxel,
             cxpr_block_size=block_size,
-            num_warps=block_size // num_threads_per_warp,  # pyright: ignore[reportCallIssue]
+            num_warps=block_size // num_threads_per_warp,
         )
     else:
         collect_point_features_torch(

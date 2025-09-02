@@ -11,6 +11,7 @@ import torch
 from conch.ops.vision.voxelization import VoxelizationParameter, generate_voxels
 from conch.platforms import current_platform
 from conch.reference.vision.voxelization import collect_point_features, voxelization_stable
+from conch.third_party.vllm.utils import seed_everything
 from conch.utils.benchmark import BenchmarkMetadata, benchmark_it
 
 
@@ -116,6 +117,8 @@ def main(
         compile_ref: Flag to torch.compile() the pure torch reference implementation.
         cuda_ref: Flag to enable CUDA reference implementation.
     """
+    seed: Final = 0
+    seed_everything(seed)
 
     device: Final = torch.device(gpu)
     torch.set_default_device(device)
@@ -139,7 +142,7 @@ def main(
 
     def generate_voxels_torch(
         points: torch.Tensor, param: VoxelizationParameter
-    ) -> tuple[torch.tensor, torch.tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """reference triton/torch hybrid, 2-step, stable voxelization first then generate a feature tensor."""
         use_triton = not torch_ref
         actual_num_points_per_voxel, point_raw_indices, flat_voxel_indices = voxelization_stable(
@@ -163,7 +166,7 @@ def main(
     print(f"number of filled voxels: {actual_num_points_per_voxel.shape[0]}")
     print(f"Avg number of points per voxel: {torch.mean(actual_num_points_per_voxel, dtype=torch.float32)}")
     print(f"Max number of points per voxel: {torch.max(actual_num_points_per_voxel)}")
-    overflow_count = (actual_num_points_per_voxel > param.max_num_points_per_voxel).int().sum()
+    overflow_count = (actual_num_points_per_voxel > param.max_num_points_per_voxel).to(torch.int32).sum()
     print(f"Number of voxels with overflowing points: {overflow_count}")
 
     # Benchmark implementations
