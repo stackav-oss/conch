@@ -47,7 +47,7 @@ class VoxelizationParameter:
 
 def generate_voxels(
     points: torch.Tensor, param: VoxelizationParameter
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Generates voxels from input points, output voxels and points are randomly ordered due to use of atomics.
 
     Args:
@@ -55,11 +55,11 @@ def generate_voxels(
         param: parameters.
 
     Returns:
-        tuple of voxels:
-            capped_num_points_per_voxel, shape [num_filled_voxels], note per voxel point counters are capped with max_num_points_per_voxel.
-            point_features, shape [num_filled_voxels, max_num_points_per_voxel, num_features_per_point],
-            empty points are filled with 0.
+        tuple of tensors:
+            num_of_filled_voxels, shape [1, cpu]
+            point_features, shape [num_filled_voxels, max_num_points_per_voxel, num_features_per_point], empty points are filled with 0.
             voxel_indices, shape [num_filled_voxels, 4], only first 3 fields are used for x,y,z indices.
+            capped_num_points_per_voxel, shape [num_filled_voxels], note per voxel point counters are capped with max_num_points_per_voxel.
     """
     device = points.device
     num_points, num_features_per_point = points.shape
@@ -124,10 +124,6 @@ def generate_voxels(
         num_warps=block_size // num_threads_per_warp,
     )
 
-    total_filled_voxels = num_filled_voxels.cpu()[0]
+    total_filled_voxels = num_filled_voxels.cpu()
 
-    return (
-        num_points_per_voxel[:total_filled_voxels],
-        point_features[:total_filled_voxels, :, :],
-        voxel_indices[:total_filled_voxels, :],
-    )
+    return total_filled_voxels, point_features, voxel_indices, num_points_per_voxel
