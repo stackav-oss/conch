@@ -55,7 +55,12 @@ def test_voxelization(
     print(f"Max number of points per voxel: {param.max_num_points_per_voxel}")
 
     # pure triton version
-    num_points_per_voxel, point_features, voxel_indices = generate_voxels(points, param)
+    total_filled_voxels, point_features, voxel_indices, num_points_per_voxel = generate_voxels(points, param)
+
+    filled_voxels = total_filled_voxels[0]
+    num_points_per_voxel = num_points_per_voxel[:filled_voxels]
+    point_features = point_features[:filled_voxels, :, :]
+    voxel_indices = voxel_indices[:filled_voxels, :]
 
     # triton/torch hybrid, 2-step, stable voxelization first then generate a feature tensor the same format as above
     actual_num_points_per_voxel, point_raw_indices, flat_voxel_indices_stable = voxelization_stable(
