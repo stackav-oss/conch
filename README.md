@@ -33,7 +33,9 @@ Each operation is complete with a PyTorch-only reference implementation (and som
     - Mixed-precision
     - Scaled
 - Vision
+  - BEVPool
   - Non-Max Suppression (NMS)
+  - Voxelization
 - vLLM
   - KV cache operations
     - Copy blocks
