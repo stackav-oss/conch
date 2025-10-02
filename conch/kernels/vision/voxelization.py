@@ -63,7 +63,9 @@ def generate_dense_voxels_triton_kernel(
     valid_point = point_mask & valid_x & valid_y & valid_z
 
     flat_voxel_idx = (voxel_z * grid_dim_y + voxel_y) * grid_dim_x + voxel_x
-    point_idx_in_voxel = tl.atomic_add(dense_num_points_per_voxel_ptr + flat_voxel_idx, 1, mask=valid_point)
+    point_idx_in_voxel = tl.atomic_add(
+        dense_num_points_per_voxel_ptr + flat_voxel_idx, 1, mask=valid_point, sem="relaxed"
+    )
 
     output_idx = flat_voxel_idx * max_num_points_per_voxel + point_idx_in_voxel
     output_mask = valid_point & (point_idx_in_voxel < max_num_points_per_voxel)
@@ -117,7 +119,7 @@ def generate_voxels_triton_kernel(
     num_points_in_voxel = tl.minimum(num_points_in_voxel, max_num_points_per_voxel)
     valid_voxel = num_points_in_voxel > 0
 
-    voxel_idx = tl.atomic_add(num_filled_voxels_ptr + tl.zeros_like(valid_voxel), 1, mask=valid_voxel)
+    voxel_idx = tl.atomic_add(num_filled_voxels_ptr + tl.zeros_like(valid_voxel), 1, mask=valid_voxel, sem="relaxed")
 
     # store num_points_per_voxel with clipping
     tl.store(num_points_per_voxel_ptr + voxel_idx, num_points_in_voxel, mask=valid_voxel)
